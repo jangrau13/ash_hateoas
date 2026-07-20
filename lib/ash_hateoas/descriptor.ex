@@ -32,7 +32,7 @@ defmodule AshHateoas.Descriptor do
       href: href(route, resource, overrides),
       method: method(route, action),
       description: action.description,
-      fields: fields(action),
+      fields: fields(action, resource),
       multi_step?: multi_step?(action)
     }
   end
@@ -58,16 +58,39 @@ defmodule AshHateoas.Descriptor do
   defp method(_route, %{type: :destroy}), do: :delete
   defp method(_route, _action), do: :post
 
-  defp fields(action) do
+  # An action's inputs are its public ARGUMENTS plus the ATTRIBUTES it accepts.
+  # Reading only arguments would tell a client to send nothing to a `create`
+  # that accepts `[:title]` — the commonest shape there is.
+  #
+  # Attributes come first: they are the action's substance, while arguments
+  # usually modify it.
+  defp fields(action, resource) do
+    accepted_attributes(action, resource) ++ public_arguments(action)
+  end
+
+  defp public_arguments(action) do
     action
     |> Map.get(:arguments, [])
-    |> Enum.filter(&public_argument?/1)
+    |> Enum.filter(&public?/1)
     |> Enum.map(&to_field/1)
   end
 
-  defp public_argument?(argument) do
-    Map.get(argument, :public?, false)
+  defp accepted_attributes(action, resource) do
+    action
+    |> Map.get(:accept, [])
+    |> List.wrap()
+    |> Enum.map(&attribute(resource, &1))
+    |> Enum.filter(&(&1 && public?(&1)))
+    |> Enum.map(&to_field/1)
   end
+
+  defp attribute(resource, name) do
+    Ash.Resource.Info.attribute(resource, name)
+  rescue
+    _ -> nil
+  end
+
+  defp public?(input), do: Map.get(input, :public?, false)
 
   defp to_field(argument) do
     %Field{

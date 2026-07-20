@@ -123,6 +123,19 @@ defmodule AshHateoas.JsonApi.TransformTest do
       refute "internal_trace" in names
     end
 
+    test "accepted attributes appear as fields, not just arguments" do
+      # A `create` that accepts [:title, :body, :owner_id] has no ARGUMENTS at
+      # all. Reading only arguments would advertise an empty field list and tell
+      # a client to send nothing.
+      names =
+        @admin
+        |> collection_fields_for("create")
+        |> Enum.map(& &1["name"])
+
+      assert "title" in names
+      assert "body" in names
+    end
+
     test "constraints.enum is JSON-encodable", %{doc: doc} do
       fields = fields_for(doc, "approve")
       visibility = Enum.find(fields, &(&1["name"] == "visibility"))
