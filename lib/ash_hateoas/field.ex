@@ -17,20 +17,18 @@ defmodule AshHateoas.Field do
   nil" from "has no default". `:error` means no default reaches the wire, either
   because the argument has none or because it is sensitive.
 
-  ## Why `required` and not `allow_nil?`
+  ## `allow_nil?` mirrors Ash
 
-  Ash spells this `allow_nil?`, and mirroring the framework is usually right.
-  This struct is deliberately different because it is a **wire format**, not a
-  resource DSL: JSON Schema, HAL-FORMS and MCP's `inputSchema` all say
-  `required`, with the opposite polarity. Naming it `allow_nil?` here would make
-  every renderer invert the field on the way out — the surprise belongs in the
-  one place that reads the Ash DSL, not in all of them.
+  This field carries Ash's own name and polarity rather than the wire format's
+  `required`. Transports invert it at the edge — JSON Schema, HAL-FORMS and
+  MCP's `inputSchema` all say `required` — so the inversion lives in each
+  renderer, and everything upstream reads the way the resource DSL does.
   """
 
   @type t :: %__MODULE__{
           name: atom(),
           type: String.t(),
-          required: boolean(),
+          allow_nil?: boolean(),
           description: String.t() | nil,
           default: {:ok, term()} | :error,
           constraints: map()
@@ -40,7 +38,7 @@ defmodule AshHateoas.Field do
     :name,
     :type,
     :description,
-    required: false,
+    allow_nil?: true,
     default: :error,
     constraints: %{}
   ]

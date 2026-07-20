@@ -233,6 +233,16 @@ defmodule AshHateoas.BackboneTest do
       assert find_field(approve, :note).type == "string"
       assert find_field(approve, :notify).type == "boolean"
     end
+
+    test "carry Ash's allow_nil? name and polarity, not the wire's required", %{doc: doc} do
+      # Renderers invert this at the edge (JSON Schema/HAL-FORMS/MCP say
+      # `required`). Pinning the polarity here means an accidental flip fails
+      # loudly rather than silently marking optional fields mandatory.
+      approve = affordances(doc, @admin)[:approve]
+
+      assert find_field(approve, :note).allow_nil? == true,
+             ":note declares allow_nil? true, so the field must too"
+    end
   end
 
   describe "overrides and exclusions (R2)" do

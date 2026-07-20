@@ -73,7 +73,7 @@ defmodule AshHateoas.Descriptor do
     %Field{
       name: argument.name,
       type: TypeMapper.to_wire(argument.type),
-      required: not Map.get(argument, :allow_nil?, true),
+      allow_nil?: Map.get(argument, :allow_nil?, true),
       description: Map.get(argument, :description),
       default: default_for(argument),
       constraints: constraints_for(argument)
