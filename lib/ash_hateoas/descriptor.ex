@@ -1,0 +1,118 @@
+defmodule AshHateoas.Descriptor do
+  @moduledoc """
+  Builds an `AshHateoas.Affordance` from a surviving action — stage 4 (§3).
+
+  Everything here is in-memory DSL reading: no I/O, no authorization. By the
+  time a descriptor is built the gates have already decided the action belongs
+  in the set.
+
+  ## Self-documenting (R4)
+
+  Ash already collects `description` on actions and arguments, and arguments
+  carry `default`, `constraints` and `sensitive?`. Those are surfaced verbatim
+  rather than re-described, under two rules:
+
+    * only **public** arguments become fields
+    * a `sensitive?` argument's `default` is **never** emitted — the field still
+      appears so the client knows to supply it, without leaking the value
+  """
+
+  alias AshHateoas.{Affordance, Field, TypeMapper}
+
+  @doc """
+  Build the affordance for `action`, exposed by `route` (which may be `nil`).
+
+  `overrides` is the author's per-action deviation map (R2); currently only
+  `:href` is honoured.
+  """
+  @spec build(struct(), struct() | nil, module(), keyword()) :: Affordance.t()
+  def build(action, route, resource, overrides \\ []) do
+    %Affordance{
+      name: action.name,
+      href: href(route, resource, overrides),
+      method: method(route, action),
+      description: action.description,
+      fields: fields(action),
+      multi_step?: multi_step?(action)
+    }
+  end
+
+  # An author's `override :action, href: "..."` wins. Otherwise the route's
+  # declared path is the href. Callers needing it host-qualified (the JSON:API
+  # renderer) prefix it themselves; the backbone stays transport-agnostic and
+  # emits the declared path.
+  defp href(route, _resource, overrides) do
+    case Keyword.get(List.wrap(overrides), :href) do
+      nil -> route_path(route)
+      override -> override
+    end
+  end
+
+  defp route_path(route) when is_map(route), do: Map.get(route, :route)
+  defp route_path(_route), do: nil
+
+  defp method(%{method: method}, _action) when not is_nil(method), do: method
+  defp method(_route, %{type: :read}), do: :get
+  defp method(_route, %{type: :create}), do: :post
+  defp method(_route, %{type: :update}), do: :patch
+  defp method(_route, %{type: :destroy}), do: :delete
+  defp method(_route, _action), do: :post
+
+  defp fields(action) do
+    action
+    |> Map.get(:arguments, [])
+    |> Enum.filter(&public_argument?/1)
+    |> Enum.map(&to_field/1)
+  end
+
+  defp public_argument?(argument) do
+    Map.get(argument, :public?, false)
+  end
+
+  defp to_field(argument) do
+    %Field{
+      name: argument.name,
+      type: TypeMapper.to_wire(argument.type),
+      required: not Map.get(argument, :allow_nil?, true),
+      description: Map.get(argument, :description),
+      default: default_for(argument),
+      constraints: constraints_for(argument)
+    }
+  end
+
+  # R4: never emit a sensitive argument's default. Wrapped as {:ok, value} |
+  # :error because nil is itself a legitimate default and the two must differ.
+  defp default_for(%{sensitive?: true}), do: :error
+
+  defp default_for(argument) do
+    case Map.get(argument, :default) do
+      nil -> :error
+      default -> {:ok, default}
+    end
+  end
+
+  # R4 requires `constraints.enum` derived from `one_of`. Other constraints are
+  # passed through as a map so a client can validate up front (R6).
+  defp constraints_for(argument) do
+    argument
+    |> Map.get(:constraints, [])
+    |> List.wrap()
+    |> Enum.reduce(%{}, fn
+      {:one_of, values}, acc -> Map.put(acc, :enum, values)
+      {:min, value}, acc -> Map.put(acc, :min, value)
+      {:max, value}, acc -> Map.put(acc, :max, value)
+      {:min_length, value}, acc -> Map.put(acc, :min_length, value)
+      {:max_length, value}, acc -> Map.put(acc, :max_length, value)
+      {:match, %Regex{} = regex}, acc -> Map.put(acc, :pattern, Regex.source(regex))
+      _other, acc -> acc
+    end)
+  end
+
+  # A Reactor-backed action is an affordance like any other — its internal saga
+  # steps are never exposed — but the flag lets a client know it is compound.
+  defp multi_step?(%{type: :action, run: {module, _opts}}) do
+    Code.ensure_loaded?(module) and function_exported?(module, :reactor, 0)
+  end
+
+  defp multi_step?(_action), do: false
+end

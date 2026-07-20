@@ -34,7 +34,7 @@ defmodule AshHateoas.MixProject do
       name: :ash_hateoas,
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib documentation .formatter.exs mix.exs README.md LICENSE REQ.md)
+      files: ~w(lib documentation .formatter.exs mix.exs README.md LICENSE REQ.md usage-rules.md)
     ]
   end
 
@@ -61,6 +61,9 @@ defmodule AshHateoas.MixProject do
       # Igniter powers `mix igniter.install ash_hateoas`; optional so consumers
       # who install by hand are not forced to take it.
       {:igniter, "~> 0.8", optional: true},
+      # Ash.Policy.Authorizer needs a SAT solver to reason about policy
+      # combinations. Consumers supply their own; the test suite needs one.
+      {:simple_sat, "~> 0.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: [:dev], runtime: false}
     ]
   end
