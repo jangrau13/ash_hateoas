@@ -115,8 +115,12 @@ defmodule AshHateoas.JsonApi.Transform do
 
   # Only serve the root when domains are configured — without them there is
   # nothing to enumerate, and the request should fall through to the router.
+  # `path_info`, NOT `request_path`. Under `forward "/api", to: …` Plug leaves
+  # `request_path` as the full "/api" and moves the consumed segments out of
+  # `path_info`, so matching on `request_path` means the root document is never
+  # served from a mounted router — which is every real deployment.
   defp root_request?(%{method: "GET"} = conn, opts) do
-    conn.request_path in ["/", ""] and configured_domains(opts) != []
+    conn.path_info in [[], [""]] and configured_domains(opts) != []
   end
 
   defp root_request?(_conn, _opts), do: false
