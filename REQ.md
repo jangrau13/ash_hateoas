@@ -109,7 +109,7 @@ hypermedia concern, discovered in the response — not part of the static API
 description. The shape is documented in the published profile (R3), which is
 where clients look; it is not injected into OpenAPI schema generation.
 
-### R6 — Validity: fail closed, never propose what cannot be attempted.
+### R6 — Validity: advisory, and never a parallel reimplementation.
 Four senses of "valid", and how each is met:
 
 | Sense | Met by |
@@ -124,24 +124,45 @@ supplies input, and dry-running every action per record would be expensive and
 still inexact. The descriptor's `fields`/`constraints` (R4) let a client validate
 up front; anything remaining surfaces as a precise `422` at invocation.
 
-Two invariants:
+One invariant:
 - **Single source of truth.** Filtering MUST call `Ash.can?/3` and the real state
   machine — never a parallel reimplementation of a policy. Otherwise affordances
   and endpoints diverge.
-- **Fail closed.** Undecidable authorization → do not advertise. A missing
-  affordance is a non-event; a proposed-but-forbidden one is a broken promise.
 
-Affordances are advisory: the endpoint re-runs the same policies, state machine
-and validations on invocation, so a stale proposal degrades to a clean error,
-never an invalid write.
+**Posture on undecidable authorization: follow Ash.** The gate calls
+`Ash.can?/3` as Ash provides it, with its own defaults. Ash returns `true` when
+a decision cannot be reached without running queries (`maybe_is: true` is the
+`can?/3` default), so an affordance whose authorization is record-dependent and
+unresolved **is advertised**. This matches `AshAi.exposed_tools/1`, which
+filters MCP tools the same way.
 
-### R7 — Error handling is closed but loud.
-The authorization gate hides an affordance silently only for the expected
-"not permitted / cannot evaluate without a load" classes. Any **unexpected**
-exception (bad expression, nil deref, DB blip) MUST be logged with context. A
-blanket catch-all that degrades every error to "unauthorized" turns a real bug
-into an invisible missing affordance — unacceptable on an authorization-adjacent
-surface.
+The consequence is explicit and accepted: a client may occasionally be offered
+an action it turns out not to be permitted, and receive a `403` on invocation.
+That is tolerable because affordances are **advisory** — the endpoint re-runs
+the same policies, state machine and validations on invocation, so a stale or
+optimistic proposal degrades to a clean error, never an invalid write.
+
+Rejected alternative: passing `maybe_is: false` to fail closed. It would suppress
+affordances whenever a policy is record-dependent and unresolved — the common
+case for `relates_to_actor_via` and `exists(…)` — making the affordance set
+quietly narrower than the actor's real permissions, which is its own broken
+promise. Deviating from the framework's default posture on an
+authorization-adjacent surface also invites divergence from every other Ash
+consumer. Revisit only if a deployment demonstrates that over-offering is
+causing real harm.
+
+### R7 — Errors are loud.
+An affordance is dropped silently for the expected "not permitted" outcome. Any
+**exception** raised while evaluating authorization (bad expression, nil deref,
+DB blip) MUST be logged with context before the affordance is dropped. Silently
+degrading a real bug into a missing affordance is unacceptable on an
+authorization-adjacent surface.
+
+Note the limit of what is achievable here: `Ash.can?/3` raises on error rather
+than returning a tagged tuple, so the gate rescues and cannot cleanly separate
+"a policy check blew up" from "authorization was refused by exception". Both are
+logged; neither is swallowed. `Ash.can/3`'s tuple form is available if precise
+classification ever becomes necessary.
 
 ### R8 — Cost is bounded and correctness is never traded for speed.
 The entire cost is `Ash.can?/3`; every other stage is in-memory DSL work with no
@@ -151,31 +172,41 @@ a Postgres query. On a collection this multiplies as roughly *M records × N
 actions × policy-query cost*.
 
 Requirements:
-- **On by default, opt-*out*; with the collection case gated.** Affordances are a
-  hypermedia contract: a client must not have to remember a flag to get a
-  navigable response, and a client that forgets one must not silently receive a
-  non-hypermedia response. So the default is **on**, and it is switched off — not
-  on — when not wanted.
-  - **Single-record reads default to on.** Cost is bounded (N actions, one
-    record) and this is exactly where a client needs "what can I do with this?".
-  - **Collection reads default to off**, opt-in per request. This is the only
-    place cost multiplies by `M`, and an always-on collection default is a
-    latency regression nobody notices until production.
-  - Both defaults MUST be **configurable per resource or domain**, so a
-    deployment can turn a hot single-record endpoint off, or a small collection
-    on, without forking. The posture is a declaration, not a hardcoded rule.
-- **Caching MUST be statically gated.** Classify each action's policy set as
-  *actor-scoped* (outcome independent of the record) or *record-dependent*.
-  Actor-scoped: evaluate once per `(actor, action)` and reuse across records.
-  Record-dependent: evaluate **per record** — no cross-record cache. Caching on
-  `(actor, action)` for a record-dependent policy returns a **wrong**
-  authorization answer, and those are precisely the expensive policies. Caching
-  helps the cheap cases and must not be allowed to break the expensive ones.
+- **On by default, opt-*out*.** Affordances are a hypermedia contract: a client
+  must not have to remember a flag to get a navigable response, and a client
+  that forgets one must not silently receive a non-hypermedia response. So the
+  default is **on**, and it is switched off — not on — when not wanted. A single
+  `enabled?` declaration per resource, with a domain-level default it inherits,
+  so a deployment can turn a hot endpoint off without forking.
+- **Collections never compute per-record affordances.** A collection response
+  carries **type-level** affordances only (`create`, index-style reads) in its
+  top-level `links`; records inside it carry navigation but no affordances.
+  This removes the `M × N` multiplication *structurally* rather than defaulting
+  it off, so cost on a collection is `N` — independent of page size — and there
+  is no flag to forget. It also serves the cold-start case directly: a client
+  entering at a collection is told it may `create`, which is the first thing it
+  needs (R9).
 
-Rejected alternative: precomputing per `(resource, role, state)` process-wide
-would dissolve the cost entirely, but is unsound the moment any policy is
-record-dependent and adds a cache-invalidation problem. Revisit only for
-deployments whose policies are provably actor/role/state-scoped.
+**No cross-record caching.** Every `Ash.can?/3` call is evaluated per record.
+Caching per `(actor, action)` is only sound when a policy's outcome is
+independent of the record, and **Ash exposes no way to determine that**: there
+is no `record_dependent?` introspection, and a check module's `type()`
+(`:simple | :filter | :manual`) describes how a check integrates, not what data
+it reads. Any classifier would be a heuristic, and a wrong guess returns a
+**wrong authorization answer** — record 1's verdict applied to records 2..M.
+
+The trade is favourable because the multiplication is already gone: the policies
+unsafe to cache are precisely the expensive ones (`relates_to_actor_via`,
+`exists(…)`), while the ones safe to cache (`actor.role == :admin`) are
+in-memory comparisons that cost almost nothing. Caching would have risked
+mis-authorization to speed up the cases that were already fast.
+
+Rejected alternatives: precomputing per `(resource, role, state)` process-wide
+dissolves the cost but is unsound the moment any policy is record-dependent, and
+adds cache invalidation. A static actor-scoped/record-dependent classifier is
+unsound for the reasons above. Revisit only with profiling showing real cost,
+and prefer an **explicit author declaration** over inference — the person who
+wrote the policy knows its semantics; a static classifier cannot.
 
 ### R9 — Navigation: enter anywhere, reach anything.
 Affordances answer *"what can I do with this?"*. Navigation answers *"where am I,
