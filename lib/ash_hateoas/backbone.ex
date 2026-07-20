@@ -54,6 +54,33 @@ defmodule AshHateoas.Backbone do
   end
 
   defp compute(resource, record, actor, kind, opts) do
+    if enabled?(resource) do
+      do_compute(resource, record, actor, kind, opts)
+    else
+      %{}
+    end
+  end
+
+  # A resource may switch affordances off entirely (R8). Resources without the
+  # extension are unaffected — they have no declaration to read, and callers can
+  # still invoke the backbone directly.
+  defp enabled?(resource) do
+    if AshHateoas.Resource.Info.extension?(resource) do
+      AshHateoas.Resource.Info.hateoas_enabled?(resource)
+    else
+      true
+    end
+  end
+
+  defp declared_opts(resource) do
+    if AshHateoas.Resource.Info.extension?(resource) do
+      AshHateoas.Resource.Info.affordance_opts(resource)
+    else
+      []
+    end
+  end
+
+  defp do_compute(resource, record, actor, kind, opts) do
     domain = domain!(resource, opts)
 
     context = %Context{
@@ -64,8 +91,12 @@ defmodule AshHateoas.Backbone do
       tenant: opts[:tenant]
     }
 
-    excluded = MapSet.new(opts[:exclude] || [])
-    overrides = opts[:overrides] || %{}
+    # The resource's own `hateoas` block supplies exclusions and overrides;
+    # explicit opts win, so a caller can still override the declaration.
+    declared = declared_opts(resource)
+
+    excluded = MapSet.new(opts[:exclude] || declared[:exclude] || [])
+    overrides = opts[:overrides] || declared[:overrides] || %{}
     gates = opts[:gates] || @default_gates
 
     candidates =

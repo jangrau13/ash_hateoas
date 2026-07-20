@@ -219,5 +219,6 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.PublicNote)
     resource(AshHateoas.Test.Unrouted)
     resource(AshHateoas.Test.Secret)
+    resource(AshHateoas.Test.Article)
   end
 end
