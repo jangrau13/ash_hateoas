@@ -22,6 +22,8 @@ defmodule AshHateoas.Test.Endpoint do
 
   use Plug.Builder
 
-  plug(AshHateoas.JsonApi.Transform)
+  # `domains:` lets the transform serve the R9 root entry document at "/",
+  # which ash_json_api itself has no route for.
+  plug(AshHateoas.JsonApi.Transform, domains: [AshHateoas.Test.Domain])
   plug(AshHateoas.Test.JsonApiRouter)
 end

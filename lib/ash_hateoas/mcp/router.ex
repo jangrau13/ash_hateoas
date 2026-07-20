@@ -44,7 +44,7 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
     use Plug.Router, copy_opts_to_assign: :router_opts
 
     alias AshAi.Mcp.Server
-    alias AshHateoas.Mcp.{Session, Tools}
+    alias AshHateoas.Mcp.{Resources, Session, Tools}
 
     plug(Plug.Parsers,
       parsers: [:json],
@@ -127,6 +127,61 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       end
     rescue
       _ -> :delegate
+    end
+
+    # R9: navigation uses the `resources` primitive, never tools. ash_ai
+    # implements resources/list and resources/read only for its own
+    # `mcp_resources` DSL entries and has no resources/templates/list at all,
+    # so all three are served here over the domain's resources.
+    defp intercept(%{"method" => "resources/templates/list", "id" => id}, _session, conn, opts) do
+      templates =
+        Resources.templates(
+          resources(opts, Keyword.get(opts, :domain)),
+          Ash.PlugHelpers.get_actor(conn),
+          tenant: Ash.PlugHelpers.get_tenant(conn)
+        )
+
+      {:handled,
+       %{"jsonrpc" => "2.0", "id" => id, "result" => %{"resourceTemplates" => templates}}}
+    end
+
+    defp intercept(%{"method" => "resources/list", "id" => id}, _session, conn, opts) do
+      entries =
+        Resources.list(
+          resources(opts, Keyword.get(opts, :domain)),
+          Ash.PlugHelpers.get_actor(conn),
+          tenant: Ash.PlugHelpers.get_tenant(conn)
+        )
+
+      {:handled, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"resources" => entries}}}
+    end
+
+    defp intercept(
+           %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri}},
+           _session,
+           conn,
+           opts
+         ) do
+      result =
+        Resources.read(
+          uri,
+          resources(opts, Keyword.get(opts, :domain)),
+          Ash.PlugHelpers.get_actor(conn),
+          tenant: Ash.PlugHelpers.get_tenant(conn)
+        )
+
+      case result do
+        {:ok, contents} ->
+          {:handled, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"contents" => [contents]}}}
+
+        {:error, reason} ->
+          {:handled,
+           %{
+             "jsonrpc" => "2.0",
+             "id" => id,
+             "error" => %{"code" => -32002, "message" => "Resource not found: #{inspect(reason)}"}
+           }}
+      end
     end
 
     defp intercept(_message, _session_id, _conn, _opts), do: :delegate

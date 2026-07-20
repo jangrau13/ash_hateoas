@@ -81,7 +81,50 @@ defmodule AshHateoas.JsonApi.Transform do
 
   @impl Plug
   def call(conn, opts) do
-    Plug.Conn.register_before_send(conn, &merge(&1, opts))
+    if root_request?(conn, opts) do
+      serve_root(conn, opts)
+    else
+      Plug.Conn.register_before_send(conn, &merge(&1, opts))
+    end
+  end
+
+  # ── The root entry document (R9) ────────────────────────────────────────────
+
+  # `ash_json_api` has no route for "/" and answers 404, so the entry document
+  # is served here rather than decorated. This is the one URL a client
+  # hardcodes: from it, every reachable type and collection is discoverable.
+  #
+  # Halts the pipeline, so the router never sees the request.
+  defp serve_root(conn, opts) do
+    actor = Ash.PlugHelpers.get_actor(conn)
+    domains = configured_domains(opts)
+
+    document =
+      %{
+        "jsonapi" => %{"version" => "1.0"},
+        "links" => AshHateoas.Navigation.root(domains, actor, opts),
+        "meta" => %{"profile" => @profile}
+      }
+      |> Jason.encode!()
+
+    conn
+    |> Plug.Conn.put_resp_content_type(@content_type <> "; profile=\"#{@profile}\"", nil)
+    |> Plug.Conn.send_resp(200, document)
+    |> Plug.Conn.halt()
+  end
+
+  # Only serve the root when domains are configured — without them there is
+  # nothing to enumerate, and the request should fall through to the router.
+  defp root_request?(%{method: "GET"} = conn, opts) do
+    conn.request_path in ["/", ""] and configured_domains(opts) != []
+  end
+
+  defp root_request?(_conn, _opts), do: false
+
+  defp configured_domains(opts) do
+    opts
+    |> Keyword.get(:domains, Keyword.get(opts, :domain))
+    |> List.wrap()
   end
 
   defp merge(conn, opts) do
@@ -160,10 +203,12 @@ defmodule AshHateoas.JsonApi.Transform do
         )
 
       links =
-        Renderer.render(affordances,
-          path_params: %{"id" => id},
-          prefix: prefix(context, opts)
-        )
+        affordances
+        |> Renderer.render(path_params: %{"id" => id}, prefix: prefix(context, opts))
+        # R9: structural navigation travels with the affordances, in the same
+        # links object. `collection` and `up` are registered IANA relations, so
+        # they cannot collide with an action name.
+        |> Map.merge(AshHateoas.Navigation.record_links(record, domains(context), opts))
 
       Map.update(object, "links", links, &Map.merge(&1, links))
     else

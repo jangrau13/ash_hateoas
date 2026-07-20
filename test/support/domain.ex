@@ -222,5 +222,7 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Article)
     resource(AshHateoas.Test.Order)
     resource(AshHateoas.Test.Quiet)
+    resource(AshHateoas.Test.Derived)
+    resource(AshHateoas.Test.AdminOnly)
   end
 end

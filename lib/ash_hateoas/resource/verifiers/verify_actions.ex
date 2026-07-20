@@ -31,28 +31,38 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
     end
   end
 
+  # RETURNS {:error, _} rather than raising. Spark degrades an error raised
+  # inside a verifier into a stderr warning, which would let a bogus `exclude`
+  # compile successfully — exactly what R2 says must not happen. Returning it
+  # makes the build fail, and lets `Spark.Test.dsl_errors/1` observe it as data.
   defp verify_action_names(dsl_state, module) do
     action_names =
       dsl_state
       |> Ash.Resource.Info.actions()
       |> MapSet.new(& &1.name)
 
-    for entity <- AshHateoas.Resource.Info.hateoas(dsl_state),
-        not MapSet.member?(action_names, entity.action) do
-      raise Spark.Error.DslError,
-        module: module,
-        path: [:hateoas, entity_name(entity), entity.action],
-        message: """
-        `#{entity_name(entity)} :#{entity.action}` names an action that does not exist on #{inspect(module)}.
-
-        Known actions: #{action_names |> Enum.sort() |> Enum.map_join(", ", &":#{&1}")}
-
-        If the action was renamed, update this entry. If it was removed, delete
-        this entry — leaving it would silently stop having any effect.
-        """
+    dsl_state
+    |> AshHateoas.Resource.Info.hateoas()
+    |> Enum.find(&(not MapSet.member?(action_names, &1.action)))
+    |> case do
+      nil -> :ok
+      entity -> {:error, unknown_action_error(entity, module, action_names)}
     end
+  end
 
-    :ok
+  defp unknown_action_error(entity, module, action_names) do
+    Spark.Error.DslError.exception(
+      module: module,
+      path: [:hateoas, entity_name(entity), entity.action],
+      message: """
+      `#{entity_name(entity)} :#{entity.action}` names an action that does not exist on #{inspect(module)}.
+
+      Known actions: #{action_names |> Enum.sort() |> Enum.map_join(", ", &":#{&1}")}
+
+      If the action was renamed, update this entry. If it was removed, delete
+      this entry — leaving it would silently stop having any effect.
+      """
+    )
   end
 
   defp warn_on_missing_authorizers(dsl_state, module) do
