@@ -42,7 +42,11 @@ defmodule AshHateoas.MixProject do
     [
       main: "readme",
       source_url: @source_url,
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "usage-rules.md",
+        "documentation/profiles/affordances.md"
+      ]
     ]
   end
 

@@ -162,7 +162,9 @@ defmodule AshHateoas.Test.PublicNote do
 
     routes do
       base("/public_notes")
-      get(:read)
+      # primary? true makes ash_json_api emit a per-record "self" link, so the
+      # merge has something pre-existing to preserve.
+      get(:read, primary?: true)
       index(:read)
       post(:create)
       delete(:destroy)
