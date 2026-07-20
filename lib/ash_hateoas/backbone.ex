@@ -19,7 +19,27 @@ defmodule AshHateoas.Backbone do
   alias AshHateoas.{Candidates, Descriptor}
   alias AshHateoas.Gate.{Chain, Context}
 
-  @default_gates [AshHateoas.Gate.Authorization]
+  # Ordered cheapest-first: the state gate is in-memory DSL data and costs
+  # nothing, while authorization can emit a query per candidate. Since the chain
+  # short-circuits on an empty set, filtering by state first means an illegal
+  # transition is never paid for with an `Ash.can?/3` call.
+  #
+  # The state gate is present only when ash_state_machine is — no capability
+  # branching threaded through the backbone body (§3).
+  @default_gates [AshHateoas.Gate.StateMachine, AshHateoas.Gate.Authorization]
+
+  @doc """
+  The gate chain used when a caller passes no `:gates` option.
+
+  The state gate is omitted entirely when `ash_state_machine` is not available.
+  """
+  @spec default_gates() :: [module()]
+  def default_gates do
+    Enum.filter(@default_gates, fn
+      AshHateoas.Gate.StateMachine -> AshHateoas.Gate.StateMachine.available?()
+      _gate -> true
+    end)
+  end
 
   @typedoc "Action name => affordance"
   @type envelope :: %{atom() => AshHateoas.Affordance.t()}
@@ -54,21 +74,11 @@ defmodule AshHateoas.Backbone do
   end
 
   defp compute(resource, record, actor, kind, opts) do
-    if enabled?(resource) do
+    # R8: resource `enabled?` wins, then the domain's default, then on.
+    if AshHateoas.Posture.enabled?(resource, opts[:domain]) do
       do_compute(resource, record, actor, kind, opts)
     else
       %{}
-    end
-  end
-
-  # A resource may switch affordances off entirely (R8). Resources without the
-  # extension are unaffected — they have no declaration to read, and callers can
-  # still invoke the backbone directly.
-  defp enabled?(resource) do
-    if AshHateoas.Resource.Info.extension?(resource) do
-      AshHateoas.Resource.Info.hateoas_enabled?(resource)
-    else
-      true
     end
   end
 
@@ -97,7 +107,7 @@ defmodule AshHateoas.Backbone do
 
     excluded = MapSet.new(opts[:exclude] || declared[:exclude] || [])
     overrides = opts[:overrides] || declared[:overrides] || %{}
-    gates = opts[:gates] || @default_gates
+    gates = opts[:gates] || default_gates()
 
     candidates =
       resource

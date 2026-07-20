@@ -34,8 +34,12 @@ defmodule AshHateoas.ResourceTest do
       assert Info.overrides(Article) == %{publish: [href: "/custom/publish/:id"]}
     end
 
-    test "enabled? defaults to true" do
-      assert Info.hateoas_enabled?(Article)
+    test "an undeclared enabled? reads as nil, not true" do
+      # The generated reader returns the raw declaration. `nil` is what makes
+      # domain inheritance possible — see AshHateoas.Posture. The *effective*
+      # default lives there, not in the schema.
+      assert Info.hateoas_enabled?(Article) == nil
+      assert AshHateoas.Posture.enabled?(Article, Domain) == true
     end
 
     test "readers accept a record as well as a module", %{article: article} do

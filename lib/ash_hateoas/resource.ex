@@ -90,11 +90,18 @@ defmodule AshHateoas.Resource do
     entities: [@exclude, @override],
     schema: [
       enabled?: [
-        type: :boolean,
-        default: true,
+        type: {:or, [:boolean, {:literal, nil}]},
+        default: nil,
         doc: """
         Whether affordances are computed for this resource. Affordances are a
-        hypermedia contract, so the default is on and this switches them off.
+        hypermedia contract, so the effective default is on and this switches
+        them off.
+
+        Defaults to `nil`, not `true`, so that "not declared" stays
+        distinguishable from "declared true" — Spark materialises schema
+        defaults into the DSL state, so a `true` default would make a resource
+        appear to override its domain when it had said nothing.
+        `AshHateoas.Posture` resolves `nil` to the domain's value, then to `true`.
         """
       ],
       warn_on_missing_authorizers?: [

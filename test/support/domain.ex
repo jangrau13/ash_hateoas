@@ -220,5 +220,7 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Unrouted)
     resource(AshHateoas.Test.Secret)
     resource(AshHateoas.Test.Article)
+    resource(AshHateoas.Test.Order)
+    resource(AshHateoas.Test.Quiet)
   end
 end

@@ -1,7 +1,9 @@
 import Config
 
 if config_env() == :test do
-  config :ash_hateoas, ash_domains: [AshHateoas.Test.Domain]
+  config :ash_hateoas,
+    ash_domains: [AshHateoas.Test.Domain, AshHateoas.Test.SilentDomain]
+
   config :ash, :validate_domain_config_inclusion?, false
   config :ash, :disable_async?, true
 

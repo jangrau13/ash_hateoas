@@ -159,6 +159,51 @@ defmodule AshHateoas.JsonApi.TransformTest do
     end
   end
 
+  describe "the state gate reaches the wire (Phase 4)" do
+    # The state gate lives in the core, so both renderings gain it at once.
+    # This is the HATEOAS loop end to end: the client learns the state machine
+    # by following links, never by knowing the API.
+    test "the advertised links change as the record transitions" do
+      order =
+        AshHateoas.Test.Order
+        |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
+        |> Ash.create!(authorize?: false)
+
+      pending = links_for(get("/orders/#{order.id}", @admin))
+
+      assert Map.has_key?(pending, "confirm")
+      refute Map.has_key?(pending, "ship"), ":ship is not legal from :pending"
+
+      order
+      |> Ash.Changeset.for_update(:confirm, %{})
+      |> Ash.update!(authorize?: false)
+
+      confirmed = links_for(get("/orders/#{order.id}", @admin))
+
+      assert Map.has_key?(confirmed, "ship"),
+             "the same URL must now offer the next transition"
+
+      refute Map.has_key?(confirmed, "confirm")
+    end
+  end
+
+  describe "resources with affordances switched off (R8)" do
+    test "render as ordinary JSON:API with no affordance links" do
+      quiet =
+        AshHateoas.Test.Quiet
+        |> Ash.Changeset.for_create(:create, %{label: "x"})
+        |> Ash.create!(authorize?: false)
+
+      links = links_for(get("/quiets/#{quiet.id}", @admin))
+
+      refute Map.has_key?(links, "destroy"),
+             "enabled? false must suppress affordances over the wire too"
+
+      assert Map.has_key?(links, "self"),
+             "but ordinary JSON:API navigation must be untouched"
+    end
+  end
+
   describe "the JSON:API profile (R3)" do
     test "is advertised in the content-type", %{doc: doc} do
       [content_type] =
