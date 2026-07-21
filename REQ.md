@@ -6,9 +6,8 @@ JSON:API here, and — via the published profile — anything else built against
 documents rather than against this package (§5.2). This document is the
 requirement set; implementation lives in the package (§5).
 
-> **Status:** design, not yet built. No `lib/` code exists here and none will —
-> this ships as **one standalone Ash package** carrying the core and both
-> renderings (§5).
+> **Status:** built. This document is kept as the requirement set and the record
+> of why each decision went the way it did — it is not a plan.
 >
 > **Verified against** **ash 3.29.3 / ash_json_api 1.7.1 / spark ≥ 2.6**.
 > Findings marked VERIFIED were read from those sources.
@@ -95,8 +94,14 @@ client knows to supply it, without its value).
 ### R5 — The output envelope has a fixed, documented shape.
 The envelope is a map of action name → **Affordance**. An Affordance carries
 `href`, `method`, `description`, a list of **Field**s, and an optional
-`multi_step` flag. Each Field carries `name`, `type`, `required`, `description`,
-`default` (omitted when sensitive) and `constraints`.
+`multi_step?` flag. Each Field carries `name`, `type`, `allow_nil?`,
+`description`, `default` (omitted when sensitive) and `constraints`.
+
+Note `allow_nil?`, not `required`: the struct mirrors Ash's own name and
+polarity, and each renderer inverts it at the edge, since the wire formats say
+`required`. Everything upstream of the renderer reads the way the resource DSL
+does. `default` is `{:ok, value} | :error` rather than a bare value, because
+`nil` is itself a legitimate default and the two must stay distinguishable.
 
 Only the **set** of actions is dynamic — it lives in the map keys and is resolved
 per record, actor and state at runtime. Everything below that key is fixed.
@@ -223,12 +228,16 @@ Three structural links are required, all derivable from existing declarations:
 | collection URL per type | the transport's declared collection route (`base_route`) |
 | record → its collection | resource route introspection (the `:index` route) |
 | record → its domain | `Ash.Resource.Info.domain/1` |
-| domain → domain edges | `Ash.Domain.Info.related_domain/…`, `resource_references/1` |
-| walk the data graph | `Ash.Resource.Info.public_relationships/1` |
-| what may I do on a *type* | `Ash.Resource.Info.actions/1` + `action_inputs/2` + `Ash.can?/3` |
+| what may I do on a *type* | `Ash.Resource.Info.actions/1` + declared routes + `Ash.can?/3` |
 
 Nothing here is new author config — it is the R1 principle (read what is already
 declared) extended from actions to structure.
+
+Two rows were dropped as unbuilt rather than left as aspiration: **domain →
+domain edges** and **walking the data graph** via `public_relationships/1`.
+`ash_json_api` already emits `related`/`relationship` links for declared
+relationships, so the second is served without this package doing anything; the
+first has no consumer yet.
 
 **Collection-level affordances — a second backbone entry point.** Some actions
 apply to a **type**, not a record: `create`, and index-style reads. A client that
@@ -256,11 +265,16 @@ insufficient).
 **Pipeline:**
 1. **Candidate set** — actions reachable via the resource's declared JSON:API
    routes, minus `exclude`s.
-2. **Authorization gate** — `Ash.can?/3` per candidate (R6, R7).
-3. **State gate** — where the resource has a state machine, drop actions that are
+2. **State gate** — where the resource has a state machine, drop actions that are
    not legal transitions from the record's current state.
+3. **Authorization gate** — `Ash.can?/3` per candidate (R6, R7).
 4. **Descriptor** — per surviving action: `href` (from the declared route or an
    override), method, `description`, `fields` (R4).
+
+Gates run **cheapest-first**, which is why the state gate precedes
+authorization: transitions are in-memory DSL data, while `Ash.can?/3` can emit a
+query per candidate. Since the chain short-circuits on an empty set, an illegal
+transition is never paid for with an authorization check.
 
 **Output:** the typed envelope (R5), or nothing when no action survives.
 
@@ -274,13 +288,12 @@ empties. Three consequences, all of which the requirements need anyway:
   backbone body.
 - Consumers can insert their own filter (a tenancy rule, a feature flag) without
   forking the package.
-- Each filter is independently testable, which matters most for the two that
-  carry correctness weight (R6 fail-closed, R8 statically-gated caching).
+- Each filter is independently testable, which matters most for the ones that
+  carry correctness weight — the authorization gate (R6) and the state gate.
 
 Precedent: `ash_commanded` uses a declared middleware chain over commands
 (`middleware AuditLogger`, `middleware {Authorization, roles: [:admin]}`) in a
-Spark extension of the same shape as this one. Confirm its ordering and
-short-circuit mechanics against its source before modelling on it closely.
+Spark extension of the same shape as this one.
 
 ### The state gate
 Authorization ≠ validity from the current state. An actor authorized to run a
@@ -289,12 +302,11 @@ legal from. Advertise an action only if the actor is authorized **and** (it is
 not a transition at all, or it is a legal transition from the record's current
 state). Transitions are in-memory DSL data — no DB hit.
 
-`ash_state_machine` is an **optional dependency**: the backbone capability-checks
-each resource and applies the gate only where a state machine exists. Resources
-without one are unaffected. Introspection uses the public `AshStateMachine.Info`
-API — `state_machine_transitions/1`, `state_machine_all_states/1`,
-`state_machine_state_attribute/1` (bang variants available; each accepts a module
-or a DSL map).
+`ash_state_machine` is an **optional dependency**: the gate is present in the
+chain only when the dependency is, and applies per resource only where a state
+machine exists. Resources without one pass through untouched. Introspection uses
+the public `AshStateMachine.Info` API — see §4 for the two functions used and
+the `:*` traps they carry.
 
 ### Reactor-backed actions
 From the outside a Reactor-backed action is an action with a name, arguments and
@@ -336,18 +348,23 @@ variants). Our override-only section (R2) gets its reader for free this way.
 `Spark.Dsl.Extension.get_entities/2` then `Enum.filter` on the entity struct —
 which is the pattern to use where the generated functions do not suffice.
 
-**Transformer discipline (from `ash_archival`'s `SetupArchival`).** Our
-auto-wiring transformer MUST follow the same shape:
-- declare ordering explicitly with `after?/1` and `before?/1` against named Ash
-  transformers, rather than relying on incidental order;
-- **bail out on embedded resources** — it checks
-  `Transformer.get_persisted(dsl_state, :embedded?, false)` and returns
-  unchanged. Embedded resources have no routes and no identity, so affordances
-  are meaningless for them; skipping them is required, not optional;
-- build entities via `Transformer.build_entity/4` and add them with the
-  `Ash.Resource.Builder.add_new_*` helpers (note `add_new_`: idempotent, does not
-  clobber an author's own declaration);
-- thread `{:ok, dsl_state}` through each step so a failure short-circuits.
+**Transformer discipline.** No entity-building transformer was needed. R2's
+override-only DSL means there is nothing to auto-wire: affordances are computed
+at request time from what is already declared, never materialised into the DSL
+at compile time.
+
+The one transformer that shipped, `MarkPrimaryGet`, *edits* an existing entity
+rather than adding one — it marks a resource's sole `:get` route `primary?` so
+`ash_json_api` emits a `self` link (§5.1). Three of `ash_archival`'s four rules
+still apply and are followed: explicit `after?/1`/`before?/1` ordering, bailing
+out on embedded resources via
+`Transformer.get_persisted(dsl_state, :embedded?, false)` (they have no routes
+and no identity, so there is no record to link to), and threading
+`{:ok, dsl_state}` so a failure short-circuits. The fourth —
+`Transformer.build_entity/4` plus the idempotent
+`Ash.Resource.Builder.add_new_*` helpers — does not apply to an edit;
+`replace_entity/4` is its counterpart. It is the shape to follow if an
+entity-building transformer is ever added.
 
 **Type mapping needs an explicit table (from `ash_typescript`).** R5 requires a
 typed `Field.type`. `ash_typescript` does not stringify Ash types ad hoc — it
@@ -358,10 +375,16 @@ type module: the atom and module forms both occur, and unmapped types need a
 deliberate fallback, not `Elixir.Ash.Type.Foo` leaking into the wire format.
 
 **State-machine introspection is a public API (`AshStateMachine.Info`).** The
-state gate (§3) uses `state_machine_transitions/1`, `state_machine_all_states/1`,
-and `state_machine_state_attribute/1` (plus bang variants; each accepts a module
-*or* a DSL map, so the gate works at compile time and runtime). No private
-access, no reimplementation.
+state gate (§3) uses `state_machine_transitions/2` — the arity-2 form, because
+it filters on `action == :* or action == name` and so accounts for a wildcard
+transition — and `state_machine_state_attribute!/1`. No private access, no
+reimplementation.
+
+Two `:*` traps, handled asymmetrically upstream and both load-bearing: a
+wildcard **action** is covered by the arity-2 lookup, while a wildcard **from**
+state is expanded by a transformer at compile time but still re-checked
+defensively by consuming code — so the gate checks `current in from or :* in
+from` too.
 
 **Precedent for a second rendering: `ash_graphql`.** It renders the same
 resources and actions into an entirely different transport alongside
@@ -373,22 +396,19 @@ the relationship between this package and any consumer of its profile (§5.2).
 installing the package gives the core plus whichever renderings the host app's
 deps support.
 
-**Build order:**
-1. The backbone + tests — prove the `can?` gate against a real resource.
-2. The JSON:API `links` rendering: the post-serialization transform (§5.1) plus the
-   renderer, validated end-to-end against a live endpoint on **stock deps**.
-   R3 is part of v1's definition of done, not a follow-up.
-3. The Spark extension, transformer, override-only section and verifier.
-4. The state gate (§3) and statically-gated `can?` caching (R8) — both land in
-   the core, so **both renderings gain them at once**.
-5. The MCP adapter (§5.2).
+**What shipped:** the backbone and its gate chain, the JSON:API rendering
+(post-serialization transform plus renderer), the Spark extension with its
+override-only section, transformer and verifier, the state gate, and R9
+navigation. The MCP adapter that was planned as step 5 was built, then removed —
+§5.2 records why.
 
-**Consuming it:** add the dep, then add the extension alongside the transport
-extension(s) on the resources that should expose affordances. Nothing else per
-resource unless one needs an `exclude`/`override` — and every adapter renders
-from the same declaration, with no second setup.
+**Consuming it:** add the dep, then add the extension alongside `AshJsonApi.Resource`
+on the resources that should expose affordances. Nothing else per resource
+unless one needs an `exclude`/`override`.
 
-Realistic v1: ~400–600 LOC plus tests.
+Note `open_api_spex` is required in the host app's deps: `ash_json_api` reaches
+for `AshJsonApi.OpenApi` when validating a write, and that module only exists
+when it is present.
 
 ---
 
@@ -492,7 +512,10 @@ Requirements on the transform:
   default, or anything a resource/domain has switched off).
 - It MUST handle both single-resource and collection documents, and `included`
   resources, matching objects by `type`+`id`.
-- It MUST be a no-op for any resource that does not carry the extension.
+- It computes affordances for any **routed** resource. The extension is not a
+  gate on that — the backbone is usable without it, and it supplies declarations
+  (`exclude`, `override`, `enabled?`) rather than opting a resource in. R8's
+  `enabled?` is what switches a resource off.
 - Streaming/chunked responses, if used, MUST be considered — the transform needs
   the whole document, so it is incompatible with a streamed body.
 
@@ -552,30 +575,36 @@ actions directly.
 
 ---
 
-## 6. Open items before implementation
-- **How record-scoped affordances reach MCP's `tools/list` (§5.2).** `tools/list`
-  takes no arguments, so the server cannot learn which records a client cares
-  about from the request alone. The options are: hold a bounded per-session set
-  of records the client has dereferenced (server-held state, an explicit
-  exception to statelessness); return record-scoped tools for every record
-  (unbounded); or leave record affordances discoverable via `resources/read` but
-  not invocable from `tools/list`. Whichever is chosen must be documented as a
-  deliberate trade, and any per-session state must be a **set, not a cursor** — a
-  single overwritable position makes a read silently revoke tools the client was
-  previously offered.
-- Confirm the exact `Ash.can?` argument form and options for the pinned Ash
-  (`{record, action}` vs input form; `maybe_is:`, `run_queries?:`).
-- Confirm `AshJsonApi.Resource.Info.routes/2` return shape for a real
-  domain+resource pair.
-- Confirm how a renderer reads the **actor** from context in Ash 3.29.
-- Confirm the `Spark.InfoGenerator` generated-function names for our section so
-  the Info module can be generated rather than hand-written (§5).
-- Confirm `ash_commanded`'s middleware chain mechanics (declaration, ordering,
-  short-circuiting) from its source before modelling the gate pipeline (§3) on it.
-- Confirm the response-step integration point for the post-serialization
-  transform (§5.1) in a Phoenix/Plug pipeline, including how it resolves the R8
-  on/off decision for the request (single-record vs collection, and any
-  resource/domain override).
+## 6. Resolved questions
+
+Kept as findings, since each cost something to establish.
+
+- **`Ash.can?/3` argument form.** `{record, action}` for record-level, which
+  makes Ash inject `data: [record]` so record-dependent policies see it;
+  `{resource, action}` for collection-level. Read actions additionally take
+  `data:` — read policies produce filters, not a yes/no. Options are Ash's own
+  defaults (`maybe_is: true`), so an undecidable authorization advertises;
+  R6 accepts the consequence.
+- **`AshJsonApi.Resource.Info.routes/2`.** Routes are declared at **both** domain
+  and resource level; the arity-1 form returns only resource-level ones, so the
+  domain must be threaded through or the candidate set is silently half-empty.
+- **The record's own URL.** `ash_json_api` renders `self` from the `:get` route
+  marked `primary?`, and the option defaults to false — so a plain `get :read`
+  yields records carrying no link to themselves. A transformer marks a sole
+  `:get` route primary; where several exist the verifier warns and leaves the
+  choice to the author. Nothing in this package constructs the URL.
+- **Prefixes.** The domain's json_api `prefix` is applied by `AshJsonApi.Router`
+  when matching, so a declared route is served at exactly its declared path.
+  Prepending the prefix again produced hrefs that 404'd while navigation links
+  resolved — one document, two bases, one of them dead.
+- **The response-step integration point.** `before_dispatch` captures the typed
+  `%Route{}`, and `register_before_send/2` merges into the public document. No
+  private function of `ash_json_api` is touched.
+- **How record-scoped affordances reach MCP's `tools/list`.** They do not, and
+  the question dissolved with the adapter (§5.2). A consumer built against the
+  profile passes the record's URI as a tool argument, so `tools/list` needs no
+  per-session position — which was the only reason server-held state had been
+  considered.
 
 ## 7. References
 - JSON:API 1.1 — link objects (`rel`/`title`/`meta`), link names not

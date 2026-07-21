@@ -33,6 +33,18 @@ defmodule AshHateoas.Resource.Transformers.MarkPrimaryGet do
 
   @impl true
   def transform(dsl_state) do
+    if Transformer.get_persisted(dsl_state, :embedded?, false) do
+      # An embedded resource has no routes and no identity of its own, so there
+      # is no record to link to. It would fall through the clauses below anyway,
+      # having no `:get` route — but resting on that is resting on a side
+      # effect, and the guard says what is meant.
+      {:ok, dsl_state}
+    else
+      mark_sole_get(dsl_state)
+    end
+  end
+
+  defp mark_sole_get(dsl_state) do
     routes = Transformer.get_entities(dsl_state, [:json_api, :routes])
 
     case Enum.filter(routes, &(&1.type == :get)) do
