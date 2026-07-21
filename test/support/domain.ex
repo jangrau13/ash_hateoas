@@ -36,6 +36,13 @@ defmodule AshHateoas.Test.Document do
     end
   end
 
+  relationships do
+    has_many :comments, AshHateoas.Test.Comment do
+      public?(true)
+      destination_attribute(:document_id)
+    end
+  end
+
   attributes do
     uuid_primary_key(:id)
     attribute(:title, :string, public?: true, allow_nil?: false)
@@ -221,6 +228,7 @@ defmodule AshHateoas.Test.Domain do
 
   resources do
     resource(AshHateoas.Test.Document)
+    resource(AshHateoas.Test.Comment)
     resource(AshHateoas.Test.PublicNote)
     resource(AshHateoas.Test.Unrouted)
     resource(AshHateoas.Test.Secret)

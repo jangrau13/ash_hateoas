@@ -10,7 +10,7 @@ defmodule AshHateoas.Req.R3R4R9Test do
   use ExUnit.Case, async: false
 
   alias AshHateoas.Backbone
-  alias AshHateoas.Test.{Actor, Document, Endpoint, Order, Quiet}
+  alias AshHateoas.Test.{Actor, Article, Document, Endpoint, Order, Quiet}
 
   @admin %Actor{id: "req-admin", role: :admin}
   @viewer %Actor{id: "req-viewer", role: :viewer}
@@ -378,6 +378,47 @@ defmodule AshHateoas.Req.R3R4R9Test do
           assert status < 400,
                  "root advertises #{name} at #{href} but an anonymous client gets #{status}"
         end
+      end
+    end
+
+    test "a relationship link is emitted and followable" do
+      # R9's "walk the data graph". `ash_json_api` renders
+      # `relationships.<name>.links` only from declared `related`/`relationship`
+      # routes, and declares none by default — so a public relationship arrives
+      # as a name with an empty `links` object: a client is told an edge exists
+      # and given nowhere to go. The routes are derived instead (R1).
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Linked"})
+        |> Ash.create!(authorize?: false)
+
+      parent =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Parent", owner_id: "o1"})
+        |> Ash.create!(authorize?: false)
+
+      AshHateoas.Test.Comment
+      |> Ash.Changeset.for_create(:create, %{
+        body: "hi",
+        article_id: article.id,
+        document_id: parent.id
+      })
+      |> Ash.create!(authorize?: false)
+
+      links =
+        "/articles/#{article.id}"
+        |> get(@admin)
+        |> body()
+        |> get_in(["data", "relationships", "comments", "links"])
+
+      assert is_map(links) and map_size(links) > 0,
+             "a public relationship arrived with no links — the edge is a dead end"
+
+      for {name, href} <- links, is_binary(href) do
+        path = URI.parse(href).path
+
+        assert get(path, @admin).status < 400,
+               "relationship link #{name} points at #{path}, which does not resolve"
       end
     end
 

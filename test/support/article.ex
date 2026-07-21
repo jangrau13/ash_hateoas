@@ -39,6 +39,15 @@ defmodule AshHateoas.Test.Article do
     attribute :title, :string, public?: true, allow_nil?: false
   end
 
+  # A to-many relationship on a resource that carries the extension: this is
+  # what the route derivation acts on.
+  relationships do
+    has_many :comments, AshHateoas.Test.Comment do
+      public? true
+      destination_attribute :article_id
+    end
+  end
+
   actions do
     defaults [:read, create: [:title], update: [:title]]
 

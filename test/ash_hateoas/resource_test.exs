@@ -149,6 +149,93 @@ defmodule AshHateoas.ResourceTest do
     end
   end
 
+  describe "walking the data graph" do
+    alias AshHateoas.Test.Comment
+
+    test "a public relationship gets related and relationship routes" do
+      # `ash_json_api` renders `relationships.<name>.links` from declared
+      # `related`/`relationship` routes, and declares none by default — so a
+      # public relationship serializes as a name with an empty `links` object.
+      # The relationship is public, its destination is routed, and the source
+      # has a read action: nothing is left for the author to decide (R1).
+      types =
+        Article
+        |> AshJsonApi.Resource.Info.routes([Domain])
+        |> Enum.filter(&(&1.relationship == :comments))
+        |> Enum.map(& &1.type)
+        |> Enum.sort()
+
+      assert types == [:get_related, :relationship]
+    end
+
+    test "a to-one relationship is left alone" do
+      # ash_json_api 1.7.1 raises in `encode_primary_key/1` when serializing a
+      # to-one `relationship` route — hand-declared or derived alike. Emitting
+      # a route that 500s is worse than emitting none.
+      refute Comment
+             |> AshJsonApi.Resource.Info.routes([Domain])
+             |> Enum.any?(&(&1.relationship == :document))
+    end
+
+    test "the derived route paths are ash_json_api's own convention" do
+      routes =
+        Article
+        |> AshJsonApi.Resource.Info.routes([Domain])
+        |> Enum.filter(&(&1.relationship == :comments))
+        |> Map.new(&{&1.type, &1.route})
+
+      assert routes[:get_related] =~ "/comments"
+      assert routes[:relationship] =~ "/relationships/comments"
+    end
+
+    test "a private relationship is not routed" do
+      defmodule Hidden do
+        @moduledoc false
+        use Ash.Resource,
+          domain: nil,
+          validate_domain_inclusion?: false,
+          data_layer: Ash.DataLayer.Ets,
+          extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+
+        ets do
+          private?(true)
+        end
+
+        json_api do
+          type("hidden")
+
+          routes do
+            base("/hiddens")
+            get(:read)
+          end
+        end
+
+        attributes do
+          uuid_primary_key(:id)
+        end
+
+        relationships do
+          belongs_to :document, AshHateoas.Test.Document do
+            public?(false)
+          end
+        end
+
+        actions do
+          defaults([:read])
+        end
+
+        hateoas do
+          warn_on_missing_authorizers?(false)
+        end
+      end
+
+      refute Hidden
+             |> AshJsonApi.Resource.Info.routes([])
+             |> Enum.any?(&(&1.relationship == :document)),
+             "a private relationship is not part of the API surface"
+    end
+  end
+
   describe "resources without the extension" do
     test "still produce affordances when called directly" do
       doc =

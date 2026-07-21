@@ -165,6 +165,13 @@ determine that — a wrong guess returns a wrong authorization answer.
   declared at *both* domain and resource level; the arity-1 form returns only
   resource-level routes, so the candidate set comes back half-empty. Always pass
   domains.
+- **Expecting relationship links without the extension.** `ash_json_api`
+  renders `relationships.<name>.links` only from declared `related`/
+  `relationship` routes, and declares none by default — so a public
+  relationship arrives as a name with an empty `links` object. Carrying
+  `AshHateoas.Resource` derives them for to-many relationships. To-one is
+  skipped: ash_json_api 1.7.1 raises when serializing a to-one `relationship`
+  route, hand-declared or derived alike.
 - **Expecting affordances on a resource with no routes.** Without
   `ash_json_api`, the candidate set falls back to the resource's actions and
   affordances have no `href`. That is intended — the backbone is usable without

@@ -228,16 +228,36 @@ Three structural links are required, all derivable from existing declarations:
 | collection URL per type | the transport's declared collection route (`base_route`) |
 | record → its collection | resource route introspection (the `:index` route) |
 | record → its domain | `Ash.Resource.Info.domain/1` |
+| walk the data graph | `Ash.Resource.Info.relationships/1` + derived routes |
 | what may I do on a *type* | `Ash.Resource.Info.actions/1` + declared routes + `Ash.can?/3` |
 
 Nothing here is new author config — it is the R1 principle (read what is already
 declared) extended from actions to structure.
 
-Two rows were dropped as unbuilt rather than left as aspiration: **domain →
-domain edges** and **walking the data graph** via `public_relationships/1`.
-`ash_json_api` already emits `related`/`relationship` links for declared
-relationships, so the second is served without this package doing anything; the
-first has no consumer yet.
+Two rows needed investigating; the findings differ.
+
+**Walk the data graph — built.** `ash_json_api` renders
+`relationships.<name>.links` only from declared `related`/`relationship` routes,
+and declares none by default, so a public relationship serializes as a name with
+an empty `links` object: a client is told an edge exists and given nowhere to
+go. `DeriveRelationshipRoutes` supplies them (§5.1), and a test follows the
+emitted link rather than merely asserting its presence.
+
+To-**one** relationships are deliberately skipped. `ash_json_api` 1.7.1 raises
+`FunctionClauseError` in `encode_primary_key/1` when serializing a to-one
+`relationship` route — the same crash occurs with a hand-declared
+`relationship :document, :read`, so deriving is not the cause — and emitting a
+route that 500s would be worse than emitting none. Revisit when upstream fixes
+it.
+
+**Domain → domain edges — nothing to build.** Investigated and dropped as a
+requirement rather than deferred. `Ash.Domain.Info.resource_references/1`
+returns a domain's own resources, which the root document already enumerates via
+`resources/1`; `related_domain/3` answers with the same domain for any
+relationship inside it. Several domains mounted in one router share a base path,
+so there is no second place to point at — a link would go from `/` to `/`, which
+is the `up` relation already emitted. A genuinely separate deployment is a
+different API, which is what `AshHateoas.Type.ResourceLink` addresses.
 
 **Collection-level affordances — a second backbone entry point.** Some actions
 apply to a **type**, not a record: `create`, and index-style reads. A client that
