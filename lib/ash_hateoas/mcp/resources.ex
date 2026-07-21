@@ -68,9 +68,45 @@ defmodule AshHateoas.Mcp.Resources do
        %{
          "uri" => uri,
          "mimeType" => "application/json",
-         "text" => Jason.encode!(serialize(record))
+         "text" =>
+           record
+           |> serialize()
+           |> Map.put("affordances", affordances(record, actor, opts))
+           |> Jason.encode!()
        }}
     end
+  end
+
+  # A record's representation carries its own affordances, exactly as the
+  # JSON:API rendering puts `links` in the same document as `attributes`.
+  #
+  # This is what keeps the two transports peers. Without it, MCP could only
+  # answer "what may I do with this?" through `tools/list`, which takes no
+  # arguments and so had to be made stateful — the client focuses a record and
+  # the list describes it. That mode-switch is unnecessary if dereferencing the
+  # URI already tells you. An agent that reads `book://<id>` learns the state
+  # AND the legal next steps in one round trip, with no session state involved.
+  defp affordances(record, actor, opts) do
+    record
+    |> AshHateoas.affordances(actor, domain: opts[:domain], tenant: opts[:tenant])
+    |> Enum.map(fn {name, affordance} ->
+      %{
+        "name" => to_string(name),
+        "description" => affordance.description,
+        "method" => affordance.method && String.upcase(to_string(affordance.method)),
+        "multiStep" => affordance.multi_step?,
+        "fields" =>
+          Enum.map(affordance.fields, fn field ->
+            %{
+              "name" => to_string(field.name),
+              "type" => field.type,
+              "required" => not field.allow_nil?
+            }
+          end)
+      }
+    end)
+  rescue
+    _ -> []
   end
 
   @doc """

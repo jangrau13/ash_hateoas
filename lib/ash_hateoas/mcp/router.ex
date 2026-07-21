@@ -180,6 +180,9 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
           uri,
           domain_resources,
           Ash.PlugHelpers.get_actor(conn),
+          # `domain` matters here: the representation embeds the record's own
+          # affordances, and the backbone needs the domain to resolve routes.
+          domain: Keyword.get(opts, :domain),
           tenant: Ash.PlugHelpers.get_tenant(conn)
         )
 
