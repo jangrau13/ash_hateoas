@@ -85,6 +85,70 @@ defmodule AshHateoas.ResourceTest do
     end
   end
 
+  describe "a record must be addressable" do
+    defmodule SoleGet do
+      @moduledoc false
+      use Ash.Resource,
+        domain: nil,
+        validate_domain_inclusion?: false,
+        data_layer: Ash.DataLayer.Ets,
+        extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+
+      ets do
+        private?(true)
+      end
+
+      json_api do
+        type("sole_get")
+
+        routes do
+          base("/sole_gets")
+          # Deliberately NOT primary? — the case the transformer repairs.
+          get(:read)
+          index(:read)
+        end
+      end
+
+      attributes do
+        uuid_primary_key(:id)
+      end
+
+      actions do
+        defaults([:read])
+      end
+
+      hateoas do
+        warn_on_missing_authorizers?(false)
+      end
+    end
+
+    test "a sole get route is marked primary, so ash_json_api emits self" do
+      # `ash_json_api` renders `self` from the `:get` route marked `primary?`,
+      # and the option defaults to false. Without this a plain `get :read`
+      # yields records carrying no link to themselves: readable, but with no
+      # URL a link-following client could name them by.
+      #
+      # One `:get` route means "which is canonical" has a single answer, so it
+      # is derived rather than demanded of the author (R1).
+      get_route =
+        SoleGet
+        |> AshJsonApi.Resource.Info.routes([])
+        |> Enum.find(&(&1.type == :get))
+
+      assert get_route.primary?,
+             "the sole get route was left non-primary, so records have no self link"
+    end
+
+    test "other route types are untouched" do
+      index =
+        SoleGet
+        |> AshJsonApi.Resource.Info.routes([])
+        |> Enum.find(&(&1.type == :index))
+
+      refute index.primary?, "only the get route carries the record's self link"
+    end
+  end
+
   describe "resources without the extension" do
     test "still produce affordances when called directly" do
       doc =

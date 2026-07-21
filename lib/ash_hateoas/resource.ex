@@ -117,5 +117,6 @@ defmodule AshHateoas.Resource do
 
   use Spark.Dsl.Extension,
     sections: [@hateoas],
+    transformers: [AshHateoas.Resource.Transformers.MarkPrimaryGet],
     verifiers: [AshHateoas.Resource.Verifiers.VerifyActions]
 end

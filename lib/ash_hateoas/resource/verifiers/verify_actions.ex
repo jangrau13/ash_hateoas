@@ -27,8 +27,59 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
     with :ok <- verify_action_names(dsl_state, module) do
       warn_on_missing_authorizers(dsl_state, module)
+      warn_on_unaddressable_records(dsl_state, module)
       :ok
     end
+  end
+
+  # `ash_json_api` emits a record's `self` link from the `:get` route marked
+  # `primary?` — "the route that should be linked to by default when rendering
+  # links to this type of route". With none marked, the lookup returns nil and
+  # no `self` is emitted.
+  #
+  # The record is then reachable by URL but carries no link to that URL. A
+  # client told to follow links and construct nothing (R9) cannot name it: it
+  # appears in a collection as data that can be read but never referred to, and
+  # every affordance on it points at a record the client has no way to address.
+  #
+  # Warns rather than fails: several `:get` routes with none primary is a real
+  # authorial choice, and a resource may legitimately not be addressable alone.
+  defp warn_on_unaddressable_records(dsl_state, module) do
+    gets = get_routes(dsl_state)
+
+    if gets != [] and not Enum.any?(gets, & &1.primary?) do
+      IO.warn(
+        """
+        #{inspect(module)} declares #{length(gets)} `get` route(s) but marks none `primary?`.
+
+        `ash_json_api` renders a record's `self` link from the primary `get`
+        route, so records of this type are serialized without one. A hypermedia
+        client cannot address them: it is told what it may do with a record but
+        has no URL to name it by.
+
+        Mark the canonical one:
+
+            routes do
+              get :read, primary?: true
+            end
+        """,
+        []
+      )
+    end
+
+    :ok
+  end
+
+  defp get_routes(dsl_state) do
+    if Code.ensure_loaded?(AshJsonApi.Resource.Info) do
+      dsl_state
+      |> AshJsonApi.Resource.Info.routes([])
+      |> Enum.filter(&(&1.type == :get))
+    else
+      []
+    end
+  rescue
+    _ -> []
   end
 
   # RETURNS {:error, _} rather than raising. Spark degrades an error raised
