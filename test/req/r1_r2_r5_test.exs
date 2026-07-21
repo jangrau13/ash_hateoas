@@ -639,48 +639,30 @@ defmodule AshHateoas.Req.R1R2R5Test do
       end
     end
 
-    test "the MCP projection covers exactly the same action set" do
-      doc = create!(Document, %{title: "T", owner_id: @admin.id})
-      envelope = afford(doc, @admin)
-
-      tools = AshHateoas.Mcp.Tools.render(envelope, "document")
-
-      assert length(tools) == map_size(envelope)
-
-      expected =
-        envelope |> Map.keys() |> Enum.map(&"document_#{&1}") |> MapSet.new()
-
-      assert tools |> Enum.map(& &1["name"]) |> MapSet.new() == expected
-    end
-
-    test "both transports agree on which fields are required" do
-      # R5: MCP's inputSchema "projects from" the same shape. The two renderers
-      # invert allow_nil? independently, so a divergence here would mean a
-      # client sees different contracts depending on the transport.
+    test "required inverts allow_nil? exactly once, at the edge" do
+      # R5: `AshHateoas.Field` carries Ash's `allow_nil?`; the wire says
+      # `required`. The inversion belongs in the renderer, so a field the
+      # resource declares as non-nillable must arrive as required — and one it
+      # allows to be nil must not.
       doc = create!(Document, %{title: "T", owner_id: @admin.id})
       envelope = afford(doc, @admin)
 
       for {name, affordance} <- envelope, affordance.fields != [] do
-        json_required =
-          AshHateoas.JsonApi.Renderer.render(%{name => affordance})
+        rendered =
+          %{name => affordance}
+          |> AshHateoas.JsonApi.Renderer.render()
           |> Map.fetch!(to_string(name))
           |> get_in(["meta", "fields"])
-          |> Enum.filter(& &1["required"])
-          |> Enum.map(& &1["name"])
-          |> MapSet.new()
+          |> Map.new(fn field -> {field["name"], field["required"]} end)
 
-        mcp_required =
-          AshHateoas.Mcp.Tools.render(%{name => affordance})
-          |> hd()
-          |> get_in(["inputSchema", "properties", "input", "required"])
-          |> Kernel.||([])
-          |> MapSet.new()
-
-        assert json_required == mcp_required,
-               "#{inspect(name)}: JSON:API says #{inspect(MapSet.to_list(json_required))} " <>
-                 "required, MCP says #{inspect(MapSet.to_list(mcp_required))}"
+        for field <- affordance.fields do
+          assert rendered[to_string(field.name)] == not field.allow_nil?,
+                 "#{inspect(name)}.#{field.name}: allow_nil? #{field.allow_nil?} " <>
+                   "rendered as required #{inspect(rendered[to_string(field.name)])}"
+        end
       end
     end
+
   end
 
   # Spark verifiers run in `__verify_spark_dsl__`, invoked at module

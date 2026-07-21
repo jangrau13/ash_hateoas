@@ -4,7 +4,9 @@
 
 AshHateoas computes **affordances** — the set of actions an actor may take on a
 record (or on a resource type) right now — and renders that one result into each
-transport's own idiom: JSON:API `links`, MCP tools, and more later.
+transport's own idiom: JSON:API `links` today, described by a published profile
+so that other transports can be built against the documents rather than against
+this package.
 
 The point is that affordances are **derived, never authored**. A resource
 already declares its actions, its routes, its policies and (where present) its
@@ -165,7 +167,8 @@ determine that — a wrong guess returns a wrong authorization answer.
   domains.
 - **Expecting affordances on a resource with no routes.** Without
   `ash_json_api`, the candidate set falls back to the resource's actions and
-  affordances have no `href`. That is intended — MCP needs no routes.
+  affordances have no `href`. That is intended — the backbone is usable without
+  any transport installed.
 - **Reading `:domain` as an `Ash.can?/3` option.** It is consumed before option
   validation by `can?/3`, but `Ash.can/3` rejects it outright. Do not thread it
   through.

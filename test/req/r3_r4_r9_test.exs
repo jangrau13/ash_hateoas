@@ -10,7 +10,7 @@ defmodule AshHateoas.Req.R3R4R9Test do
   use ExUnit.Case, async: false
 
   alias AshHateoas.Backbone
-  alias AshHateoas.Test.{Actor, Document, Endpoint, McpEndpoint, Order, Quiet}
+  alias AshHateoas.Test.{Actor, Document, Endpoint, Order, Quiet}
 
   @admin %Actor{id: "req-admin", role: :admin}
   @viewer %Actor{id: "req-viewer", role: :viewer}
@@ -59,16 +59,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
         |> Enum.reject(&(&1 in structural_link_names()))
         |> MapSet.new()
 
-      # MCP carries a record's affordances in that record's representation, the
-      # peer of JSON:API's per-record `links` — not in `tools/list`, which names
-      # no record and so answers the collection-level question instead.
-      mcp_names =
-        Order
-        |> read_record(order.id)
-        |> Map.fetch!("affordances")
-        |> Enum.map(& &1["name"])
-        |> MapSet.new()
-
       assert MapSet.equal?(json_api_names, backbone_names),
              """
              JSON:API rendered a different action set than the backbone produced.
@@ -76,43 +66,19 @@ defmodule AshHateoas.Req.R3R4R9Test do
                json:api: #{inspect(Enum.sort(json_api_names))}
              """
 
-      assert MapSet.equal?(mcp_names, backbone_names),
-             """
-             MCP rendered a different action set than the backbone produced.
-               backbone: #{inspect(Enum.sort(backbone_names))}
-               mcp:      #{inspect(Enum.sort(mcp_names))}
-             """
     end
 
-    test "MCP never emits JSON:API idiom, JSON:API never emits MCP idiom", %{
-      doc: doc,
-      session: session
-    } do
-      # R3 table: an affordance is a `links.<action>` object in JSON:API and a
-      # tool in tools/list for MCP. "never one transport tunnelled through
-      # another" — so neither encoding may leak the other's vocabulary.
-      order =
-        Order
-        |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
-        |> Ash.create!(authorize?: false)
-
-      for tool <- list_tools(session) do
-        refute Map.has_key?(tool, "href"),
-               "#{tool["name"]} carries an HTTP href — MCP is tunnelling JSON:API"
-
-        refute Map.has_key?(tool, "rel"),
-               "#{tool["name"]} carries a hypermedia rel — MCP is tunnelling JSON:API"
-
-        assert Map.has_key?(tool, "inputSchema"),
-               "#{tool["name"]} has no inputSchema — that is MCP's own field idiom"
-      end
-
+    test "an affordance is rendered in the transport's own idiom", %{doc: doc} do
+      # R3 table: an affordance is a `links.<action>` object in JSON:API —
+      # "never one transport tunnelled through another", so the encoding must
+      # not leak another transport's vocabulary.
       approve = links_for(get("/documents/#{doc.id}", @admin))["approve"]
 
       refute Map.has_key?(approve, "inputSchema"),
-             "JSON:API link carries an MCP inputSchema — JSON:API is tunnelling MCP"
+             "a JSON:API link carrying an MCP inputSchema is tunnelling"
 
       assert Map.has_key?(approve, "href"), "a JSON:API affordance must be a link object"
+      assert Map.has_key?(approve, "rel"), "and must carry a relation type"
     end
 
     test "the set is resolved per request from the requesting client's context", %{doc: doc} do
@@ -124,20 +90,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
       assert Map.has_key?(admin_links, "approve")
       refute Map.has_key?(viewer_links, "approve")
 
-      # Same probe on MCP: a nil actor must not be handed an admin's tool set.
-      order =
-        Order
-        |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
-        |> Ash.create!(authorize?: false)
-
-      s1 = unique("s1")
-      s2 = unique("s2")
-
-      # Two sessions at the same position with the same actor must agree —
-      # the set is a function of (actor, position), nothing else.
-      assert Enum.map(list_tools(s1), & &1["name"]) ==
-               Enum.map(list_tools(s2), & &1["name"]),
-             "the affordance set must be a pure function of actor and position"
     end
 
     test "adding a third adapter requires no backbone change" do
@@ -174,27 +126,11 @@ defmodule AshHateoas.Req.R3R4R9Test do
   # ------------------------------------------------------------------
 
   describe "R4: descriptions, defaults and constraints" do
-    test "the action description reaches both transports", %{doc: doc, session: session} do
-      # R3 table: action description renders as link title/meta in JSON:API and
-      # as the tool's description in MCP. R4: "The descriptor MUST surface ...
-      # the action's `description`".
+    test "the action description reaches the wire", %{doc: doc} do
+      # R4: "The descriptor MUST surface ... the action's `description`".
       approve = links_for(get("/documents/#{doc.id}", @admin))["approve"]
 
       assert approve["title"] == "Approve this document so it can be published."
-
-      order =
-        Order
-        |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
-        |> Ash.create!(authorize?: false)
-
-      confirm =
-        Order
-        |> read_record(order.id)
-        |> Map.fetch!("affordances")
-        |> Enum.find(&(&1["name"] == "confirm"))
-
-      assert confirm["description"] =~ "Confirm this order.",
-             "the action's declared description must reach MCP verbatim"
     end
 
     test "a sensitive argument's default never reaches EITHER transport", %{doc: doc} do
@@ -272,41 +208,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
              "a declared argument description must reach the client"
 
       assert note["description"] == "Why this is being approved."
-    end
-
-    test "the MCP inputSchema carries descriptions and enums too" do
-      # R3 table: "field descriptor (R4) -> the tool's inputSchema". R4's
-      # surfacing rules are transport-independent, so MCP must carry them as
-      # JSON Schema `description` / `enum`, not drop them.
-      schema = tool(list_tools(), "order_create")["inputSchema"]
-
-      reference =
-        get_in(schema, ["properties", "input", "properties", "reference"]) ||
-          get_in(schema, ["properties", "reference"])
-
-      assert reference, "create accepts :reference, so the schema must describe it"
-      assert is_map(reference)
-
-      # Order carries no enum/description arguments, so probe the richer
-      # descriptor through the backbone envelope the MCP renderer projects from:
-      # R4's surfacing rules must hold in the envelope every adapter reads.
-      approve =
-        Document
-        |> Ash.Changeset.for_create(:create, %{title: "schema", owner_id: "someone"})
-        |> Ash.create!(authorize?: false)
-        |> Backbone.for_record(@admin, domain: AshHateoas.Test.Domain)
-        |> Map.get(:approve)
-
-      assert approve, "approve must be advertised to an admin"
-
-      visibility = Enum.find(approve.fields, &(&1.name == :visibility))
-
-      assert visibility.constraints[:enum] == [:public, :private],
-             "the envelope must carry the enum so every adapter can project it"
-
-      assert visibility.description ||
-               Enum.find(approve.fields, &(&1.name == :notify)).description,
-             "the envelope must carry per-field descriptions for MCP to render"
     end
 
     test "a field's default is emitted when it is NOT sensitive", %{doc: doc} do
@@ -480,6 +381,30 @@ defmodule AshHateoas.Req.R3R4R9Test do
       end
     end
 
+    test "an affordance can be followed and invoked, not merely rendered", %{doc: doc} do
+      # R9: "Follow links; do not construct URLs." Every other test here reads
+      # documents; this one ACTS on one. Rendering an href that raises on
+      # invocation is the failure the profile exists to prevent, and only a
+      # write finds it — `ash_json_api` reaches for `AshJsonApi.OpenApi` when
+      # validating one, which needs `open_api_spex` in the host app's deps.
+      approve = links_for(get("/documents/#{doc.id}", @admin))["approve"]
+
+      conn =
+        :patch
+        |> Plug.Test.conn(approve["href"], Jason.encode!(%{"data" => %{"attributes" => %{}}}))
+        |> Plug.Conn.put_req_header("content-type", "application/vnd.api+json")
+        |> Plug.Conn.put_req_header("accept", "application/vnd.api+json")
+        |> Ash.PlugHelpers.set_actor(@admin)
+        |> Endpoint.call(Endpoint.init([]))
+
+      assert conn.status < 400,
+             "advertised #{approve["href"]} with method #{approve["meta"]["method"]}, " <>
+               "and following it answered #{conn.status}"
+
+      # And acting changed the state the affordance said it would.
+      assert get_in(Jason.decode!(conn.resp_body), ["data", "attributes", "state"]) == "approved"
+    end
+
     test "every link in a document resolves against the same base", %{doc: doc} do
       # R9: "Follow links; do not construct URLs." A client can only obey that
       # if every href in a document is followable as given. Affordance hrefs and
@@ -518,109 +443,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
     end
   end
 
-  describe "R9: MCP uses the resources primitive, not tools" do
-    test "resources/templates/list advertises each type as a URI template" do
-      # §5.2: "resources/templates/list — expose each resource *type* as an RFC
-      # 6570 URI template (e.g. `document://{id}`). This is the direct analogue
-      # of a collection route." And: "The adapter MUST use each for its purpose
-      # rather than modelling navigation as tools."
-      response = post(%{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/templates/list"})
-
-      templates = get_in(response, ["result", "resourceTemplates"])
-
-      assert is_list(templates) and templates != [],
-             """
-             resources/templates/list returned no templates, so MCP has no
-             navigation primitive. Response: #{inspect(response)}
-             """
-
-      template = hd(templates)
-
-      assert is_binary(template["uriTemplate"]),
-             "a resource template must carry a uriTemplate"
-
-      assert template["uriTemplate"] =~ "{",
-             "an RFC 6570 template must carry an expansion, got #{inspect(template["uriTemplate"])}"
-    end
-
-    test "resources/list enumerates addressable entries" do
-      # §5.2: "resources/list — enumerate concrete, addressable entries where
-      # that is meaningful".
-      response = post(%{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/list"})
-
-      assert is_list(get_in(response, ["result", "resources"])),
-             """
-             resources/list did not return a resource array.
-             Response: #{inspect(response)}
-             """
-    end
-
-    test "resources/read fetches by URI" do
-      # §5.2: "resources/read — fetch by URI." Navigation is only real if the
-      # advertised URI can actually be dereferenced.
-      order =
-        Order
-        |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
-        |> Ash.create!(authorize?: false)
-
-      templates =
-        post(%{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/templates/list"})
-        |> get_in(["result", "resourceTemplates"]) || []
-
-      template = Enum.find(templates, &(&1["uriTemplate"] =~ "order"))
-
-      assert template, "no order template to dereference"
-
-      uri = String.replace(template["uriTemplate"], ~r/\{[^}]+\}/, order.id)
-
-      response =
-        post(%{
-          "jsonrpc" => "2.0",
-          "id" => 2,
-          "method" => "resources/read",
-          "params" => %{"uri" => uri}
-        })
-
-      assert get_in(response, ["result", "contents"]),
-             """
-             resources/read on an advertised URI returned no contents.
-             uri: #{inspect(uri)}
-             response: #{inspect(response)}
-             """
-    end
-
-    test "the URI scheme encodes the domain/type/record hierarchy" do
-      # §5.2: "URIs MUST encode the domain/type/record hierarchy (custom schemes
-      # are explicitly permitted)."
-      templates =
-        post(%{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/templates/list"})
-        |> get_in(["result", "resourceTemplates"]) || []
-
-      assert templates != [], "no templates to inspect"
-
-      for template <- templates do
-        uri = template["uriTemplate"]
-
-        assert uri =~ ~r{^[a-z][a-z0-9+.\-]*://},
-               "#{inspect(uri)} is not a scheme-qualified URI"
-
-        assert uri =~ "order",
-               "#{inspect(uri)} does not encode the type, so the hierarchy is lost"
-      end
-    end
-
-    test "navigation is NOT modelled as tools" do
-      # §5.2: "The adapter MUST use each for its purpose rather than modelling
-      # navigation as tools." A tool named like a navigation verb means the
-      # split was not honoured.
-      names = Enum.map(list_tools(), & &1["name"])
-
-      for name <- names do
-        refute name =~ ~r/(^|_)(list|browse|navigate|get_by_uri|read_resource)(_|$)/,
-               "#{name} looks like navigation modelled as a tool"
-      end
-    end
-  end
 
   # ------------------------------------------------------------------
   # helpers
@@ -659,46 +481,9 @@ defmodule AshHateoas.Req.R3R4R9Test do
     |> get_in([action, "meta", "fields"]) || []
   end
 
-  defp list_tools(session \\ nil, actor \\ @admin) do
-    %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
-    |> post(session, actor)
-    |> get_in(["result", "tools"]) || []
-  end
 
-  defp read_record(resource, id, actor \\ @admin) do
-    uri = AshHateoas.Mcp.Resources.uri(resource, id)
 
-    %{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/read", "params" => %{"uri" => uri}}
-    |> post(nil, actor)
-    |> get_in(["result", "contents"])
-    |> hd()
-    |> Map.fetch!("text")
-    |> Jason.decode!()
-  end
 
-  defp post(body, session \\ nil, actor \\ @admin) do
-    conn =
-      :post
-      |> Plug.Test.conn("/", Jason.encode!(body))
-      |> Plug.Conn.put_req_header("content-type", "application/json")
-      |> Ash.PlugHelpers.set_actor(actor)
-
-    conn =
-      if session,
-        do: Plug.Conn.put_req_header(conn, "mcp-session-id", session),
-        else: conn
-
-    conn
-    |> McpEndpoint.call(McpEndpoint.init([]))
-    |> then(fn conn ->
-      case Jason.decode(conn.resp_body) do
-        {:ok, decoded} -> decoded
-        {:error, _} -> %{}
-      end
-    end)
-  end
-
-  defp tool(tools, name), do: Enum.find(tools, &(&1["name"] == name))
 
   defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 end

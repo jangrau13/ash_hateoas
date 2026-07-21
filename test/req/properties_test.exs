@@ -273,16 +273,6 @@ defmodule AshHateoas.Req.PropertiesTest do
                "sensitive default leaked into the JSON:API collection document " <>
                  "for actor #{inspect(actor)}"
 
-        # MCP rendering: the tool inputSchema.
-        mcp_json =
-          doc
-          |> affordances(actor)
-          |> AshHateoas.Mcp.Tools.render("document")
-          |> Jason.encode!()
-
-        refute mcp_json =~ @leak,
-               "sensitive default leaked into the MCP inputSchema for actor #{inspect(actor)}"
-
         # And the sensitive field is still ADVERTISED (R4: the client must know
         # to supply it) whenever :approve survives the gates.
         case affordances(doc, actor)[:approve] do

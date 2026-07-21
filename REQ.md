@@ -2,15 +2,16 @@
 
 One engine computes authorization- and state-aware **affordances** ("what may be
 done next"). Every transport is a **rendering** of that one engine's output:
-JSON:API today, MCP today, more later (UI action bar, CLI, HAL-FORMS). This
-document is the requirement set; implementation lives in the package (§5).
+JSON:API here, and — via the published profile — anything else built against the
+documents rather than against this package (§5.2). This document is the
+requirement set; implementation lives in the package (§5).
 
 > **Status:** design, not yet built. No `lib/` code exists here and none will —
 > this ships as **one standalone Ash package** carrying the core and both
 > renderings (§5).
 >
-> **Verified against** **ash 3.29.3 / ash_json_api 1.7.1 / ash_ai 0.7.2 /
-> spark ≥ 2.6**. Findings marked VERIFIED were read from those sources.
+> **Verified against** **ash 3.29.3 / ash_json_api 1.7.1 / spark ≥ 2.6**.
+> Findings marked VERIFIED were read from those sources.
 
 ---
 
@@ -64,17 +65,18 @@ that transport's own idiom — never a generic blob bolted onto a response, and
 never one transport tunnelled through another. A client asks in its own protocol
 and gets affordances in the form that protocol already understands.
 
-| Backbone output | rendered in JSON:API as | rendered in MCP as |
-|---|---|---|
-| an action that may be taken next | a `links.<action>` object | a tool in `tools/list` |
-| the affordance set for a state | the record's `links` | the `tools/list` result |
-| field descriptor (R4) | link `meta.fields` | the tool's `inputSchema` |
-| action `description` (R4) | link `title` / `meta` | the tool's `description` |
-| structural navigation (R9) | `collection`/domain/root links | the `resources/*` primitive |
+| Backbone output | rendered in JSON:API as |
+|---|---|
+| an action that may be taken next | a `links.<action>` object |
+| the affordance set for a state | the record's `links` |
+| field descriptor (R4) | link `meta.fields` |
+| action `description` (R4) | link `title` / `meta` |
+| structural navigation (R9) | `collection`/domain/root links |
 
-Adapters are **peers**. Neither is primary, neither is layered on the other, and
-adding a third (UI action bar, CLI, HAL-FORMS) MUST require no backbone change.
-Per-transport specifics are §5.
+Adding a transport MUST require no backbone change. A transport built against
+the published profile (§5.2) requires no change here at all — which is the
+stronger form of the same rule, and the one to prefer. Per-transport specifics
+are §5.
 
 **The set is resolved per request, from the requesting client's own context** —
 its actor, and the record or session position it is asking about. Two clients
@@ -100,9 +102,9 @@ Only the **set** of actions is dynamic — it lives in the map keys and is resol
 per record, actor and state at runtime. Everything below that key is fixed.
 
 The shape MUST be settled from the start: the renderer must not emit structurally
-different affordances across records or transports, MCP's `inputSchema` (§5.2)
-projects from it, and changing it after release is a breaking change for every
-client reading the links.
+different affordances across records or transports, every consumer of the
+profile projects from it, and changing it after release is a breaking change for
+every client reading the links.
 
 **Affordances stay out of the generated OpenAPI document.** They are a runtime
 hypermedia concern, discovered in the response — not part of the static API
@@ -133,8 +135,7 @@ One invariant:
 `Ash.can?/3` as Ash provides it, with its own defaults. Ash returns `true` when
 a decision cannot be reached without running queries (`maybe_is: true` is the
 `can?/3` default), so an affordance whose authorization is record-dependent and
-unresolved **is advertised**. This matches `AshAi.exposed_tools/1`, which
-filters MCP tools the same way.
+unresolved **is advertised**.
 
 The consequence is explicit and accepted: a client may occasionally be offered
 an action it turns out not to be permitted, and receive a `403` on invocation.
@@ -366,11 +367,11 @@ access, no reimplementation.
 resources and actions into an entirely different transport alongside
 `ash_json_api`, without either knowing about the other — the model stays the
 single source and each transport is an independent projection. That is exactly
-the relationship between the JSON:API and MCP adapters (§5).
+the relationship between this package and any consumer of its profile (§5.2).
 
-**Optional deps.** `ash_json_api`, `ash_ai` and `ash_state_machine` are all
-optional: installing the package gives the core plus whichever renderings the
-host app's deps support. A JSON:API-only app never loads the MCP module.
+**Optional deps.** `ash_json_api` and `ash_state_machine` are both optional:
+installing the package gives the core plus whichever renderings the host app's
+deps support.
 
 **Build order:**
 1. The backbone + tests — prove the `can?` gate against a real resource.
@@ -398,9 +399,8 @@ the backbone entirely — resources, routes, policies, state, the gate pipeline 
 and diverge only at the final encoding. An adapter contains **no affordance
 logic**: no policy checks, no state reasoning, no filtering of its own.
 
-Both are optional and independently installable (§4). An app with only
-`ash_json_api` gets the JSON:API adapter; an app with only `ash_ai` gets the MCP
-adapter; an app with both gets both, from one declaration.
+The JSON:API adapter is optional and independently installable (§4): an app with
+`ash_json_api` gets it, and an app without still has the backbone.
 
 ### 5.1 JSON:API adapter
 
@@ -501,109 +501,54 @@ renderer can switch to it as a **pure internal optimisation** — the backbone o
 is identical, so the renderer stays a thin, swappable layer and no consumer sees
 a change.
 
-### 5.2 MCP adapter
+### 5.2 Other transports build against the profile, not against this package
 
-An MCP tool *is* an affordance: "which tools should this agent be offered, given
-the current state?" is the question the backbone already answers.
+The MCP adapter that used to live here has been removed, and the reasoning is
+worth keeping.
 
-One protocol fact makes this fit: **`tools/list` is a live server-computed
-function**, not a fixed catalog — the server returns whatever it decides on each
-call, full replacement (MCP spec 2025-11-25, `server/tools`). So the list is
-recomputed per request against current state, and a client that re-lists after
-acting always sees the truth.
+An in-process adapter can reach `Ash.can?/3`, the record, and the actor — which
+is genuinely more capable than anything working from the rendered document. But
+it also means every transport is a module in this package, each coupled to
+whichever client library that protocol happens to favour, and each a reason for
+this package to carry another optional dependency.
 
-**The MCP adapter mirrors the JSON:API adapter one-to-one, in MCP's own
-language.** Neither is a client of the other (§5.3); both project the same
-backbone output. The correspondence is what keeps them peers:
+The alternative is that a transport is a **client of the published documents**.
+`documentation/profiles/affordances.md` describes them completely enough to
+drive: the actions available now, their methods, their inputs with types,
+constraints and descriptions, and the navigation between records. A consumer
+that reads those needs no knowledge of Ash, of Spark, or of this package.
 
-| JSON:API | MCP |
-|---|---|
-| root entry document | `resources/templates/list` |
-| collection (`GET /orders`) | `resources/list` |
-| record + its `links` (`GET /orders/123`) | `resources/read` + its affordances |
-| following a link | `tools/call` |
+`hateoas_mcp` is the demonstration: an MCP server over HTTP that discovers a
+service's types from its root document, turns affordances into tools, and drives
+a state machine it was never told about — with no Ash dependency at all. It is
+also the test of the claim. Anything a transport needs that the profile does not
+publish is a gap in the profile, and belongs here rather than in the consumer.
 
-A record's affordances therefore travel **in that record's representation**, as
-they do in JSON:API — control state lives in the representation, not in a
-side-channel.
+What this package therefore owes a transport:
 
-**How record-scoped affordances reach `tools/list` is an open design question**
-(§6). `tools/list` takes no arguments, so the server cannot be told which records
-a client cares about without holding something across requests. Whatever
-mechanism is chosen MUST be documented as a deliberate, bounded exception rather
-than left implicit.
+- **completeness** — a document must carry everything needed to act on it, since
+  the consumer cannot ask a second question of the backbone
+- **followability** — every URL in a document must resolve as given; a consumer
+  told to follow links and construct nothing has no way to repair a wrong one
+- **honesty about state** — an affordance is advertised only when it is
+  available now, because a consumer will offer it and a client will act on it
 
-**Authorization is already built in (VERIFIED, `ash_ai` 0.7.2).**
-`AshAi.exposed_tools/1` filters every candidate tool through an `Ash.can?`-backed
-check against the connection's actor, domain, resource, action and tenant — the
-same single-source-of-truth guarantee as R6, already satisfied on this side.
+### 5.3 An in-package adapter never layers on another's output
 
-Two nuances of that check, which the adapter MUST reconcile with R6: it runs with
-`maybe_is: true, run_queries?: false` (**fails open** on undecidable, to keep
-`tools/list` cheap — the opposite of R6's fail-closed stance), and it
-short-circuits when a resource has no authorizers. Left as-is, MCP over-offers
-where JSON:API under-offers; the adapter MUST NOT inherit a laxer posture than
-R6 requires.
+Within this package, no adapter may be implemented as a client of another's
+rendered output: it would lose the backbone's structured set to a
+serialize/re-parse round trip, and inherit the other transport's encoding
+constraints to reach data it already has in process.
 
-**What the adapter adds: the state gate.** `exposed_tools` filters by `can?`, not
-by transitions, so unmodified it offers a transition from states it is not legal
-from.
-Supplying the backbone's state-gated set is the adapter's job.
+This does **not** forbid an out-of-package consumer from reading the documents
+over HTTP — that is §5.2, and it is the intended way to add a transport. The
+distinction is where the code lives. A module in this package has the backbone
+in hand and should use it; a separate package does not, and pays a round trip
+for independence from Ash. Both are coherent; mixing them is not.
 
-**Navigation (R9) uses MCP's `resources` primitive, not tools.** MCP already
-separates the two concerns, and the split maps onto ours exactly: **tools** are
-*actions you invoke* (affordances); **resources** are *addressable data you read
-and navigate* (navigation). The adapter MUST use each for its purpose rather than
-modelling navigation as tools.
-
-- **`resources/templates/list`** — expose each resource *type* as an RFC 6570
-  **URI template** (e.g. `document://{id}`). This is the direct analogue of a
-  collection route: it advertises a type without enumerating every record, which
-  is what makes "enter anywhere" tractable for large collections.
-- **`resources/list`** — enumerate concrete, addressable entries where that is
-  meaningful; it is paginated.
-- **`resources/read`** — fetch by URI.
-- **`resource_link` content** — a tool result MAY return links to resources. This
-  is hypermedia navigation *inside* MCP: acting on something hands the agent its
-  onward links, exactly as a JSON:API response does.
-- **`notifications/resources/list_changed`** and, where useful,
-  `resources/subscribe` + `notifications/resources/updated` — keep navigation
-  current, mirroring the `tools/list_changed` loop above.
-
-URIs MUST encode the domain/type/record hierarchy (custom schemes are explicitly
-permitted). Collection-level affordances (R9) are always available — the direct
-analogue of a JSON:API collection's top-level `links` — and do not depend on any
-notion of a record being "current".
-
-**Context resolution.** The actor comes from the connection (AshAuthentication API
-key / token). **Delivery mechanism:** `tools/list` for affordances, `resources/*`
-for navigation, `resource_link` on tool results for onward links.
-
-**Constraint: `listChanged` must not be advertised unless it is emitted.**
-`listChanged` / `notifications/tools/list_changed` is **ratified and in the spec
-today**, and Claude Code honours it. Advertising the capability while never
-sending the notification is worse than advertising `false`, because it tells a
-client not to poll. Either wire it up or do not claim it.
-
-**Emerging protocol work** (not required; the above rests only on ratified
-`list_changed`):
-- **SEP-1821 (Dynamic Tool Discovery)** — optional `query` string on `tools/list`
-  plus a `ServerCapabilities.tools.filtering` flag. **Draft, seeking sponsor.**
-  Adopt only once ratified and supported in AshAI.
-- **SEP-1300 (Groups & Tags filtering)** — **rejected.** Noted so it is not
-  re-proposed.
-
-### 5.3 Adapters do not layer on each other
-No adapter may be implemented as a client of another's output. Bridging MCP over
-the JSON:API HTTP surface would lose the backbone's structured set to a
-serialize/re-parse round trip, add a network hop and a second auth story, and
-make MCP inherit JSON:API's encoding constraints — all to reach data it already
-has in process.
-
-The one thing MCP legitimately reuses is JSON:API's **declared routes**, read via
-introspection, so route declarations stay the single source for what exists and
-where it lives. Where `ash_json_api` is absent, the candidate set falls back to
-the resource's actions directly.
+Route declarations stay the single source for what exists and where it lives.
+Where `ash_json_api` is absent, the candidate set falls back to the resource's
+actions directly.
 
 ---
 
