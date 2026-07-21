@@ -125,7 +125,7 @@ defmodule AshHateoas.ConformanceTest do
     end
 
     test "the collection entry point applies no state gate" do
-      # Order's actions are all state-gated at record level; at type level there
+      # Order's actions are all state-gated at record level; at collection level there
       # is no record to have a state, so :create survives.
       assert Map.has_key?(AshHateoas.affordances(Order, @actor, domain: Domain), :create)
     end

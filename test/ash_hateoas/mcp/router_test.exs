@@ -4,8 +4,7 @@ defmodule AshHateoas.Mcp.RouterTest do
   """
 
   use ExUnit.Case, async: false
-
-  alias AshHateoas.Mcp.Session
+  alias AshHateoas.Mcp.Resources
   alias AshHateoas.Test.{Actor, McpEndpoint, Order}
 
   @actor %Actor{id: "agent-1", role: :admin}
@@ -17,66 +16,89 @@ defmodule AshHateoas.Mcp.RouterTest do
       |> Ash.create!(authorize?: false)
 
     session = unique("session")
-    on_exit(fn -> Session.clear(session) end)
 
     %{order: order, session: session}
   end
 
-  describe "tools/list reflects the session's position (§5.2)" do
-    test "with no record in focus, offers type-level tools" do
+  describe "tools/list is collection-level and stateless (§5.2)" do
+    test "offers what can be done without a record in hand" do
       names = tool_names(list_tools())
 
       assert "order_create" in names,
-             "the cold-start case must offer what can be done without a record"
+             "a client that has just arrived must be told what it may do"
     end
 
-    test "with a record in focus, offers its state-legal transitions", %{
-      order: order,
-      session: session
-    } do
-      Session.focus(session, Order, order.id)
-      names = tool_names(list_tools(session))
+    test "withholds record-level transitions, which need a record to act on" do
+      names = tool_names(list_tools())
 
-      assert "order_confirm" in names
-      refute "order_ship" in names, ":ship is not legal from :pending"
+      refute "order_confirm" in names,
+             "tools/list names no record, so it cannot offer a record's transitions"
+
+      refute "order_ship" in names
     end
 
-    test "the tool list changes as the record transitions", %{order: order, session: session} do
-      Session.focus(session, Order, order.id)
+    test "answers identically whatever the client read first", %{order: order} do
+      before = tool_names(list_tools())
 
-      before = tool_names(list_tools(session))
+      # Dereferencing a record must not change what a later tools/list returns.
+      # A read is safe: it moves no cursor, because there is no cursor.
+      read_resource(Resources.uri(Order, order.id))
 
-      order
-      |> Ash.Changeset.for_update(:confirm, %{})
-      |> Ash.update!(authorize?: false)
-
-      after_confirm = tool_names(list_tools(session))
-
-      assert "order_confirm" in before
-      refute "order_confirm" in after_confirm
-
-      assert "order_ship" in after_confirm,
-             "this is the loop: acting changes state, which changes the tools"
+      assert tool_names(list_tools()) == before,
+             "a read changed the tool list — server-held position has crept back in"
     end
 
-    test "tool names are namespaced by resource", %{order: order, session: session} do
-      Session.focus(session, Order, order.id)
+    test "answers identically for a session id and for none", %{session: session} do
+      assert tool_names(list_tools(session)) == tool_names(list_tools()),
+             "the tool list varies by actor, never by session"
+    end
 
-      for name <- tool_names(list_tools(session)) do
-        assert String.starts_with?(name, "order_"),
+    test "tool names are namespaced by resource" do
+      for name <- tool_names(list_tools()) do
+        assert String.contains?(name, "_"),
                "MCP tool names are flat, so they must not collide across resources"
       end
     end
   end
 
-  describe "inputSchema (§5.2)" do
-    test "nests inputs under a top-level `input` property", %{order: order, session: session} do
-      Session.focus(session, Order, order.id)
+  describe "a record's affordances travel in its representation (§5.2)" do
+    test "resources/read carries the state-legal transitions", %{order: order} do
+      body = read_record(Order, order.id)
 
-      schema = tool(list_tools(session), "order_cancel")["inputSchema"]
+      names = Enum.map(body["affordances"], & &1["name"])
+
+      assert "confirm" in names
+      refute "ship" in names, ":ship is not legal from :pending"
+    end
+
+    test "the affordances follow the record's state", %{order: order} do
+      order
+      |> Ash.Changeset.for_update(:confirm, %{})
+      |> Ash.update!(authorize?: false)
+
+      names = Order |> read_record(order.id) |> Map.fetch!("affordances") |> Enum.map(& &1["name"])
+
+      assert "ship" in names,
+             "this is the loop: acting changes state, which changes what may be done next"
+
+      refute "confirm" in names
+    end
+
+    test "navigation says where the client may go next", %{order: order} do
+      body = read_record(Order, order.id)
+
+      assert get_in(body, ["navigation", "collection", "method"]) == "resources/list",
+             "a record must tell the client how to reach its collection"
+    end
+  end
+
+  describe "inputSchema (§5.2)" do
+    test "nests inputs under a top-level `input` property" do
+      schema = tool(list_tools(), "order_create")["inputSchema"]
 
       assert schema["type"] == "object"
-      assert Map.has_key?(schema, "properties")
+      assert Map.has_key?(schema["properties"], "input"),
+             "ash_ai reads action inputs from arguments[\"input\"], so the schema must nest them there"
     end
 
     test "advertises accepted attributes, not just arguments" do
@@ -129,11 +151,7 @@ defmodule AshHateoas.Mcp.RouterTest do
   end
 
   describe "authorization still applies" do
-    test "an actor who may not act is offered nothing they cannot do", %{
-      order: order,
-      session: session
-    } do
-      Session.focus(session, Order, order.id)
+    test "an actor who may not act is offered nothing they cannot do", %{session: session} do
 
       # Order's policies are permissive, so this asserts the actor is threaded
       # through at all rather than a specific denial.
@@ -143,24 +161,76 @@ defmodule AshHateoas.Mcp.RouterTest do
     end
   end
 
-  describe "session store" do
-    test "position/1 is nil for an unknown session" do
-      assert Session.position("never-seen") == nil
+  describe "acting hands back the onward links (§5.2)" do
+    test "a record-level call returns a resource_link to what it changed", %{order: order} do
+      content = call_tool("order_confirm", %{"id" => order.id, "input" => %{}})
+
+      link = Enum.find(content, &(&1["type"] == "resource_link"))
+
+      assert link, "acting on a record must hand the agent its onward links"
+      assert link["uri"] == Resources.uri(Order, order.id)
     end
 
-    test "focus/3 then position/1 round-trips", %{order: order, session: session} do
-      Session.focus(session, Order, order.id)
+    test "the link names what became available", %{order: order} do
+      content = call_tool("order_confirm", %{"id" => order.id, "input" => %{}})
+      link = Enum.find(content, &(&1["type"] == "resource_link"))
 
-      assert %{resource: Order, id: id} = Session.position(session)
-      assert id == order.id
+      assert link["description"] =~ "ship",
+             "the agent learns the consequence of its own action from the response to it"
     end
 
-    test "clear/1 returns a session to the cold-start case", %{order: order, session: session} do
-      Session.focus(session, Order, order.id)
-      Session.clear(session)
+    test "the link is annotated for the model", %{order: order} do
+      content = call_tool("order_confirm", %{"id" => order.id, "input" => %{}})
+      link = Enum.find(content, &(&1["type"] == "resource_link"))
 
-      assert Session.position(session) == nil
+      assert link["annotations"]["audience"] == ["assistant"]
     end
+
+    test "the tool's own text result is preserved", %{order: order} do
+      content = call_tool("order_confirm", %{"id" => order.id, "input" => %{}})
+
+      assert Enum.any?(content, &(&1["type"] == "text")),
+             "enrichment must add to the result, never replace it"
+    end
+
+    test "a create links to the record it just made" do
+      content = call_tool("order_create", %{"input" => %{"reference" => unique("ref")}})
+
+      link = Enum.find(content, &(&1["type"] == "resource_link"))
+
+      assert link,
+             "a create has no subject in its arguments, but execution returns the record — " <>
+               "so the agent is handed the URI of what it just created"
+
+      assert link["description"] =~ "confirm",
+             "a fresh order is :pending, so :confirm is what it may do next"
+    end
+  end
+
+  defp read_record(resource, id) do
+    resource
+    |> Resources.uri(id)
+    |> read_resource()
+  end
+
+  defp read_resource(uri) do
+    %{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/read", "params" => %{"uri" => uri}}
+    |> post()
+    |> get_in(["result", "contents"])
+    |> hd()
+    |> Map.fetch!("text")
+    |> Jason.decode!()
+  end
+
+  defp call_tool(name, arguments) do
+    %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "tools/call",
+      "params" => %{"name" => name, "arguments" => arguments}
+    }
+    |> post()
+    |> get_in(["result", "content"])
   end
 
   defp list_tools(session \\ nil, actor \\ @actor) do

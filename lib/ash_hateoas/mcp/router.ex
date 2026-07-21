@@ -44,7 +44,7 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
     use Plug.Router, copy_opts_to_assign: :router_opts
 
     alias AshAi.Mcp.Server
-    alias AshHateoas.Mcp.{Resources, Session, Tools}
+    alias AshHateoas.Mcp.{Resources, Tools}
 
     plug(Plug.Parsers,
       parsers: [:json],
@@ -81,9 +81,7 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
     end
 
     delete "/" do
-      id = session_id(conn)
-      Session.clear(id)
-      Server.handle_delete(conn, id)
+      Server.handle_delete(conn, session_id(conn))
     end
 
     match _ do
@@ -103,20 +101,14 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       %{"jsonrpc" => "2.0", "method" => "notifications/tools/list_changed"}
     end
 
-    @doc """
-    Point a session at a record, so the next `tools/list` reflects its state.
-    """
-    @spec focus(String.t(), module(), term()) :: :ok
-    defdelegate focus(session_id, resource, id), to: Session
-
     # ── Interception ──────────────────────────────────────────────────────────
 
-    defp intercept(%{"method" => "tools/list", "id" => id}, session_id, conn, opts) do
+    defp intercept(%{"method" => "tools/list", "id" => id}, _session_id, conn, opts) do
       {:handled,
        %{
          "jsonrpc" => "2.0",
          "id" => id,
-         "result" => %{"tools" => tools(session_id, conn, opts)}
+         "result" => %{"tools" => tools(conn, opts)}
        }}
     end
 
@@ -169,7 +161,7 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
 
     defp intercept(
            %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri}},
-           session_id,
+           _session_id,
            conn,
            opts
          ) do
@@ -188,15 +180,11 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
 
       case result do
         {:ok, contents} ->
-          # Reading a record IS the focus signal: MCP has no separate "focus"
-          # verb, and `resources/read` is the client saying "I am looking at
-          # this record now". Focusing here is what makes the record-level
-          # state gate reachable over pure MCP — the next `tools/list` returns
-          # that record's transitions rather than the cold-start type-level
-          # set. Best-effort: a read that cannot be located still returns the
-          # record, it just does not move focus.
-          maybe_focus(session_id, uri, domain_resources)
-
+          # No side effect. A read is safe and idempotent, and the URI in the
+          # request already carries the position a session cursor used to hold
+          # — the contents include the record's affordances and links, so
+          # dereferencing tells the client both what it may do and where it may
+          # go, without the server remembering anything.
           {:handled, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"contents" => [contents]}}}
 
         {:error, reason} ->
@@ -209,7 +197,196 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       end
     end
 
+    # Acting on a record hands the agent its onward links (§5.2). ash_ai runs
+    # the action; we enrich what it returns.
+    #
+    # This is the reaction loop without a session: a tool call is the one moment
+    # the server knows both WHICH record changed and THAT it changed, so the
+    # consequence travels back in the response to the call that caused it. No
+    # cursor to update, no notification to push, no polling — the client learns
+    # the new state from the same message that reports the write.
+    #
+    # A third party's change is NOT covered by this and cannot be: the client
+    # re-reads, exactly as a JSON:API client re-GETs.
+    defp intercept(
+           %{
+             "method" => "tools/call",
+             "id" => id,
+             "params" => %{"name" => tool_name, "arguments" => arguments}
+           },
+           _session_id,
+           conn,
+           opts
+         )
+         when is_map(arguments) and is_binary(tool_name) do
+      actor = Ash.PlugHelpers.get_actor(conn)
+      tenant = Ash.PlugHelpers.get_tenant(conn)
+
+      context = %{
+        actor: actor,
+        tenant: tenant,
+        context: Ash.PlugHelpers.get_context(conn) || %{}
+      }
+
+      case execute(tool_name, arguments, context, opts) do
+        {:ok, text, resource, record} ->
+          {:handled,
+           %{
+             "jsonrpc" => "2.0",
+             "id" => id,
+             "result" => %{
+               "isError" => false,
+               "content" =>
+                 [%{"type" => "text", "text" => text}] ++
+                   onward_links(resource, record, actor, tenant, opts)
+             }
+           }}
+
+        {:error, :unknown_tool} ->
+          {:handled,
+           %{
+             "jsonrpc" => "2.0",
+             "id" => id,
+             "error" => %{"code" => -32602, "message" => "Tool not found: #{tool_name}"}
+           }}
+
+        {:error, text} ->
+          {:handled,
+           %{
+             "jsonrpc" => "2.0",
+             "id" => id,
+             "result" => %{
+               "isError" => true,
+               "content" => [%{"type" => "text", "text" => to_string(text)}]
+             }
+           }}
+      end
+    end
+
     defp intercept(_message, _session_id, _conn, _opts), do: :delegate
+
+    # Run the action a tool names.
+    #
+    # ash_ai's `tools/call` resolves names through `AshAi.Info.tools/1`, which
+    # reads an `ai do ... end` DSL block — so an action only becomes callable if
+    # an author declared it. That is the opposite of R1: we derive every routed
+    # action, so delegating would advertise tools that answer "Tool not found".
+    #
+    # `AshAi.Tools.execute/3` takes a plain `%AshAi.Tool{}` struct and never
+    # asks where it came from, so we build one from the affordance and keep
+    # ash_ai's argument coercion, action running and error formatting. Discovery
+    # is ours; execution stays theirs.
+    defp execute(tool_name, arguments, context, opts) do
+      with {:ok, resource, action_name} <- resolve(tool_name, opts),
+           {:ok, action} <- fetch_action(resource, action_name) do
+        tool = %AshAi.Tool{
+          name: String.to_atom(tool_name),
+          resource: resource,
+          action: action,
+          domain: Ash.Resource.Info.domain(resource),
+          # nil means "the primary key", read from the TOP-LEVEL arguments —
+          # which is exactly where `Tools.render/3` pins the subject as a
+          # `const`, so an update or destroy finds its record.
+          identity: nil,
+          arguments: [],
+          load: []
+        }
+
+        case AshAi.Tools.execute(tool, arguments, context) do
+          {:ok, text, record} -> {:ok, text, resource, record}
+          {:error, reason} -> {:error, reason}
+        end
+      end
+    end
+
+    defp fetch_action(resource, action_name) do
+      case Ash.Resource.Info.action(resource, action_name) do
+        nil -> {:error, :unknown_tool}
+        action -> {:ok, action}
+      end
+    end
+
+    # Tool names are `<type_prefix>_<action>`, so the longest matching prefix
+    # identifies the resource. Longest wins: `order_line` must not resolve as
+    # `order` when both exist.
+    defp resolve(tool_name, opts) do
+      opts
+      |> resources(Keyword.get(opts, :domain))
+      |> Enum.filter(&String.starts_with?(tool_name, type_prefix(&1) <> "_"))
+      |> Enum.max_by(&String.length(type_prefix(&1)), fn -> nil end)
+      |> case do
+        nil ->
+          {:error, :unknown_tool}
+
+        resource ->
+          prefix = type_prefix(resource) <> "_"
+          action = String.replace_prefix(tool_name, prefix, "")
+
+          {:ok, resource, String.to_existing_atom(action)}
+      end
+    rescue
+      # String.to_existing_atom raises for a name no action ever used.
+      _ -> {:error, :unknown_tool}
+    end
+
+    # Acting on a record hands the agent its onward links (§5.2).
+    #
+    # The record comes straight from execution, so there is no reload and no
+    # guessing which record was touched — a create is covered too, which the
+    # arguments alone could not have told us.
+    #
+    # A collection-level result (a read returning many, or a generic action with
+    # no record) gets no link: there is no single record to point at.
+    defp onward_links(resource, %{__struct__: resource} = record, actor, tenant, opts) do
+      uri = Resources.uri(resource, primary_key(resource, record))
+
+      affordances =
+        AshHateoas.affordances(record, actor,
+          domain: Keyword.get(opts, :domain),
+          tenant: tenant
+        )
+
+      [
+        %{
+          "type" => "resource_link",
+          "uri" => uri,
+          "name" => uri,
+          "mimeType" => "application/json",
+          "description" => onward_description(affordances),
+          # The spec sanctions this exact case: "Resource links returned by
+          # tools are not guaranteed to appear in the results of a
+          # resources/list request." The link is for the model, not the user,
+          # and it is the most important thing in the result — without it the
+          # agent does not learn that its action changed what it may do next.
+          "annotations" => %{"audience" => ["assistant"], "priority" => 0.9}
+        }
+      ]
+    rescue
+      # Enrichment must never lose a result whose action already ran.
+      _ -> []
+    end
+
+    defp onward_links(_resource, _record, _actor, _tenant, _opts), do: []
+
+    # What the agent may do NEXT, named. The link alone says "re-read this";
+    # naming the affordances means the agent knows whether that is worth a
+    # round trip.
+    defp onward_description(affordances) when map_size(affordances) == 0 do
+      "No further actions are available on this record."
+    end
+
+    defp onward_description(affordances) do
+      names = affordances |> Map.keys() |> Enum.sort() |> Enum.map_join(", ", &to_string/1)
+
+      "Now available on this record: #{names}."
+    end
+
+    defp primary_key(resource, record) do
+      case Ash.Resource.Info.primary_key(resource) do
+        [key] -> Map.get(record, key)
+        keys -> keys |> Enum.map(&Map.get(record, &1)) |> Enum.join(",")
+      end
+    end
 
     defp advertise_list_changed(response) when is_binary(response) do
       response
@@ -220,40 +397,24 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       )
     end
 
-    defp tools(session_id, conn, opts) do
-      actor = Ash.PlugHelpers.get_actor(conn)
-      tenant = Ash.PlugHelpers.get_tenant(conn)
-      domain = Keyword.get(opts, :domain)
-
-      case Session.position(session_id) do
-        # A record is in focus: record-level affordances, state gate applies.
-        %{resource: resource, id: id} ->
-          case load(resource, id, actor, tenant) do
-            nil ->
-              collection_tools(opts, actor, tenant, domain)
-
-            record ->
-              record
-              |> AshHateoas.affordances(actor, domain: domain, tenant: tenant)
-              |> Tools.render(type_prefix(resource), subject: subject(resource, record))
-          end
-
-        # Cold start: no record, so type-level affordances across the domain.
-        nil ->
-          collection_tools(opts, actor, tenant, domain)
-      end
-    end
-
-    # The primary key of the focused record, so a record-level tool can name
-    # its own subject. Multi-key primary keys are skipped rather than guessed
-    # at: there is no single field to put in the schema.
-    defp subject(resource, record) do
-      case Ash.Resource.Info.primary_key(resource) do
-        [field] -> %{field: field, value: Map.get(record, field)}
-        _ -> nil
-      end
-    rescue
-      _ -> nil
+    # Collection-level affordances across the domain, for every client alike.
+    #
+    # `tools/list` carries no reference to a record, so there is nothing in the
+    # request that could scope this to one — and inferring a scope from what the
+    # client read earlier would mean holding a position across requests, which
+    # is the cookie shape Fielding's second constraint rules out. The list is
+    # therefore the collection-level surface, the direct analogue of a JSON:API
+    # collection's top-level `links`.
+    #
+    # A record's own affordances live in its representation, reached by
+    # dereferencing its URI with `resources/read`.
+    defp tools(conn, opts) do
+      collection_tools(
+        opts,
+        Ash.PlugHelpers.get_actor(conn),
+        Ash.PlugHelpers.get_tenant(conn),
+        Keyword.get(opts, :domain)
+      )
     end
 
     defp collection_tools(opts, actor, tenant, domain) do
@@ -275,14 +436,6 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       _ -> []
     end
 
-    defp load(resource, id, actor, tenant) do
-      case Ash.get(resource, id, actor: actor, tenant: tenant, authorize?: true) do
-        {:ok, record} -> record
-        _ -> nil
-      end
-    rescue
-      _ -> nil
-    end
 
     # Tool names are flat in MCP, so they are namespaced by resource to avoid
     # collisions between two resources with an :approve action.
@@ -291,19 +444,6 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       |> Module.split()
       |> List.last()
       |> Macro.underscore()
-    end
-
-    # Move session focus to the record a resources/read addressed, if it
-    # resolves to a known resource. A nil session id (a stateless client) or an
-    # unresolvable URI is a no-op — focus is an optimisation, never a
-    # correctness requirement.
-    defp maybe_focus(nil, _uri, _resources), do: :ok
-
-    defp maybe_focus(session_id, uri, resources) do
-      case Resources.locate(uri, resources) do
-        {:ok, resource, id} -> Session.focus(session_id, resource, id)
-        {:error, _} -> :ok
-      end
     end
 
     defp put_resp_headers(conn, headers) do

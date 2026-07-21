@@ -179,7 +179,7 @@ Requirements:
   `enabled?` declaration per resource, with a domain-level default it inherits,
   so a deployment can turn a hot endpoint off without forking.
 - **Collections never compute per-record affordances.** A collection response
-  carries **type-level** affordances only (`create`, index-style reads) in its
+  carries **collection-level** affordances only (`create`, index-style reads) in its
   top-level `links`; records inside it carry navigation but no affordances.
   This removes the `M × N` multiplication *structurally* rather than defaulting
   it off, so cost on a collection is `N` — independent of page size — and there
@@ -571,9 +571,9 @@ modelling navigation as tools.
   current, mirroring the `tools/list_changed` loop above.
 
 URIs MUST encode the domain/type/record hierarchy (custom schemes are explicitly
-permitted). Collection-level affordances (R9) are always available — they are the
-type-level surface, the direct analogue of a JSON:API collection's top-level
-`links`, and do not depend on any notion of a record being "current".
+permitted). Collection-level affordances (R9) are always available — the direct
+analogue of a JSON:API collection's top-level `links` — and do not depend on any
+notion of a record being "current".
 
 **Context resolution.** The actor comes from the connection (AshAuthentication API
 key / token). **Delivery mechanism:** `tools/list` for affordances, `resources/*`

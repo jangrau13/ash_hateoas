@@ -135,7 +135,7 @@ defmodule AshHateoas.Req.R6R7R8Test do
     # Producing a genuinely undecidable decision is subtle: with the record
     # supplied as `data:`, Ash resolves even relationship-traversing
     # expressions exactly. Undecidability requires `run_queries?: false`, or a
-    # type-level (no record) question about a record-dependent policy. Both are
+    # collection-level (no record) question about a record-dependent policy. Both are
     # covered below, and both are verified to actually diverge — a posture test
     # whose undecidable branch never executes proves nothing.
 
@@ -182,7 +182,7 @@ defmodule AshHateoas.Req.R6R7R8Test do
     end
 
     test "an undecidable verdict is not suppressed by a fail-closed gate" do
-      # Isolate authorization posture from R8's structural type-level filter:
+      # Isolate authorization posture from R8's structural collection-level filter:
       # compare the gated set against the SAME pipeline with gates disabled.
       # Anything present ungated but absent gated was removed by the gates, and
       # for an undecidable verdict R6 says the gate must not be what removes it.
@@ -312,15 +312,15 @@ defmodule AshHateoas.Req.R6R7R8Test do
       names = Order |> affordances(@admin) |> Map.keys() |> MapSet.new()
 
       refute MapSet.member?(names, :confirm),
-             "record-level transitions are not type-level affordances"
+             "record-level transitions are not collection-level affordances"
 
       assert MapSet.member?(names, :create),
-             "the type-level entry point must still offer :create"
+             "the collection-level entry point must still offer :create"
     end
   end
 
   # A resource whose policy traverses a relationship. With `run_queries?: false`
-  # — or asked at type level, where there is no record — Ash cannot reach a
+  # — or asked at collection level, where there is no record — Ash cannot reach a
   # verdict and returns :maybe, which `maybe_is: true` resolves to true.
   defmodule Undecidable do
     @moduledoc false
@@ -647,7 +647,7 @@ defmodule AshHateoas.Req.R6R7R8Test do
     end
   end
 
-  describe "R8: collections carry ONLY type-level affordances" do
+  describe "R8: collections carry ONLY collection-level affordances" do
     setup %{editor: editor} do
       # Several records, all owned by the editor, so per-record affordances
       # would definitely be non-empty if they were being computed.
@@ -655,7 +655,7 @@ defmodule AshHateoas.Req.R6R7R8Test do
       %{docs: docs, editor: editor}
     end
 
-    test "the type-level set contains create and excludes record-only actions" do
+    test "the collection-level set contains create and excludes record-only actions" do
       names = Document |> affordances(@admin) |> Map.keys() |> MapSet.new()
 
       assert MapSet.member?(names, :create)
@@ -677,15 +677,15 @@ defmodule AshHateoas.Req.R6R7R8Test do
       end
     end
 
-    test "the collection's top-level links carry the type-level affordances" do
+    test "the collection's top-level links carry the collection-level affordances" do
       body = collection_body("/documents", @admin)
 
       assert Map.has_key?(body["links"], "create"),
              "R8/R9: the cold-start client must be told it may create"
     end
 
-    test "type-level affordance count is independent of page size", %{editor: editor} do
-      # Add many more records; the type-level set must not grow.
+    test "collection-level affordance count is independent of page size", %{editor: editor} do
+      # Add many more records; the collection-level set must not grow.
       for _ <- 1..10, do: doc_for(editor.id)
 
       before_keys = Document |> affordances(@admin) |> Map.keys() |> Enum.sort()
@@ -768,7 +768,7 @@ defmodule AshHateoas.Req.R6R7R8Test do
       end
     end
 
-    test "a collection HTTP request evaluates the type-level set once, with no record leakage",
+    test "a collection HTTP request evaluates the collection-level set once, with no record leakage",
          %{editor: editor} do
       # Structural check: since collections never compute per-record
       # affordances, no record-dependent verdict can be cached or leaked.

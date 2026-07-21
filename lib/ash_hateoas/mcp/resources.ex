@@ -72,9 +72,38 @@ defmodule AshHateoas.Mcp.Resources do
            record
            |> serialize()
            |> Map.put("affordances", affordances(record, actor, opts))
+           |> Map.put("navigation", navigation(resource))
            |> Jason.encode!()
        }}
     end
+  end
+
+  @doc """
+  Where a client may go from this record — the R9 half of the representation.
+
+  JSON:API answers this with `collection` and `up` link objects. MCP has no
+  URI for a collection: a type is reached by *calling* `resources/list` or
+  `resources/templates/list`, not by dereferencing something. Emitting
+  `order://` to mirror JSON:API's shape would be a URI that `read/4` cannot
+  parse — a dead link that looks alive.
+
+  So navigation is expressed the way MCP actually addresses these things: the
+  record's own template, and the method to call to enumerate the type. The
+  client is told where it can go without being handed anything undereferenceable.
+
+  This travels inside the text blob because `resources/read` has nowhere else
+  to put it — the spec allows `contents` entries to carry text or binary data
+  and nothing else, so `resource_link` (a tool-result content type) is not
+  available here.
+  """
+  @spec navigation(module()) :: map()
+  def navigation(resource) do
+    %{
+      "collection" => %{
+        "method" => "resources/list",
+        "uriTemplate" => "#{scheme(resource)}://{id}"
+      }
+    }
   end
 
   # A record's representation carries its own affordances, exactly as the

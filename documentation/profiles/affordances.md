@@ -99,7 +99,7 @@ Each affordance is a member of a `links` object, keyed by the action name:
 3. **Never expose a private input.** If the server does not accept an input from
    clients, it must not appear as a field.
 
-4. **Collections carry type-level affordances only.** A collection document's
+4. **Collections carry collection-level affordances only.** A collection document's
    *top-level* `links` carries the affordances that apply to the type (such as
    `create`); resource objects inside `data` carry navigation but no
    affordances. This bounds the cost of a collection response to be independent

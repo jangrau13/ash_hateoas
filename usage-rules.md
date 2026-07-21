@@ -136,7 +136,7 @@ Rules for a gate:
 - It MUST return a subset of what it was given. Never add candidates.
 - It MUST NOT raise for an expected outcome — filtering *is* the mechanism for
   "not available".
-- `ctx.record` is `nil` for type-level affordances. A gate that reasons about
+- `ctx.record` is `nil` for collection-level affordances. A gate that reasons about
   record state must treat `nil` as "not applicable" and pass candidates through.
 
 The chain short-circuits as soon as the set empties, so order gates
@@ -149,7 +149,7 @@ Attribute checks are negligible; relationship and expression checks
 (`relates_to_actor_via`, `exists(…)`) can each emit a query.
 
 **Collections never compute per-record affordances.** A collection response
-carries type-level affordances (`create`, index reads) in its top-level `links`;
+carries collection-level affordances (`create`, index reads) in its top-level `links`;
 the records inside carry navigation but no affordances. Cost is therefore
 independent of page size — there is no `M × N` case and no flag to remember.
 

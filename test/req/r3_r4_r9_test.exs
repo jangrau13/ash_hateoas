@@ -10,7 +10,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
   use ExUnit.Case, async: false
 
   alias AshHateoas.Backbone
-  alias AshHateoas.Mcp.Session
   alias AshHateoas.Test.{Actor, Document, Endpoint, McpEndpoint, Order, Quiet}
 
   @admin %Actor{id: "req-admin", role: :admin}
@@ -25,7 +24,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
       |> Ash.create!(authorize?: false)
 
     session = unique("session")
-    on_exit(fn -> Session.clear(session) end)
 
     %{doc: doc, owner: owner, session: session}
   end
@@ -61,15 +59,14 @@ defmodule AshHateoas.Req.R3R4R9Test do
         |> Enum.reject(&(&1 in structural_link_names()))
         |> MapSet.new()
 
-      session = unique("peer")
-      on_exit(fn -> Session.clear(session) end)
-      Session.focus(session, Order, order.id)
-
+      # MCP carries a record's affordances in that record's representation, the
+      # peer of JSON:API's per-record `links` — not in `tools/list`, which names
+      # no record and so answers the collection-level question instead.
       mcp_names =
-        session
-        |> list_tools()
+        Order
+        |> read_record(order.id)
+        |> Map.fetch!("affordances")
         |> Enum.map(& &1["name"])
-        |> Enum.map(&String.replace_prefix(&1, "order_", ""))
         |> MapSet.new()
 
       assert MapSet.equal?(json_api_names, backbone_names),
@@ -98,8 +95,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
         Order
         |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
         |> Ash.create!(authorize?: false)
-
-      Session.focus(session, Order, order.id)
 
       for tool <- list_tools(session) do
         refute Map.has_key?(tool, "href"),
@@ -137,11 +132,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
 
       s1 = unique("s1")
       s2 = unique("s2")
-      on_exit(fn -> Session.clear(s1) end)
-      on_exit(fn -> Session.clear(s2) end)
-
-      Session.focus(s1, Order, order.id)
-      Session.focus(s2, Order, order.id)
 
       # Two sessions at the same position with the same actor must agree —
       # the set is a function of (actor, position), nothing else.
@@ -197,9 +187,11 @@ defmodule AshHateoas.Req.R3R4R9Test do
         |> Ash.Changeset.for_create(:create, %{reference: unique("ref")})
         |> Ash.create!(authorize?: false)
 
-      Session.focus(session, Order, order.id)
-
-      confirm = tool(list_tools(session), "order_confirm")
+      confirm =
+        Order
+        |> read_record(order.id)
+        |> Map.fetch!("affordances")
+        |> Enum.find(&(&1["name"] == "confirm"))
 
       assert confirm["description"] =~ "Confirm this order.",
              "the action's declared description must reach MCP verbatim"
@@ -398,7 +390,7 @@ defmodule AshHateoas.Req.R3R4R9Test do
   end
 
   describe "R9: collection-level affordances" do
-    test "a collection carries self plus type-level affordances" do
+    test "a collection carries self plus collection-level affordances" do
       # §5.1: "on a collection: `self`, plus the collection-level affordances
       # (`create`, ...) as named links exactly like record affordances."
       body = get("/documents", @admin) |> body()
@@ -419,12 +411,12 @@ defmodule AshHateoas.Req.R3R4R9Test do
     test "collection-level affordances apply no state gate" do
       # R9: "`affordances(resource, actor, ...)` — collection-level; there is no
       # record, so **no state gate** applies, but `Ash.can?/3` still does."
-      # Order's :ship is illegal from :pending, but at type level there is no
+      # Order's :ship is illegal from :pending, but at collection level there is no
       # record and therefore no state to gate on. :create must survive.
       envelope = Backbone.for_resource(Order, @admin, domain: AshHateoas.Test.Domain)
 
       assert Map.has_key?(envelope, :create),
-             "type-level affordances must include create, got: #{inspect(Map.keys(envelope))}"
+             "collection-level affordances must include create, got: #{inspect(Map.keys(envelope))}"
     end
 
     test "the two backbone entry points are genuinely distinct" do
@@ -439,13 +431,13 @@ defmodule AshHateoas.Req.R3R4R9Test do
       record_level =
         Backbone.for_record(order, @admin, domain: AshHateoas.Test.Domain) |> Map.keys()
 
-      type_level =
+      collection_level =
         Backbone.for_resource(Order, @admin, domain: AshHateoas.Test.Domain) |> Map.keys()
 
-      refute record_level == type_level,
-             "record-level and type-level sets are identical — one of the two gates is missing"
+      refute record_level == collection_level,
+             "record-level and collection-level sets are identical — one of the two gates is missing"
 
-      assert :create in type_level
+      assert :create in collection_level
       refute :create in record_level, "create is not something you do TO an existing record"
     end
   end
@@ -650,6 +642,17 @@ defmodule AshHateoas.Req.R3R4R9Test do
     %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
     |> post(session, actor)
     |> get_in(["result", "tools"]) || []
+  end
+
+  defp read_record(resource, id, actor \\ @admin) do
+    uri = AshHateoas.Mcp.Resources.uri(resource, id)
+
+    %{"jsonrpc" => "2.0", "id" => 1, "method" => "resources/read", "params" => %{"uri" => uri}}
+    |> post(nil, actor)
+    |> get_in(["result", "contents"])
+    |> hd()
+    |> Map.fetch!("text")
+    |> Jason.decode!()
   end
 
   defp post(body, session \\ nil, actor \\ @admin) do

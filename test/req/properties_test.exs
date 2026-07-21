@@ -145,7 +145,7 @@ defmodule AshHateoas.Req.PropertiesTest do
       check all(actor <- actor_gen(), max_runs: 200) do
         advertised = Document |> affordances(actor) |> Map.keys() |> MapSet.new()
 
-        for action <- type_level_actions(Document) do
+        for action <- collection_level_actions(Document) do
           oracle = Ash.can?({Document, action}, actor, domain: Domain)
           claimed = MapSet.member?(advertised, action)
 
@@ -170,7 +170,7 @@ defmodule AshHateoas.Req.PropertiesTest do
       end)
     end
 
-    defp type_level_actions(resource) do
+    defp collection_level_actions(resource) do
       Enum.filter(routed_actions(resource), fn name ->
         action = Ash.Resource.Info.action(resource, name)
         action && action.type in [:create, :read]
@@ -298,11 +298,11 @@ defmodule AshHateoas.Req.PropertiesTest do
   end
 
   # ==================================================================
-  # Property 4 — R8: collections carry type-level affordances only
+  # Property 4 — R8: collections carry collection-level affordances only
   # ==================================================================
 
   describe "R8: collections never carry per-record affordances" do
-    # "A collection response carries type-level affordances only in its
+    # "A collection response carries collection-level affordances only in its
     # top-level links; records inside it carry navigation but no affordances.
     # ... cost on a collection is N — independent of page size."
     property "no resource object inside a collection carries affordance links" do
@@ -345,7 +345,7 @@ defmodule AshHateoas.Req.PropertiesTest do
         end
 
         # The other half of the clause: the collection itself DOES carry
-        # type-level affordances when the actor may run them.
+        # collection-level affordances when the actor may run them.
         top_level = Map.get(body, "links", %{})
 
         if Ash.can?({Document, :create}, actor, domain: Domain) do

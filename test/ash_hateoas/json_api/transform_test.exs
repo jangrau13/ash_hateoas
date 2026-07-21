@@ -146,7 +146,7 @@ defmodule AshHateoas.JsonApi.TransformTest do
   end
 
   describe "collection documents (R8, R9)" do
-    test "type-level affordances arrive in top-level links" do
+    test "collection-level affordances arrive in top-level links" do
       body = get("/documents", @admin) |> body()
 
       assert Map.has_key?(body["links"], "create"),
