@@ -20,6 +20,10 @@ defmodule AshHateoas.TypeMapper do
   @type wire_type :: String.t()
 
   @table %{
+    # Checked before the NewType unwrapping below, which would otherwise
+    # resolve this to its `:string` subtype and discard the one thing the
+    # wire format needs to carry: that the value is followable.
+    AshHateoas.Type.ResourceLink => "link",
     Ash.Type.String => "string",
     Ash.Type.CiString => "string",
     Ash.Type.Atom => "string",

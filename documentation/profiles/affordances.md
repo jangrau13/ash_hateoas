@@ -81,11 +81,33 @@ Each affordance is a member of a `links` object, keyed by the action name:
 | Member | Required | Meaning |
 |---|---|---|
 | `name` | yes | The input's name. |
-| `type` | yes | One of `string`, `integer`, `number`, `boolean`, `date`, `time`, `datetime`, `duration`, `map`, `array`, `union`. |
+| `type` | yes | One of `string`, `integer`, `number`, `boolean`, `date`, `time`, `datetime`, `duration`, `map`, `array`, `union`, `link`. |
 | `required` | yes | Whether the input must be supplied. |
 | `description` | no | Human-readable description. |
 | `default` | no | The value used when the input is omitted. **Absent** for sensitive inputs. |
 | `constraints` | no | Validation the client may apply up front — e.g. `enum`, `min`, `max`, `min_length`, `max_length`, `pattern`. |
+
+## The `link` type
+
+A field or attribute of type `link` carries the URL of another hypermedia
+resource — including one served by a **different** API, which no relationship
+link can express, since those are rendered against the requesting host.
+
+```json
+"attributes": {
+  "title": "Q3 Report",
+  "order": "https://another-backend.example/orders/xyz"
+}
+```
+
+The type is what makes the value followable. A client MUST NOT infer
+followability from a value merely parsing as a URL: a `homepage` or `source_url`
+is a URL and is not a resource to dereference.
+
+**A client MUST check the host before following.** The value is application
+data, so a server may emit any URL. A client that dereferences it — especially
+one attaching credentials — MUST validate the host against its own allowlist,
+and MUST NOT send a credential belonging to one host to another.
 
 ## Rules a conforming server MUST follow
 

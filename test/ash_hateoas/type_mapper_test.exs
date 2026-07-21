@@ -37,6 +37,17 @@ defmodule AshHateoas.TypeMapperTest do
     end
   end
 
+  describe "the link type" do
+    test "survives NewType unwrapping" do
+      # ResourceLink is a NewType over :string, and `lookup/1` unwraps NewTypes
+      # via `subtype_of/0`. If the table were consulted after that unwrapping,
+      # this would render as "string" and the wire format would lose the only
+      # thing that makes the value followable.
+      assert TypeMapper.to_wire(AshHateoas.Type.ResourceLink) == "link"
+      assert AshHateoas.Type.ResourceLink.subtype_of() == Ash.Type.String
+    end
+  end
+
   describe "fallback" do
     test "unknown types fall back rather than raising" do
       assert TypeMapper.to_wire(:no_such_type_exists) == TypeMapper.fallback()

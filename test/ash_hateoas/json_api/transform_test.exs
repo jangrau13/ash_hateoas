@@ -23,6 +23,42 @@ defmodule AshHateoas.JsonApi.TransformTest do
     %{doc: doc, editor: editor}
   end
 
+  describe "the link type" do
+    test "a cross-API reference reaches the wire as type link" do
+      # No Ash relationship can express a resource in another application, so
+      # the URL is stored and the TYPE marks it followable. A client must not
+      # have to guess that from the value happening to parse as a URL.
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{
+          title: "Linked",
+          owner_id: "o1",
+          related_order: "https://another-backend.example/orders/xyz"
+        })
+        |> Ash.create!(authorize?: false)
+
+      field =
+        get("/documents/#{doc.id}", @admin)
+        |> links_for()
+        |> get_in(["create", "meta", "fields"]) ||
+          get("/documents", @admin)
+          |> body()
+          |> get_in(["links", "create", "meta", "fields"])
+
+      related = Enum.find(field, &(&1["name"] == "related_order"))
+
+      assert related["type"] == "link",
+             "a ResourceLink attribute must not flatten to string on the wire"
+
+      # The value itself travels as an ordinary attribute — it is data.
+      assert get_in(body(get("/documents/#{doc.id}", @admin)), [
+               "data",
+               "attributes",
+               "related_order"
+             ]) == "https://another-backend.example/orders/xyz"
+    end
+  end
+
   describe "single-record documents" do
     test "affordances arrive as named link objects", %{doc: doc} do
       links = links_for(get("/documents/#{doc.id}", @admin))

@@ -42,6 +42,11 @@ defmodule AshHateoas.Test.Document do
     attribute(:body, :string, public?: true)
     attribute(:owner_id, :string, public?: true)
 
+    # A resource in ANOTHER API. No Ash relationship can express this — they
+    # resolve in-process, and AshJsonApi renders every link against the
+    # requesting host — so the URL is stored and the type marks it followable.
+    attribute(:related_order, AshHateoas.Type.ResourceLink, public?: true)
+
     attribute(:state, :atom,
       public?: true,
       default: :draft,
@@ -54,7 +59,7 @@ defmodule AshHateoas.Test.Document do
 
     create :create do
       primary?(true)
-      accept([:title, :body, :owner_id])
+      accept([:title, :body, :owner_id, :related_order])
     end
 
     update :update do
