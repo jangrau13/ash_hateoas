@@ -144,6 +144,32 @@ and MUST NOT send a credential belonging to one host to another.
 - **Do not cache an affordance set across actors.** It is specific to the actor
   who requested it.
 
+## What a client cannot learn from these documents
+
+A document says what may be done **now**, to **this** record, by **this** actor.
+It does not describe what could be done under other circumstances, and that is
+deliberate: publishing the full set of actions and the conditions on each would
+make these documents an API description, inviting a client to reason about the
+server's state machine and plan against it — the opposite of reading what is
+offered and choosing from it.
+
+Two consequences worth stating plainly, because they surprise consumers that try
+to build a catalogue:
+
+- **The set of actions a *type* affords cannot be enumerated.** Each record
+  reveals only the actions legal from its own state, so an action reachable only
+  from a state that no current record occupies is invisible. A service with no
+  confirmed orders has no way to reveal that shipping exists. Sampling more
+  records does not fix this — the information is not in the data.
+- **Absence carries no information about the future.** A missing affordance
+  means "not now", and nothing about whether it will appear later.
+
+A consumer that drives the loop — read a representation, act on one of its
+affordances, read what came back — never needs either. Each action becomes
+visible exactly when it becomes possible. A consumer that plans up front from an
+enumerated list of capabilities is asking these documents for something they do
+not offer.
+
 ## Relation types
 
 Each affordance carries `rel` of the form
