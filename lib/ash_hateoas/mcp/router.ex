@@ -60,6 +60,12 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       opts = conn.assigns.router_opts
 
       case intercept(conn.params, session_id, conn, opts) do
+        {:handled, response, headers} ->
+          conn
+          |> put_resp_headers(headers)
+          |> Plug.Conn.put_resp_header("content-type", "application/json")
+          |> Plug.Conn.send_resp(200, Jason.encode!(response))
+
         {:handled, response} ->
           conn
           |> Plug.Conn.put_resp_header("content-type", "application/json")
@@ -119,8 +125,13 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
     # instructions — exactly as it built it.
     defp intercept(%{"method" => "initialize"} = message, session_id, _conn, opts) do
       case Server.process_message(message, session_id, opts) do
-        {:initialize_response, response, _session_id} ->
-          {:handled, advertise_list_changed(response)}
+        {:initialize_response, response, new_session_id} ->
+          # ash_ai issues the session id here and, in its own handler, sets it
+          # as the `mcp-session-id` response header. Because we intercept
+          # initialize to rewrite listChanged, we must carry that header
+          # ourselves — without it a spec-following client never learns its
+          # session id, sends none back, and session focus can never persist.
+          {:handled, advertise_list_changed(response), [{"mcp-session-id", new_session_id}]}
 
         _other ->
           :delegate
@@ -278,6 +289,13 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
         {:ok, resource, id} -> Session.focus(session_id, resource, id)
         {:error, _} -> :ok
       end
+    end
+
+    defp put_resp_headers(conn, headers) do
+      Enum.reduce(headers, conn, fn
+        {_key, nil}, acc -> acc
+        {key, value}, acc -> Plug.Conn.put_resp_header(acc, key, value)
+      end)
     end
 
     defp session_id(conn) do
