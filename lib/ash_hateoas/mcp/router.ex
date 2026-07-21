@@ -158,20 +158,31 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
 
     defp intercept(
            %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri}},
-           _session,
+           session_id,
            conn,
            opts
          ) do
+      domain_resources = resources(opts, Keyword.get(opts, :domain))
+
       result =
         Resources.read(
           uri,
-          resources(opts, Keyword.get(opts, :domain)),
+          domain_resources,
           Ash.PlugHelpers.get_actor(conn),
           tenant: Ash.PlugHelpers.get_tenant(conn)
         )
 
       case result do
         {:ok, contents} ->
+          # Reading a record IS the focus signal: MCP has no separate "focus"
+          # verb, and `resources/read` is the client saying "I am looking at
+          # this record now". Focusing here is what makes the record-level
+          # state gate reachable over pure MCP — the next `tools/list` returns
+          # that record's transitions rather than the cold-start type-level
+          # set. Best-effort: a read that cannot be located still returns the
+          # record, it just does not move focus.
+          maybe_focus(session_id, uri, domain_resources)
+
           {:handled, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"contents" => [contents]}}}
 
         {:error, reason} ->
@@ -254,6 +265,19 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
       |> Module.split()
       |> List.last()
       |> Macro.underscore()
+    end
+
+    # Move session focus to the record a resources/read addressed, if it
+    # resolves to a known resource. A nil session id (a stateless client) or an
+    # unresolvable URI is a no-op — focus is an optimisation, never a
+    # correctness requirement.
+    defp maybe_focus(nil, _uri, _resources), do: :ok
+
+    defp maybe_focus(session_id, uri, resources) do
+      case Resources.locate(uri, resources) do
+        {:ok, resource, id} -> Session.focus(session_id, resource, id)
+        {:error, _} -> :ok
+      end
     end
 
     defp session_id(conn) do

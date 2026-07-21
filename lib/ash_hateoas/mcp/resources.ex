@@ -73,6 +73,22 @@ defmodule AshHateoas.Mcp.Resources do
     end
   end
 
+  @doc """
+  Resolve a URI to the `{resource, id}` it addresses, without fetching.
+
+  This is what lets a `resources/read` double as a focus signal: reading
+  `book://<id>` is the client saying "I am looking at this record now", so the
+  host can focus the session on it and the next `tools/list` reflects its
+  state. Returns `{:error, reason}` for a malformed or unknown URI.
+  """
+  @spec locate(String.t(), [module()]) :: {:ok, module(), term()} | {:error, term()}
+  def locate(uri, resources) do
+    with {:ok, scheme, id} <- parse(uri),
+         {:ok, resource} <- resolve(scheme, resources) do
+      {:ok, resource, id}
+    end
+  end
+
   @doc "The URI scheme for a resource — its JSON:API type, or its module name."
   @spec scheme(module()) :: String.t()
   def scheme(resource) do
