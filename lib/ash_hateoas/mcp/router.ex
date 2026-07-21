@@ -235,13 +235,25 @@ if Code.ensure_loaded?(Plug) and Code.ensure_loaded?(AshAi.Mcp.Server) do
             record ->
               record
               |> AshHateoas.affordances(actor, domain: domain, tenant: tenant)
-              |> Tools.render(type_prefix(resource))
+              |> Tools.render(type_prefix(resource), subject: subject(resource, record))
           end
 
         # Cold start: no record, so type-level affordances across the domain.
         nil ->
           collection_tools(opts, actor, tenant, domain)
       end
+    end
+
+    # The primary key of the focused record, so a record-level tool can name
+    # its own subject. Multi-key primary keys are skipped rather than guessed
+    # at: there is no single field to put in the schema.
+    defp subject(resource, record) do
+      case Ash.Resource.Info.primary_key(resource) do
+        [field] -> %{field: field, value: Map.get(record, field)}
+        _ -> nil
+      end
+    rescue
+      _ -> nil
     end
 
     defp collection_tools(opts, actor, tenant, domain) do

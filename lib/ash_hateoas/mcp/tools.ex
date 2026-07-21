@@ -35,18 +35,20 @@ defmodule AshHateoas.Mcp.Tools do
   `"document_approve"` — MCP tool names are flat and must not collide across
   resources.
   """
-  @spec render(%{atom() => Affordance.t()}, String.t() | nil) :: [map()]
-  def render(affordances, prefix \\ nil) do
+  @spec render(%{atom() => Affordance.t()}, String.t() | nil, keyword()) :: [map()]
+  def render(affordances, prefix \\ nil, opts \\ []) do
+    subject = Keyword.get(opts, :subject)
+
     affordances
     |> Enum.sort_by(fn {name, _affordance} -> name end)
-    |> Enum.map(fn {_name, affordance} -> tool(affordance, prefix) end)
+    |> Enum.map(fn {_name, affordance} -> tool(affordance, prefix, subject) end)
   end
 
-  defp tool(%Affordance{} = affordance, prefix) do
+  defp tool(%Affordance{} = affordance, prefix, subject) do
     %{
       "name" => name(affordance.name, prefix),
       "description" => description(affordance),
-      "inputSchema" => input_schema(affordance)
+      "inputSchema" => input_schema(affordance, subject)
     }
   end
 
@@ -60,12 +62,17 @@ defmodule AshHateoas.Mcp.Tools do
 
   # Built with atom keys then round-tripped, exactly as ash_ai does — post
   # processing that expects string keys would silently no-op otherwise.
-  defp input_schema(%Affordance{fields: []}) do
-    %{type: :object, properties: %{}, additionalProperties: false}
+  defp input_schema(%Affordance{fields: []}, subject) do
+    %{
+      type: :object,
+      properties: subject_property(subject),
+      required: subject_required(subject),
+      additionalProperties: false
+    }
     |> normalize()
   end
 
-  defp input_schema(%Affordance{fields: fields}) do
+  defp input_schema(%Affordance{fields: fields}, subject) do
     properties = Map.new(fields, fn field -> {field.name, property(field)} end)
 
     required =
@@ -75,19 +82,45 @@ defmodule AshHateoas.Mcp.Tools do
 
     %{
       type: :object,
-      properties: %{
-        input: %{
-          type: :object,
-          properties: properties,
-          additionalProperties: false,
-          required: required
-        }
-      },
-      required: [:input],
+      properties:
+        Map.merge(
+          %{
+            input: %{
+              type: :object,
+              properties: properties,
+              additionalProperties: false,
+              required: required
+            }
+          },
+          subject_property(subject)
+        ),
+      required: [:input] ++ subject_required(subject),
       additionalProperties: false
     }
     |> normalize()
   end
+
+  # A record-level affordance must say WHICH record it acts on.
+  #
+  # The session knows — that is what focus is for — but the session is ours,
+  # while `tools/call` is executed by ash_ai, which has no view of it. A tool
+  # rendered without an identifier therefore advertises a call that can never
+  # resolve its subject, and fails with "could not be found". So the identity
+  # travels in the schema, where the executor can actually see it.
+  defp subject_property(nil), do: %{}
+
+  defp subject_property(%{field: field, value: value}) do
+    %{
+      field => %{
+        type: :string,
+        description: "Identifies the record this acts on.",
+        const: to_string(value)
+      }
+    }
+  end
+
+  defp subject_required(nil), do: []
+  defp subject_required(%{field: field}), do: [field]
 
   defp property(%Field{} = field) do
     %{type: json_type(field.type)}
