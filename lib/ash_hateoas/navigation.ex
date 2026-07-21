@@ -152,14 +152,18 @@ defmodule AshHateoas.Navigation do
     _ -> []
   end
 
-  # Structural links must be FOLLOWABLE from wherever the client reached us,
-  # so they are relative to the router's own mount point and carry no prefix by
-  # default. The domain's json_api `prefix` describes where a host app forwards
-  # the router, which this package cannot know — pass `:prefix` explicitly to
-  # emit absolute paths.
+  # Every link in a document MUST resolve against the same base.
   #
-  # This differs deliberately from affordance hrefs, which come from the route
-  # declarations and are rendered as declared.
+  # Affordance hrefs are rendered with the domain's json_api `prefix`, so
+  # navigation must use it too. Emitting `/orders` beside
+  # `/api/orders/{id}/confirm` produces a document whose two link families need
+  # different bases, with nothing on the wire saying which is which — a client
+  # that follows `collection` lands on a 404, and the only way to know better is
+  # out-of-band knowledge of the mount point. That is the thing the profile
+  # exists to remove.
+  #
+  # An explicit `:prefix` still wins, for a host that forwards the router
+  # somewhere the domain does not describe.
   defp prefix(opts, _domains) do
     case Keyword.get(opts, :prefix) do
       nil -> ""

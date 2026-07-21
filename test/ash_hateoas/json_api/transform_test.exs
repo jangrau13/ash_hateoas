@@ -34,10 +34,10 @@ defmodule AshHateoas.JsonApi.TransformTest do
     test "a link object carries href, rel, title and meta", %{doc: doc} do
       approve = links_for(get("/documents/#{doc.id}", @admin))["approve"]
 
-      # The href carries the domain's json_api prefix ("/api"), which is what a
-      # client needs to follow it — the router itself mounts wherever the host
-      # app forwards it.
-      assert approve["href"] == "/api/documents/#{doc.id}/approve"
+      # The href is the declared route path, which is exactly where the router
+      # serves it. The domain's json_api `prefix` is applied by the router when
+      # matching, so prepending it here would emit a path that 404s.
+      assert approve["href"] == "/documents/#{doc.id}/approve"
       assert approve["rel"] == "https://ash-hateoas.org/rels/approve"
       assert approve["title"] == "Approve this document so it can be published."
       assert approve["meta"]["method"] == "PATCH"

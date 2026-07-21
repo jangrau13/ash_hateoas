@@ -480,6 +480,27 @@ defmodule AshHateoas.Req.R3R4R9Test do
       end
     end
 
+    test "every link in a document resolves against the same base", %{doc: doc} do
+      # R9: "Follow links; do not construct URLs." A client can only obey that
+      # if every href in a document is followable as given. Affordance hrefs and
+      # navigation links are rendered by different code paths, so a prefix
+      # applied to one and not the other yields a document where half the links
+      # are dead — and nothing on the wire says which half.
+      #
+      # Probed by FOLLOWING them: a GET-able link must not 404.
+      links = links_for(get("/documents/#{doc.id}", @admin))
+
+      for {name, link} <- links, href = href_of(link), is_binary(href) do
+        method = get_in(link, ["meta", "method"]) || "GET"
+
+        if method == "GET" do
+          assert get(href, @admin).status < 400,
+                 "#{name} advertises #{href}, which does not resolve — " <>
+                   "affordance and navigation links disagree on the base path"
+        end
+      end
+    end
+
     test "a resource with affordances switched off keeps its navigation" do
       # R8 turns AFFORDANCES off; R9 navigation is a separate concern and must
       # survive, otherwise opting out of cost also breaks discoverability.

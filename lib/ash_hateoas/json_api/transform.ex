@@ -260,14 +260,19 @@ defmodule AshHateoas.JsonApi.Transform do
 
   defp domains(%{domain: domain}), do: List.wrap(domain)
 
-  defp prefix(context, opts) do
-    Keyword.get(opts, :prefix) || domain_prefix(context)
-  end
-
-  defp domain_prefix(%{domain: domain}) do
-    AshJsonApi.Domain.Info.prefix(domain)
-  rescue
-    _ -> nil
+  # Only an explicitly configured prefix is prepended.
+  #
+  # The domain's json_api `prefix` is NOT it. `AshJsonApi.Router` already
+  # applies that when matching, so a declared route of `/orders/:id/confirm` is
+  # served at exactly that path — prepending the domain prefix a second time
+  # produced `/api/orders/:id/confirm`, which 404s, while navigation links
+  # emitted the working `/orders`. One document, two bases, one of them dead.
+  #
+  # `:prefix` remains for a host app that forwards the router somewhere the
+  # route declarations do not describe (`forward "/v1", to: MyRouter`), which
+  # this package cannot introspect.
+  defp prefix(_context, opts) do
+    Keyword.get(opts, :prefix)
   end
 
   defp json_api?(conn) do
