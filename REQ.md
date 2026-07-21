@@ -504,21 +504,34 @@ a change.
 ### 5.2 MCP adapter
 
 An MCP tool *is* an affordance: "which tools should this agent be offered, given
-the current state?" is the question the backbone already answers. The tool list at
-any moment is the backbone's affordance set for the session's current position.
+the current state?" is the question the backbone already answers.
 
-Two protocol facts make this fit exactly:
-- **`tools/list` is a live server-computed function**, not a fixed catalog — the
-  server returns whatever it decides on each call, full replacement (MCP spec
-  2025-11-25, `server/tools`).
-- **The MCP session has a current position** — the resource being worked on and
-  its workflow state. MCP is a stateful connection, so this is already held.
+One protocol fact makes this fit: **`tools/list` is a live server-computed
+function**, not a fixed catalog — the server returns whatever it decides on each
+call, full replacement (MCP spec 2025-11-25, `server/tools`). So the list is
+recomputed per request against current state, and a client that re-lists after
+acting always sees the truth.
 
-The loop: `tools/list` returns the affordances of the current state; the agent
-calls a listed tool; the action runs and the state transitions; the server fires
-`notifications/tools/list_changed`; the next `tools/list` returns the affordances
-of the new state. Coarse session-level filters (org tier, workspace flags) fold in
-as part of "current state."
+**The MCP adapter mirrors the JSON:API adapter one-to-one, in MCP's own
+language.** Neither is a client of the other (§5.3); both project the same
+backbone output. The correspondence is what keeps them peers:
+
+| JSON:API | MCP |
+|---|---|
+| root entry document | `resources/templates/list` |
+| collection (`GET /orders`) | `resources/list` |
+| record + its `links` (`GET /orders/123`) | `resources/read` + its affordances |
+| following a link | `tools/call` |
+
+A record's affordances therefore travel **in that record's representation**, as
+they do in JSON:API — control state lives in the representation, not in a
+side-channel.
+
+**How record-scoped affordances reach `tools/list` is an open design question**
+(§6). `tools/list` takes no arguments, so the server cannot be told which records
+a client cares about without holding something across requests. Whatever
+mechanism is chosen MUST be documented as a deliberate, bounded exception rather
+than left implicit.
 
 **Authorization is already built in (VERIFIED, `ash_ai` 0.7.2).**
 `AshAi.exposed_tools/1` filters every candidate tool through an `Ash.can?`-backed
@@ -558,20 +571,19 @@ modelling navigation as tools.
   current, mirroring the `tools/list_changed` loop above.
 
 URIs MUST encode the domain/type/record hierarchy (custom schemes are explicitly
-permitted). Collection-level affordances (R9) are the tools available when no
-record is in focus — the cold-start case.
+permitted). Collection-level affordances (R9) are always available — they are the
+type-level surface, the direct analogue of a JSON:API collection's top-level
+`links`, and do not depend on any notion of a record being "current".
 
 **Context resolution.** The actor comes from the connection (AshAuthentication API
-key / token); the position comes from the session. **Delivery mechanism:**
-`tools/list` plus a `list_changed` push on transition; `resources/*` for
-navigation.
+key / token). **Delivery mechanism:** `tools/list` for affordances, `resources/*`
+for navigation, `resource_link` on tool results for onward links.
 
-**Two constraints:**
-1. The server holds session state — it already does; the backbone reads it.
-2. The client must honour `list_changed` so the list refreshes after a
-   transition. `listChanged` / `notifications/tools/list_changed` is **ratified
-   and in the spec today**; Claude Code honours it. A client that ignores it
-   stays on the pre-transition list — a client-conformance gap.
+**Constraint: `listChanged` must not be advertised unless it is emitted.**
+`listChanged` / `notifications/tools/list_changed` is **ratified and in the spec
+today**, and Claude Code honours it. Advertising the capability while never
+sending the notification is worse than advertising `false`, because it tells a
+client not to poll. Either wire it up or do not claim it.
 
 **Emerging protocol work** (not required; the above rests only on ratified
 `list_changed`):
@@ -596,6 +608,16 @@ the resource's actions directly.
 ---
 
 ## 6. Open items before implementation
+- **How record-scoped affordances reach MCP's `tools/list` (§5.2).** `tools/list`
+  takes no arguments, so the server cannot learn which records a client cares
+  about from the request alone. The options are: hold a bounded per-session set
+  of records the client has dereferenced (server-held state, an explicit
+  exception to statelessness); return record-scoped tools for every record
+  (unbounded); or leave record affordances discoverable via `resources/read` but
+  not invocable from `tools/list`. Whichever is chosen must be documented as a
+  deliberate trade, and any per-session state must be a **set, not a cursor** — a
+  single overwritable position makes a read silently revoke tools the client was
+  previously offered.
 - Confirm the exact `Ash.can?` argument form and options for the pinned Ash
   (`{record, action}` vs input form; `maybe_is:`, `run_queries?:`).
 - Confirm `AshJsonApi.Resource.Info.routes/2` return shape for a real
