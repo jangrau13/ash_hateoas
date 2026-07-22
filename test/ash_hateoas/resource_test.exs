@@ -34,6 +34,26 @@ defmodule AshHateoas.ResourceTest do
       assert Info.overrides(Article) == %{publish: [href: "/custom/publish/:id"]}
     end
 
+    test "not_delegable/1 reads the declared actions" do
+      assert Info.not_delegable(Article) == [:publish]
+    end
+
+    test "not_delegable/1 is empty for a resource declaring none" do
+      assert Info.not_delegable(Document) == []
+    end
+
+    test "not_delegable?/2 answers per action" do
+      assert Info.not_delegable?(Article, :publish)
+      refute Info.not_delegable?(Article, :update)
+    end
+
+    # The R10 section subtracts nothing: `publish` is declared not_delegable and
+    # must still be routed and still advertised. Only its execution is gated.
+    test "not_delegable does not withhold the action from the surface" do
+      refute :publish in Info.unrouted(Article)
+      refute :publish in Info.exclusions(Article)
+    end
+
     test "an undeclared enabled? reads as nil, not true" do
       # The generated reader returns the raw declaration. `nil` is what makes
       # domain inheritance possible — see AshHateoas.Posture. The *effective*

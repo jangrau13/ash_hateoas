@@ -7,6 +7,7 @@ defmodule AshHateoas.Resource.Info do
     * `hateoas/1` — every entity in the section (exclusions and overrides)
     * `hateoas_enabled?/1` — the predicate option, returning a bare boolean
     * `hateoas_warn_on_missing_authorizers?/1`
+    * `agentic_hateoas/1` — every entity in the R10 section
 
   Note the InfoGenerator asymmetry: predicate options (ending in `?`) get one
   bare-value function and no bang variant, while non-predicate options get both
@@ -22,9 +23,9 @@ defmodule AshHateoas.Resource.Info do
 
   use Spark.InfoGenerator,
     extension: AshHateoas.Resource,
-    sections: [:hateoas]
+    sections: [:hateoas, :agentic_hateoas]
 
-  alias AshHateoas.Resource.{Exclusion, Method, Override, Unrouted}
+  alias AshHateoas.Resource.{Exclusion, Method, NotDelegable, Override, Unrouted}
 
   @doc """
   The HTTP method declared for a generic action, or `nil` if none is.
@@ -80,6 +81,29 @@ defmodule AshHateoas.Resource.Info do
     |> Map.new(fn %Override{} = override ->
       {override.action, Enum.reject([href: override.href], fn {_k, v} -> is_nil(v) end)}
     end)
+  end
+
+  @doc """
+  Action names only a committing credential may execute (R10).
+
+  Unlike `unrouted/1` and `exclusions/1`, this subtracts nothing: the actions
+  stay routed and stay advertised. It is read twice — by the descriptor, to flag
+  the affordance, and at invocation, to decide whether to refuse.
+  """
+  @spec not_delegable(Ash.Resource.t() | map()) :: [atom()]
+  def not_delegable(resource_or_dsl) do
+    resource_or_dsl
+    |> agentic_hateoas()
+    |> Enum.filter(&match?(%NotDelegable{}, &1))
+    |> Enum.map(& &1.action)
+  end
+
+  @doc """
+  Whether `action` may only be executed by a committing credential (R10).
+  """
+  @spec not_delegable?(Ash.Resource.t() | map(), atom()) :: boolean()
+  def not_delegable?(resource_or_dsl, action) do
+    action in not_delegable(resource_or_dsl)
   end
 
   @doc """
