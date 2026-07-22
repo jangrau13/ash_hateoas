@@ -35,7 +35,7 @@ defmodule AshHateoas.Test.Article do
 
   agentic_hateoas do
     # Advertised to every actor, executed only by a committing credential.
-    not_delegable :publish
+    not_delegable(:publish)
   end
 
   attributes do

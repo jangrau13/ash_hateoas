@@ -89,7 +89,9 @@ defmodule AshHateoas.Req.R10Test do
           domain: AshHateoas.Test.Domain
         )
 
-      %{rendered: AshHateoas.JsonApi.Renderer.render(envelope, path_params: %{"id" => article.id})}
+      %{
+        rendered: AshHateoas.JsonApi.Renderer.render(envelope, path_params: %{"id" => article.id})
+      }
     end
 
     test "a not_delegable action carries meta.notDelegable", %{rendered: rendered} do
@@ -186,6 +188,78 @@ defmodule AshHateoas.Req.R10Test do
           Application.delete_env(:ash_hateoas, :commit_authority)
         end
       end
+    end
+  end
+
+  describe "projection" do
+    alias AshHateoas.Projection
+    alias AshHateoas.Test.Order
+
+    @actor %AshHateoas.Test.Actor{id: "someone", role: :admin}
+
+    setup do
+      order =
+        Order
+        |> Ash.Changeset.for_create(:create, %{
+          reference: "r10-#{System.unique_integer([:positive])}"
+        })
+        |> Ash.create!(authorize?: false)
+
+      %{order: order, opts: [domain: AshHateoas.Test.Domain]}
+    end
+
+    test "target_states/3 reads the transition", %{order: order} do
+      assert Projection.target_states(Order, order, :confirm) == [:confirmed]
+    end
+
+    test "target_states/3 is empty for an action that is not a transition", %{order: order} do
+      assert Projection.target_states(Order, order, :read) == []
+    end
+
+    # R10: an action outside a state machine yields no projection, and the
+    # profile must distinguish that from "nothing downstream".
+    test "target_states/3 is empty for a resource with no state machine" do
+      article =
+        AshHateoas.Test.Article
+        |> Ash.Changeset.for_create(:create, %{title: "no machine"})
+        |> Ash.create!(authorize?: false)
+
+      assert Projection.target_states(AshHateoas.Test.Article, article, :publish) == []
+    end
+
+    # A transition is only projectable from a state it can start in. `ship` runs
+    # from :confirmed, so a :pending order projects nothing for it.
+    test "target_states/3 respects the current state", %{order: order} do
+      assert Projection.target_states(Order, order, :ship) == []
+    end
+
+    test "for_target_state/5 answers as if the record were there", %{order: order, opts: opts} do
+      now = AshHateoas.affordances(order, @actor, opts)
+      projected = Projection.for_target_state(Order, order, @actor, :confirmed, opts)
+
+      assert Map.has_key?(now, :confirm), "a pending order can be confirmed"
+      refute Map.has_key?(now, :ship), "a pending order cannot be shipped yet"
+      assert Map.has_key?(projected, :ship), "a confirmed order can be shipped"
+    end
+
+    test "for_target_state/5 does not touch the record", %{order: order, opts: opts} do
+      Projection.for_target_state(Order, order, @actor, :confirmed, opts)
+
+      reloaded = Ash.get!(Order, order.id, authorize?: false)
+      assert reloaded.state == :pending, "projecting must never write"
+      assert order.state == :pending, "projecting must not mutate the struct in hand"
+    end
+
+    test "deltas/5 reports what confirming would gain and lose", %{order: order, opts: opts} do
+      assert [%{to: :confirmed, gained: gained, lost: lost}] =
+               Projection.deltas(Order, order, @actor, :confirm, opts)
+
+      assert Map.has_key?(gained, :ship), "confirming makes shipping available"
+      assert :confirm in lost, "confirming spends the confirm transition"
+    end
+
+    test "deltas/5 is empty when there is nothing to project", %{order: order, opts: opts} do
+      assert Projection.deltas(Order, order, @actor, :read, opts) == []
     end
   end
 
