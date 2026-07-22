@@ -88,6 +88,10 @@ There are no per-action "enable" entries: saying nothing yields the full
 surface, and every entry above subtracts from it or corrects it. A compile-time
 verifier rejects any of them naming an action that does not exist.
 
+This is why R10's `not_delegable` lives in its own section rather than here: it
+declares a new fact about an action instead of deviating from a derived one, and
+folding it in would cost this rule its meaning.
+
 Applied once per `Ash.Domain`; every resource in that domain gets affordances
 automatically.
 
@@ -126,9 +130,15 @@ client knows to supply it, without its value).
 
 ### R5 — The output envelope has a fixed, documented shape.
 The envelope is a map of action name → **Affordance**. An Affordance carries
-`href`, `method`, `description`, a list of **Field**s, and an optional
-`multi_step?` flag. Each Field carries `name`, `type`, `allow_nil?`,
-`description`, `default` (omitted when sensitive) and `constraints`.
+`href`, `method`, `description`, a list of **Field**s, an optional `multi_step?`
+flag, and — under R10 — an optional `not_delegable?` flag. Each Field carries
+`name`, `type`, `allow_nil?`, `description`, `default` (omitted when sensitive)
+and `constraints`.
+
+Both flags are of the same kind: a declared, actor-independent fact about the
+action's execution character, false unless the author says otherwise. Adding
+`not_delegable?` is a change to the shape this section fixes, and is therefore
+subject to the rule below — it MUST land before release, not after.
 
 Note `allow_nil?`, not `required`: the struct mirrors Ash's own name and
 polarity, and each renderer inverts it at the edge, since the wire formats say
@@ -306,6 +316,210 @@ Both feed every adapter. R6's fail-closed rule and R8's cost rules apply to both
 **Authorization applies to navigation too.** Structural links MUST NOT reveal
 types or collections the actor may not access. An unreachable branch is omitted,
 not rendered-and-rejected — the same fail-closed posture as R6.
+
+### R10 — Some actions may be advertised but not exercised by a delegated credential.
+
+> **Status:** designed, not built. This section is the requirement set; nothing
+> below exists in the package yet.
+
+An actor may be *authorized* to run an action and still be the wrong party to
+run it **alone**. An autonomous agent holding a scoped credential derived from
+its principal's authority is the motivating case; a service account, a sandbox
+session and a scripted human are the same shape. Ash has no way to say this:
+`Ash.can?/3` is a boolean, and this is a third state between allowed and
+forbidden.
+
+The action is declared **not delegable**:
+
+```elixir
+agentic_hateoas do
+  not_delegable :publish
+end
+```
+
+**Why the negative name.** The flag says what the mechanism does — a delegated
+credential cannot exercise this action — and not what one hopes follows from it.
+Naming it for the outcome would promise an approval workflow this package does
+not implement. `not_delegable` matches the `unrouted` idiom already in the DSL: a
+negative declaration about one action, verified against the action list.
+
+**The section is named for the audience, the entry for the mechanism**, and the
+mismatch is deliberate. `agentic_hateoas` is where an author will look for this,
+since delegated credentials are overwhelmingly agents in practice. The entry
+inside it must stay literal, because the endpoint refuses *every* non-committing
+credential — a sandbox session, a service account, a scripted human — and a name
+promising otherwise would be wrong at exactly the moment someone debugged an
+unexpected 403.
+
+The behavioural rule, stated once: **an action declared `not_delegable` is
+refused when `commits?/1` answers false for the requesting actor.** Both
+conditions are required; neither alone refuses anything.
+
+The section is separate from `hateoas` because R2 declares that block
+override-only, and this subtracts from nothing — it is a new fact about an
+action, closer in kind to `description`. It is **not** an option on the action
+itself: Spark offers only `Spark.Dsl.Patch.AddEntity`, so an extension cannot add
+an option to another extension's entity, and the action structs are closed
+`defstruct`s. Even were it possible, an option in an `update` block would be a
+compile error wherever the extension is absent, coupling every action's
+compilation to this package.
+
+#### Two filters, in order
+
+Authorization and delegability are independent, and the gate runs first. The rows
+below are for a **non-committing** actor; a committing one commits throughout.
+
+| Authorized (R6) | `not_delegable` | The actor sees | On invocation |
+|---|---|---|---|
+| no | — | nothing | plain 403, **no projection** |
+| yes | no | the affordance | **commits** |
+| yes | yes | affordance + flag | **403 + projection** |
+
+This gives two distinct tools for two distinct intentions, and they do not
+interfere. *"This credential has no business here"* is expressed by withholding
+authorization — invisible, and refused bare, with no escalation path. *"This
+credential may propose it, but another must commit"* is expressed by the flag —
+visible, flagged, and refused informatively.
+
+Authorization is R6's, unchanged: `Ash.can?/3` over whatever the deployment's
+policies express. Where those policies narrow a delegated credential below its
+holder's own authority — an API key scoped to a subset of its user's roles, say —
+row 1 is how that narrowing surfaces, and this package needs to know nothing
+about the mechanism (§6).
+
+It also bounds what the flag can leak. A delegated actor only ever sees actions
+it is authorized for, and that authorization was granted deliberately.
+
+#### The flag is actor-independent
+
+The DSL entry `not_delegable :publish` produces the Affordance flag
+`not_delegable?` (R5), surfaced identically for every actor. Only the
+*endpoint's* behaviour varies. A committing actor sees the same flag and commits
+anyway — the declaration documents the action, it does not describe the reader.
+
+#### Commit authority is asked, never inferred. **MUST.**
+
+Ash treats actors as opaque — a struct, a token, a map, whatever the host puts
+there — so this package MUST NOT inspect one. Inspecting would mean guessing at a
+field (`actor.type`, `actor.kind`), and an actor shape the guess does not
+recognise reads as "commits" and the write proceeds. Silent fail-open is
+unacceptable on an enforcement surface.
+
+It asks a module a single question instead:
+
+```elixir
+@callback commits?(actor :: term()) :: boolean()
+```
+
+Named for what the endpoint branches on, not for what the actor is: this package
+holds no definition of "agent", and the same answer serves sandboxes, service
+accounts and scripted humans.
+
+**One module, application-wide.** It is not per resource and not per domain — it
+describes the deployment's authentication, and a deployment has one of those.
+Two domains disagreeing about whether the same actor commits has no coherent
+meaning, so the choice is not offered:
+
+```elixir
+config :ash_hateoas, commit_authority: AshHateoas.CommitAuthority.ApiKey
+```
+
+**The package ships the implementation.** An author writes no module for the
+common case. `AshHateoas.CommitAuthority.ApiKey` reads the metadata
+`ash_authentication`'s api_key strategy already stamps on the actor —
+`__metadata__[:using_api_key?]`, the same field its own `UsingApiKey` policy
+check reads — and answers false for a key-authenticated actor, true otherwise.
+It pattern-matches a map key and references nothing from that package, so the
+dependency is documentation, not code (§6). The `@callback` remains so a
+deployment on different authentication can supply its own.
+
+Note what the shipped module means: **"holds a delegated credential"**, not "is
+an agent". A human scripting with an API key is refused too. That is correct — a
+script is not a party exercising judgment — and it MUST be documented, or it will
+be reported as a bug.
+
+Two defaults, and the second deviates from this package's usual posture
+deliberately:
+
+- **Unconfigured → everyone commits.** No `commit_authority` set means the
+  feature is inert and R10 changes nothing for an existing deployment. Unlike
+  R8's posture, this defaults *off*: affordances are a contract and default on,
+  but this changes what an endpoint does.
+- **Raised → does not commit, logged loudly.** R7 drops an affordance and
+  continues, justified because affordances are advisory. This is an
+  **enforcement** decision, so it fails **closed**. Failing open here is an
+  unapproved write; failing closed is an unnecessary escalation.
+
+#### Refusal is 403, and carries a projection
+
+A non-committing actor gets **403**. Not 2xx: the request was "publish this",
+that did not happen, and every HTTP client branches on `status < 300` before
+anything reads the body. Not 202, which promises the action is queued when
+nothing is. Not 409, which invites a retry the actor can do nothing to make
+succeed.
+
+403 is the same code an unauthorized actor already receives, and that is the
+point: the projection is **additive**. A client reading only status codes treats
+this exactly as a refusal, which it is, and behaves correctly with no knowledge
+of R10; a client reading the body learns what the action would have done.
+
+The body MUST be a structured error — a named type carrying the action and the
+projection — never prose. A consumer pattern-matching on an English sentence
+breaks when the sentence is edited.
+
+#### The projection describes; it never runs. **MUST.**
+
+The refusal carries what the action *would* do, so the party who must commit is
+approving a direction rather than a keystroke. A known failure mode of approval
+systems is the indistinguishable request approved by reflex; a refusal that says
+only "not permitted" invites exactly that.
+
+Nothing is executed to produce it. `Ash.Changeset.for_update/4` was considered
+and rejected: it runs change modules, and a change module doing I/O — a charge, a
+webhook, a mail — fires at build time. No option makes an arbitrary action safe
+to simulate, and a preview that issues ten refunds is worse than no preview.
+
+What is derived instead:
+
+| Projected | Derived from |
+|---|---|
+| the transition | `AshStateMachine.Info.state_machine_transitions/2` |
+| affordances at the target state | the existing gate chain, run against that state |
+| the delta | gained and lost, a set operation on the two |
+
+**The cost is a full chain run, not a free one**, and R8 governs it. The
+transition lookup is in-memory DSL data, but the second row re-runs the gates —
+including `Ash.can?/3`, which may query per candidate. This is acceptable only
+because it happens on a **refusal**: once, for one action, for an actor who was
+going to receive an error anyway. It is never on the read path and MUST NOT be
+computed while rendering affordances.
+
+The primitive is one function: *given resource, record, actor and a target state,
+return the affordance set there.* Its limits MUST be documented on the function:
+
+- The record is correct in the **state attribute only** and stale in every other,
+  so a record-dependent policy answers about a record that will not exist. It is
+  a projection for a human to read and **MUST NOT** be used as an authorization
+  decision.
+- Where a transition declares several `to` states, the result is a set of
+  possible futures and MUST be presented as such rather than one being chosen.
+- An action outside a state machine yields no projection. The profile MUST
+  distinguish "nothing downstream" from "not derivable".
+
+Computed with the **requesting** actor. Projecting another actor's future into
+this actor's refusal mixes two authorities in one payload.
+
+#### What is out of scope
+
+Grants, escalation records, the review flow, notification and audit are
+**not** this package. They are state; everything here is declaration and
+derivation. They belong in a peer of `hateoas_mcp` (§5.2) that consumes the
+profile.
+
+One consequence: where approval is asynchronous — the realistic case, since a
+human may answer hours later — a projection captured at refusal time is stale
+when read. The consumer MUST recompute it at review time, with the committing
+actor. That is why the primitive is a function and not a stored field.
 
 ---
 
@@ -702,6 +916,45 @@ Kept as findings, since each cost something to establish.
   profile passes the record's URI as a tool argument, so `tools/list` needs no
   per-session position — which was the only reason server-held state had been
   considered.
+- **Telling a delegated actor from a direct one (R10).** RFC 8693 already draws
+  the distinction and has since 2020: `sub` is the party being acted for, `act`
+  the party acting, chains nest `act` within `act`, and §1.1 separates
+  *delegation* (the agent keeps its own identity) from *impersonation* (it does
+  not). Do not invent a vocabulary. But do not hardcode one either:
+  `draft-klrc-aiagent-auth` names the agent with `client_id` instead, and the
+  two drafts disagree — which is the argument for `commits?/1` being a callback.
+  For an autonomous actor with no principal behind it, `sub` is the actor itself.
+- **Where the scoping lives, with `ash_authentication`.** On an **API key**, not
+  on a second principal. The api_key strategy stamps
+  `__metadata__[:using_api_key?]` and `__metadata__[:api_key]` — the key *record*
+  — onto the actor, and ships an `AshAuthentication.Checks.UsingApiKey` policy
+  check. The delegated actor therefore authenticates **as its principal**, with a
+  credential that narrows: policies evaluate the principal's roles *and* the
+  key's scopes, so "the delegate can never exceed its principal" holds by
+  construction rather than by maintenance. Modelling the agent as its own
+  authenticatable resource was rejected for the opposite reason — two principals
+  make the subset property a claim to uphold, and lengthen every
+  `relates_to_actor_via` path.
+
+  `commits?/1` then matches on `__metadata__[:using_api_key?]` rather than on a
+  struct. Note this means "holds a delegated credential", not "is an agent" — a
+  human scripting with a key is refused too, which is correct and must be
+  documented, because someone will otherwise file it as a bug.
+- **Key expiry is the implementor's job, and the hook is the relationship.**
+  `ApiKey.SignInPreparation` applies `api_key_relationship.filter` *before*
+  looking the key up, so expiry belongs there — `filter expr(valid_until >
+  fragment("now()") and is_nil(revoked_at))` — and not in a policy, which would
+  authenticate first. An expired key then takes the `{:ok, nil}` branch, which
+  performs a dummy `secure_compare` against random bytes: expired and
+  nonexistent are indistinguishable in time. Nothing in the strategy checks
+  expiry itself; its own security note says so.
+
+  Two consequences worth stating. Delegated authority lapses without anyone
+  revoking anything, which is the property the capability-token literature wants
+  and costs one filter here. And under async approval, a credential that expires
+  during the wait simply cannot act — the consumer needs no staleness check of
+  its own. The gap to watch is a session JWT minted at key sign-in, which
+  outlives the key by its own `token_lifetime`.
 
 ## 7. References
 - JSON:API 1.1 — link objects (`rel`/`title`/`meta`), link names not
@@ -728,3 +981,17 @@ Kept as findings, since each cost something to establish.
   transformer-generated modules: https://hexdocs.pm/ash_commanded/ ·
   https://github.com/accountex-org/ash_commanded
 - HAL-FORMS; Siren; Ion — affordance vocabularies to align with
+- RFC 8693 OAuth 2.0 Token Exchange — `act` / `may_act`, and delegation vs
+  impersonation (§1.1): https://www.rfc-editor.org/rfc/rfc8693.html
+- draft-klrc-aiagent-auth — names the agent with `client_id` instead of `act`;
+  individual submission, no WG standing, and the reason R10 asks rather than
+  assumes: https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/
+- MCP, *Tool Annotations as Risk Vocabulary* — why `readOnlyHint` and friends
+  are **not** an approval declaration ("clients MUST treat them as untrusted");
+  the nearest prior art to R10's flag, and the reason it is enforced at the
+  endpoint rather than merely advertised:
+  https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/
+- AshAuthentication api_key strategy — `__metadata__[:api_key]`,
+  `AshAuthentication.Checks.UsingApiKey`, and its note that generating,
+  expiring and revoking keys are the implementor's:
+  https://hexdocs.pm/ash_authentication/AshAuthentication.Strategy.ApiKey.html
