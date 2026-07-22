@@ -26,6 +26,13 @@ before writing DSL you're unsure about:
   (confirmation, log-out-everywhere), policies, custom auth actions.
 - `rules/ash_ai/usage-rules.md` — AshAI: vectorization/embeddings, AI tools,
   prompt-backed actions (structured outputs), MCP server.
+- `rules/ash_phoenix/` — AshPhoenix. **The top-level `usage-rules.md` is only an
+  index; the actual rules are the six files in `usage-rules/`** —
+  `form_integration.md` (the `AshPhoenix.Form` life cycle: `validate/3` →
+  `submit/2`, `form_to_*` code interfaces), `nested_forms.md`,
+  `union_forms.md`, `error_handling.md`, `debugging_form_submissions.md`,
+  `best_practices.md`. Read the topic file, not the index — the index says
+  nothing on its own.
 - `rules/usage_rules/` — the `usage_rules` dev tool that MANAGES all of the
   above (`usage-rules.md`) plus curated general `elixir.md` and `otp.md` rules.
   Consult `elixir.md`/`otp.md` before writing non-Ash Elixir; use
