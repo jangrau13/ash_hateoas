@@ -75,6 +75,55 @@ defmodule AshHateoas.Req.R10Test do
     end
   end
 
+  describe "the flag reaches the wire" do
+    setup do
+      article =
+        AshHateoas.Test.Article
+        |> Ash.Changeset.for_create(:create, %{title: "R10"})
+        |> Ash.create!(authorize?: false)
+
+      envelope =
+        AshHateoas.affordances(article, %AshHateoas.Test.Actor{id: "someone", role: :admin},
+          domain: AshHateoas.Test.Domain
+        )
+
+      %{rendered: AshHateoas.JsonApi.Renderer.render(envelope, path_params: %{"id" => article.id})}
+    end
+
+    test "a not_delegable action carries meta.notDelegable", %{rendered: rendered} do
+      assert %{"meta" => meta} = rendered["publish"]
+      assert meta["notDelegable"] == true
+    end
+
+    # Omitted rather than false, matching multiStep: the profile documents both
+    # as optional, and a client reads absence as "delegable".
+    test "an ordinary action omits the key entirely", %{rendered: rendered} do
+      assert %{"meta" => meta} = rendered["update"]
+      refute Map.has_key?(meta, "notDelegable")
+    end
+
+    # R10: the flag is declared, not derived per actor. A different actor sees
+    # the same flag on the same action — only the endpoint's behaviour varies.
+    test "the flag does not vary by actor" do
+      article =
+        AshHateoas.Test.Article
+        |> Ash.Changeset.for_create(:create, %{title: "R10 actors"})
+        |> Ash.create!(authorize?: false)
+
+      for role <- [:admin, :user] do
+        envelope =
+          AshHateoas.affordances(article, %AshHateoas.Test.Actor{id: "a", role: role},
+            domain: AshHateoas.Test.Domain
+          )
+
+        if affordance = envelope[:publish] do
+          assert affordance.not_delegable?,
+                 "publish must be flagged for every actor that can see it, failed for #{role}"
+        end
+      end
+    end
+  end
+
   defp compile_resource(name, agentic_body, actions_body) do
     Code.compile_string("""
     defmodule #{name} do

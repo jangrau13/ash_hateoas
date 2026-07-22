@@ -454,7 +454,15 @@ defmodule AshHateoas.Req.R1R2R5Test do
   end
 
   describe "R5: an Affordance's shape is fixed" do
-    @affordance_keys MapSet.new([:name, :href, :method, :description, :fields, :multi_step?])
+    @affordance_keys MapSet.new([
+                       :name,
+                       :href,
+                       :method,
+                       :description,
+                       :fields,
+                       :multi_step?,
+                       :not_delegable?
+                     ])
 
     test "every affordance from every resource has exactly the documented keys" do
       for affordance <- every_affordance() do
@@ -483,6 +491,9 @@ defmodule AshHateoas.Req.R1R2R5Test do
 
         assert is_list(a.fields), "fields must always be a list, never nil"
         assert is_boolean(a.multi_step?), "multi_step? must always be a boolean, never nil"
+
+        assert is_boolean(a.not_delegable?),
+               "not_delegable? must always be a boolean, never nil"
       end
     end
 

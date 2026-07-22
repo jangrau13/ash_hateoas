@@ -75,6 +75,7 @@ defmodule AshHateoas.JsonApi.Renderer do
       "fields" => Enum.map(affordance.fields, &field/1)
     }
     |> put_if(affordance.multi_step?, "multiStep", true)
+    |> put_if(affordance.not_delegable?, "notDelegable", true)
   end
 
   defp field(%Field{} = field) do

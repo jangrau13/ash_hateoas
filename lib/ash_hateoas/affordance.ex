@@ -12,6 +12,9 @@ defmodule AshHateoas.Affordance do
     * `description` — the action's own `description`, surfaced verbatim (R4)
     * `fields` — `AshHateoas.Field` structs, one per public argument
     * `multi_step?` — optional flag for a compound (e.g. Reactor-backed) operation
+    * `not_delegable?` — optional flag: only a committing credential may execute
+      this action (R10). Declared, so it reads the same for every actor; what
+      varies is whether the endpoint commits.
 
   Renderers MUST NOT emit structurally different affordances across records or
   transports.
@@ -25,7 +28,8 @@ defmodule AshHateoas.Affordance do
           method: atom(),
           description: String.t() | nil,
           fields: [Field.t()],
-          multi_step?: boolean()
+          multi_step?: boolean(),
+          not_delegable?: boolean()
         }
 
   defstruct [
@@ -34,6 +38,7 @@ defmodule AshHateoas.Affordance do
     :method,
     :description,
     fields: [],
-    multi_step?: false
+    multi_step?: false,
+    not_delegable?: false
   ]
 end

@@ -75,6 +75,7 @@ Each affordance is a member of a `links` object, keyed by the action name:
 | `meta.method` | yes | Uppercase HTTP method (`GET`, `POST`, `PATCH`, `DELETE`). |
 | `meta.fields` | yes | Inputs the client may supply. May be empty. |
 | `meta.multiStep` | no | `true` when the action is a compound operation. |
+| `meta.notDelegable` | no | `true` when only a credential that commits may execute the action. See below. |
 
 ### Field objects
 
@@ -108,6 +109,37 @@ is a URL and is not a resource to dereference.
 data, so a server may emit any URL. A client that dereferences it — especially
 one attaching credentials — MUST validate the host against its own allowlist,
 and MUST NOT send a credential belonging to one host to another.
+
+## `notDelegable`
+
+Some actions may be advertised to a client that is not permitted to *execute*
+them alone — an autonomous agent holding a credential derived from a person's
+authority, a service account, a sandbox session.
+
+```json
+"links": {
+  "publish": {
+    "href": "/articles/42/publish",
+    "rel": "https://ash-hateoas.org/rels/publish",
+    "meta": { "method": "POST", "fields": [], "notDelegable": true }
+  }
+}
+```
+
+The flag is a **declared property of the action**, so it is identical for every
+client. It does not say the requesting client will be refused; it says the action
+is one that only a committing credential may execute. Whether *this* client
+commits is not in the document, and a client MUST NOT infer it from the flag's
+presence.
+
+Advertising it rather than withholding it is deliberate. A client that simply
+cannot see the action has no way to distinguish "this does not exist" from "you
+may propose this but not perform it", and so no way to ask anyone to perform it.
+
+A client that does not commit and attempts the action anyway receives **403**,
+carrying in `errors[].meta` a projection of what the action would have done —
+see the error's `code`. The projection is advisory and describes a hypothetical
+state; it MUST NOT be treated as a promise about what will happen later.
 
 ## Rules a conforming server MUST follow
 
