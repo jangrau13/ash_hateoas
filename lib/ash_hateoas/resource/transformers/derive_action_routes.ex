@@ -97,10 +97,32 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
     |> Enum.reject(&(&1.name in skip))
     |> Enum.reduce(dsl_state, &add_routes(&2, &1, dsl_state))
     |> derive_base()
+    |> persist_authored_generics(dsl_state)
     |> then(&{:ok, &1})
   rescue
     # A resource without ash_json_api has no such DSL path.
     _ -> {:ok, dsl_state}
+  end
+
+  # Which generic actions the AUTHOR routed by hand, recorded before this
+  # transformer adds its own.
+  #
+  # `AshHateoas.Resource.Verifiers.VerifyActions` needs the distinction and
+  # cannot recover it: verifiers run after transformers, and a derived generic
+  # route is the same `:route` entity, carrying the same `:method` field, as a
+  # hand-written one. By then "the author stated POST" and "we assumed POST"
+  # look identical — and the verifier warns about exactly that difference.
+  defp persist_authored_generics(dsl_state, original_dsl) do
+    authored =
+      original_dsl
+      |> Transformer.get_entities([:json_api, :routes])
+      |> Enum.filter(&Map.has_key?(&1, :method))
+      |> Enum.map(& &1.action)
+      |> Enum.reject(&is_nil/1)
+
+    Transformer.persist(dsl_state, :ash_hateoas_authored_generic_routes, authored)
+  rescue
+    _ -> dsl_state
   end
 
   # `base` is the last thing an author would otherwise have to write, and both

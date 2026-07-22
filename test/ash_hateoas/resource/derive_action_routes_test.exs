@@ -377,6 +377,54 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
       refute stderr =~ "by assumption",
              "declaring the method must silence it, got: #{stderr}"
     end
+
+    test "hand-routing the action silences the warning too" do
+      # `route :post, "/tally", :tally` states the verb as plainly as `method
+      # :tally, :post` does, so nothing is being assumed and there is nothing
+      # to warn about.
+      #
+      # Warning here would tell an author who HAS said which verb to say it a
+      # second time, somewhere else — two places holding one fact, free to
+      # disagree. R1 exists to prevent exactly that.
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          Code.compile_string("""
+          defmodule AshHateoasRoutedGeneric#{System.unique_integer([:positive])} do
+            use Ash.Resource,
+              domain: nil,
+              data_layer: Ash.DataLayer.Ets,
+              extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+
+            json_api do
+              type "routed_generic"
+              routes do
+                base "/routed_generics"
+                route :post, "/tally", :tally
+              end
+            end
+
+            hateoas do
+              warn_on_missing_authorizers?(false)
+            end
+
+            attributes do
+              uuid_primary_key :id
+            end
+
+            actions do
+              defaults [:read]
+
+              action :tally, :boolean do
+                run fn _input, _ctx -> {:ok, true} end
+              end
+            end
+          end
+          """)
+        end)
+
+      refute stderr =~ "by assumption",
+             "a declared route states the verb; warning demands it be said twice, got: #{stderr}"
+    end
   end
 
   describe "what is left alone" do

@@ -45,17 +45,36 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   #
   # So the warning marks an assumption, not a failure. Silence it by confirming
   # the verb either way: `method :tally, :post` is as good an answer as `:get`.
+  #
+  # A hand-declared route counts as confirming it. `route :post, "/acquire",
+  # :acquire` states the verb as plainly as `method :acquire, :post` does, so
+  # nothing is being assumed. Warning anyway would tell an author who HAS said
+  # which verb to say it a second time, somewhere else — two places holding one
+  # fact, free to disagree. That is what R1 exists to avoid, and this case is
+  # unambiguous: the route says POST.
   defp warn_on_assumed_methods(dsl_state, module) do
-    declared = declared_methods(dsl_state)
-    unrouted = AshHateoas.Resource.Info.unrouted(dsl_state)
+    confirmed =
+      declared_methods(dsl_state) ++
+        routed_generic_actions(dsl_state) ++
+        AshHateoas.Resource.Info.unrouted(dsl_state)
 
     dsl_state
     |> Ash.Resource.Info.actions()
     |> Enum.filter(&(&1.type == :action))
-    |> Enum.reject(&(&1.name in declared or &1.name in unrouted))
+    |> Enum.reject(&(&1.name in confirmed))
     |> Enum.each(&warn_assumed_method(&1, module))
 
     :ok
+  end
+
+  # Recorded by `DeriveActionRoutes` before it added any routes of its own.
+  #
+  # Reading the route entities here instead would not work: by the time a
+  # verifier runs, a derived generic route is indistinguishable from a declared
+  # one — same entity, same `:method` field — so every generic action would
+  # look declared and the warning would never fire.
+  defp routed_generic_actions(dsl_state) do
+    Verifier.get_persisted(dsl_state, :ash_hateoas_authored_generic_routes, [])
   end
 
   defp warn_assumed_method(action, module) do
