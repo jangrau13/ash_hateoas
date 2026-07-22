@@ -48,9 +48,24 @@ defmodule AshHateoas.Resource do
   A compile-time verifier rejects any entry naming an action that does not
   exist, so a renamed action fails the build rather than silently losing its
   deviation — which for `unrouted` would mean silently republishing it.
+
+  ## Actions a delegated credential may not execute (R10)
+
+  A second, separate section declares actions that stay advertised but are
+  refused unless the requesting credential is one that commits:
+
+      agentic_hateoas do
+        not_delegable :publish
+      end
+
+  It is separate from `hateoas` because that block is override-only and this
+  subtracts from nothing — the action stays routed and stays advertised, and
+  gains a flag saying it will be refused. Which credentials commit is a
+  deployment-wide configuration; unconfigured, every credential does and the
+  declaration is documentation only.
   """
 
-  alias AshHateoas.Resource.{Exclusion, Method, Override, Unrouted}
+  alias AshHateoas.Resource.{Exclusion, Method, NotDelegable, Override, Unrouted}
 
   @method %Spark.Dsl.Entity{
     name: :method,
@@ -178,8 +193,46 @@ defmodule AshHateoas.Resource do
     ]
   }
 
+  @not_delegable %Spark.Dsl.Entity{
+    name: :not_delegable,
+    target: NotDelegable,
+    args: [:action],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    An action a delegated credential may be offered but must not execute.
+    """,
+    examples: ["not_delegable :publish"],
+    schema: [
+      action: [
+        type: :atom,
+        required: true,
+        doc: "The action that only a committing credential may execute."
+      ]
+    ]
+  }
+
+  @agentic_hateoas %Spark.Dsl.Section{
+    name: :agentic_hateoas,
+    describe: """
+    Actions that may be advertised to a delegated credential but not executed
+    by one (R10).
+
+    Separate from `hateoas` because that block is override-only: every entry in
+    it subtracts from or corrects the derived surface, while this one declares a
+    new fact about an action. The section is optional.
+    """,
+    examples: [
+      """
+      agentic_hateoas do
+        not_delegable :publish
+      end
+      """
+    ],
+    entities: [@not_delegable]
+  }
+
   use Spark.Dsl.Extension,
-    sections: [@hateoas],
+    sections: [@hateoas, @agentic_hateoas],
     transformers: [
       AshHateoas.Resource.Transformers.MarkPrimaryGet,
       AshHateoas.Resource.Transformers.DeriveActionRoutes,
