@@ -33,6 +33,11 @@ defmodule AshHateoas.Test.Article do
     override :publish, href: "/custom/publish/:id"
   end
 
+  agentic_hateoas do
+    # Advertised to every actor, executed only by a committing credential.
+    not_delegable(:publish)
+  end
+
   attributes do
     uuid_primary_key :id
     attribute :title, :string, public?: true, allow_nil?: false

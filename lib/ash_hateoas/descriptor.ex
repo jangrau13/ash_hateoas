@@ -33,8 +33,17 @@ defmodule AshHateoas.Descriptor do
       method: method(route, action),
       description: action.description,
       fields: fields(action, resource),
-      multi_step?: multi_step?(action)
+      multi_step?: multi_step?(action),
+      not_delegable?: not_delegable?(action, resource)
     }
+  end
+
+  # Declared, not derived, and read the same for every actor (R10). The gates
+  # have already decided the action belongs in the set; this only says who may
+  # execute it once offered.
+  defp not_delegable?(action, resource) do
+    AshHateoas.Resource.Info.extension?(resource) and
+      AshHateoas.Resource.Info.not_delegable?(resource, action.name)
   end
 
   # An author's `override :action, href: "..."` wins. Otherwise the route's
