@@ -382,6 +382,45 @@ defmodule AshHateoas.Req.R10Test do
       assert {:ok, _} = publish(article, @human)
     end
 
+    # `Ash.can?/3` asks whether the action is PERMITTED, and it is — the actor
+    # is authorized, which is R10's whole premise. Refusing its changeset would
+    # answer the wrong question and drop the affordance from the set R6 requires
+    # be advertised.
+    test "Ash.can?/3 still answers true for a delegated credential", %{article: article} do
+      assert Ash.can?({article, :publish}, @delegated),
+             "a pre-flight check must not be refused — the actor is authorized"
+    end
+
+    # Building the projection calls the backbone, whose gate calls Ash.can?/3,
+    # which builds a changeset for this very action. Without the pre-flight
+    # guard that recurses without bound — and hangs rather than failing, so the
+    # timeout is the assertion. Verified by deleting the guard: this test hangs,
+    # the rest of the file with it.
+    test "refusing does not recurse through the projection", %{article: article} do
+      task =
+        Task.async(fn ->
+          article
+          |> Ash.Changeset.for_update(:publish, %{}, actor: @delegated)
+          |> Ash.update(authorize?: true, actor: @delegated)
+        end)
+
+      assert {:error, _} = Task.await(task, 5_000)
+    end
+
+    # Article has no state machine, so there is nothing to project and the
+    # refusal is bare. That must still be well-formed rather than an error —
+    # "no projection" is a legitimate answer, distinct from a failed one.
+    test "a refusal with nothing to project is still well-formed", %{article: article} do
+      assert {:error, %{errors: [error]}} = publish(article, @delegated)
+
+      assert error.deltas == []
+
+      assert AshHateoas.Error.NotDelegable.to_meta(error) == %{
+               "action" => "publish",
+               "projection" => []
+             }
+    end
+
     test "a delegated credential is refused", %{article: article} do
       assert {:error, %{errors: [%AshHateoas.Error.NotDelegable{} = error]}} =
                publish(article, @delegated)

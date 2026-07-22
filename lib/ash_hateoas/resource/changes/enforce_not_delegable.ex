@@ -30,30 +30,27 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
   deliberately computed after the decision to refuse, never before. A committing
   actor pays nothing.
 
-  ## Re-entrancy
+  ## Pre-flight changesets pass through
 
-  The projection is where the loop hides. Building it calls the backbone, whose
-  authorization gate calls `Ash.can?/3`, which builds a changeset for this very
-  action — running this change again, which projects again, without bound.
+  `Ash.can?/3` builds a changeset to ask whether an action is *permitted*, and
+  marks it `private.pre_flight_authorization?` — Ash's own signal for "this is a
+  hypothetical, not an invocation". Such a changeset is never executed, so
+  refusing it would be answering the wrong question, and answering it wrongly:
+  the actor **is** authorized, and a `false` here would drop the affordance from
+  the set R6 requires be advertised.
 
-  A process flag set for the duration of the projection makes those inner
-  changesets pass through untouched. They are hypothetical and must never be
-  refused: `Ash.can?/3` is asking whether the action is *permitted*, which it
-  is, and answering "no" there would drop the affordance from the very set being
-  described (R6).
+  It also breaks a loop that would otherwise be unbounded. Building the
+  projection calls the backbone, whose authorization gate calls `Ash.can?/3`,
+  which builds a changeset for this very action — running this change again,
+  which projects again.
   """
 
   use Ash.Resource.Change
 
-  # Set while the projection runs, so the changesets `Ash.can?/3` builds during
-  # it do not re-enter this change. Without it the recursion is unbounded:
-  # refuse -> project -> affordances -> Ash.can?/3 -> changeset -> refuse.
-  @projecting :"$ash_hateoas_projecting"
-
   @impl true
   def change(changeset, _opts, context) do
     cond do
-      Process.get(@projecting) ->
+      pre_flight?(changeset) ->
         changeset
 
       AshHateoas.CommitAuthority.commits?(context.actor) ->
@@ -62,6 +59,11 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
       true ->
         Ash.Changeset.add_error(changeset, refusal(changeset, context))
     end
+  end
+
+  # The same key `Ash.Resource.Validation.PreFlightAuthorization` reads.
+  defp pre_flight?(changeset) do
+    changeset.context[:private][:pre_flight_authorization?] == true
   end
 
   # An atomic action would run its update as an expression without calling
@@ -90,8 +92,6 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
   defp deltas(%{data: nil}, _context), do: []
 
   defp deltas(changeset, context) do
-    Process.put(@projecting, true)
-
     AshHateoas.Projection.deltas(
       changeset.resource,
       changeset.data,
@@ -104,7 +104,5 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
     # The refusal matters more than its explanation: a projection that cannot be
     # built must not turn a clean 403 into a 500.
     _ -> []
-  after
-    Process.delete(@projecting)
   end
 end
