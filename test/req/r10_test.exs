@@ -461,6 +461,78 @@ defmodule AshHateoas.Req.R10Test do
     end
   end
 
+  describe "the pre-flight guard is structural" do
+    alias AshHateoas.Resource.Changes.InvocationChange
+
+    defmodule Probe do
+      @moduledoc false
+      use InvocationChange
+
+      @impl InvocationChange
+      def change_invocation(changeset, _opts, _context) do
+        Ash.Changeset.put_context(changeset, :probe_ran?, true)
+      end
+    end
+
+    defp changeset(pre_flight?) do
+      cs =
+        AshHateoas.Test.Article
+        |> struct()
+        |> Ash.Changeset.new()
+
+      if pre_flight? do
+        Ash.Changeset.set_context(cs, %{private: %{pre_flight_authorization?: true}})
+      else
+        cs
+      end
+    end
+
+    # The guard used to be a clause inside EnforceNotDelegable, which an edit
+    # could drop. It now lives in the base module's own change/3, so a change
+    # built on it cannot see a pre-flight changeset at all.
+    test "change_invocation/3 is not reached for a pre-flight changeset" do
+      result = Probe.change(changeset(true), [], %{actor: nil})
+
+      refute result.context[:probe_ran?],
+             "a pre-flight changeset must be returned before change_invocation/3"
+    end
+
+    test "change_invocation/3 is reached for a real invocation" do
+      result = Probe.change(changeset(false), [], %{actor: nil})
+
+      assert result.context[:probe_ran?]
+    end
+
+    # Not overridable by design. Elixir permits the definition but the guard
+    # clause always matches first, so the override is dead code — and warns.
+    test "a change built on it cannot replace change/3" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          Code.compile_string("""
+          defmodule OverrideAttempt#{System.unique_integer([:positive])} do
+            use AshHateoas.Resource.Changes.InvocationChange
+
+            @impl AshHateoas.Resource.Changes.InvocationChange
+            def change_invocation(changeset, _opts, _context), do: changeset
+
+            def change(changeset, _opts, _context), do: changeset
+          end
+          """)
+        end)
+
+      assert stderr =~ "cannot match",
+             "replacing change/3 must be dead code, and Elixir must say so"
+    end
+
+    test "EnforceNotDelegable is built on it" do
+      assert InvocationChange in (AshHateoas.Resource.Changes.EnforceNotDelegable.module_info(
+                                    :attributes
+                                  )
+                                  |> Keyword.get_values(:behaviour)
+                                  |> List.flatten())
+    end
+  end
+
   defmodule Raising do
     @behaviour AshHateoas.CommitAuthority
 

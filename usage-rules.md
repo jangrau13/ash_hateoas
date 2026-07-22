@@ -167,6 +167,12 @@ Three things to know before declaring it:
   `AshHateoas.CommitAuthority` if you need a narrower rule.
 - **Enforcement is inside Ash, not in the transport.** A consumer calling
   `Ash.update/2` directly is refused identically to one going through JSON:API.
+  If you write your own change on such an action, build it on
+  `AshHateoas.Resource.Changes.InvocationChange` — it implements `change/3` so
+  that `Ash.can?/3`'s pre-flight changesets never reach your code. A change that
+  rejects one refuses a *hypothetical*, which drops the affordance from the set;
+  a change that computes from the backbone re-enters `Ash.can?/3` and loops,
+  hanging rather than crashing.
 - **The action can no longer run atomically.** An atomic update never calls
   `change/3`, so the refusal would be skipped; the installed change declines
   atomicity rather than let that happen.

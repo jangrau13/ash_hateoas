@@ -30,52 +30,34 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
   deliberately computed after the decision to refuse, never before. A committing
   actor pays nothing.
 
-  ## Pre-flight changesets pass through
+  ## Pre-flight changesets never reach this
 
-  `Ash.can?/3` builds a changeset to ask whether an action is *permitted*, and
-  marks it `private.pre_flight_authorization?` — Ash's own signal for "this is a
-  hypothetical, not an invocation". Such a changeset is never executed, so
-  refusing it would be answering the wrong question, and answering it wrongly:
-  the actor **is** authorized, and a `false` here would drop the affordance from
-  the set R6 requires be advertised.
+  `AshHateoas.Resource.Changes.InvocationChange` implements `change/3` and
+  returns a pre-flight changeset before `change_invocation/3` is called, so this
+  module cannot see one. That is structural rather than conventional: the guard
+  used to live here as a clause, and a clause can be dropped by an edit that
+  looks harmless.
 
-  It also breaks a loop that would otherwise be unbounded. Building the
-  projection calls the backbone, whose authorization gate calls `Ash.can?/3`,
-  which builds a changeset for this very action — running this change again,
-  which projects again.
+  Two things depend on it. `Ash.can?/3` asks whether the action is *permitted*,
+  and it is — refusing there would drop the affordance from the set R6 requires
+  be advertised. And building the projection re-enters `Ash.can?/3`, so a change
+  that refused pre-flight changesets would loop, hanging rather than crashing.
+
+  The cost of the base module's default: a `not_delegable` action cannot run
+  atomically, since an atomic update never calls `change/3` at all. Acceptable —
+  the declaration is rare, deliberate, and on exactly the actions where a
+  correct refusal matters more than a single-statement update.
   """
 
-  use Ash.Resource.Change
+  use AshHateoas.Resource.Changes.InvocationChange
 
-  @impl true
-  def change(changeset, _opts, context) do
-    cond do
-      pre_flight?(changeset) ->
-        changeset
-
-      AshHateoas.CommitAuthority.commits?(context.actor) ->
-        changeset
-
-      true ->
-        Ash.Changeset.add_error(changeset, refusal(changeset, context))
+  @impl AshHateoas.Resource.Changes.InvocationChange
+  def change_invocation(changeset, _opts, context) do
+    if AshHateoas.CommitAuthority.commits?(context.actor) do
+      changeset
+    else
+      Ash.Changeset.add_error(changeset, refusal(changeset, context))
     end
-  end
-
-  # The same key `Ash.Resource.Validation.PreFlightAuthorization` reads.
-  defp pre_flight?(changeset) do
-    changeset.context[:private][:pre_flight_authorization?] == true
-  end
-
-  # An atomic action would run its update as an expression without calling
-  # `change/3`, so the refusal would never happen. Declining atomicity forces
-  # the non-atomic path, where `change/3` sees the actor and can refuse.
-  #
-  # The cost is that a `not_delegable` action cannot run atomically. That is
-  # acceptable: the declaration is rare, deliberate, and on exactly the actions
-  # where a correct refusal matters more than a single-statement update.
-  @impl true
-  def atomic(_changeset, _opts, _context) do
-    {:not_atomic, "#{inspect(__MODULE__)} must see the actor to decide whether it commits (R10)"}
   end
 
   defp refusal(changeset, context) do
