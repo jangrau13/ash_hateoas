@@ -9,9 +9,15 @@ so that other transports can be built against the documents rather than against
 this package.
 
 The point is that affordances are **derived, never authored**. A resource
-already declares its actions, its routes, its policies and (where present) its
-state machine. AshHateoas reads those and answers "what may be done next?"
-per request, from the requesting client's own actor and position.
+already declares its actions, its policies and (where present) its state
+machine. AshHateoas reads those and answers "what may be done next?" per
+request, from the requesting client's own actor and position.
+
+The **routes are derived too**: every action is routed unless declared
+`unrouted`, and the `base` comes from the domain's short name plus the json_api
+`type`. A resource needs no `routes` block at all. Note what that means when
+adding the extension to an existing resource — it widens that resource's HTTP
+surface to every action it declares, so audit the action list first.
 
 Richardson Level 3 in one sentence: the client discovers every available state
 transition from what the server embeds in the response, and never constructs a
@@ -58,20 +64,36 @@ AshHateoas.affordances(MyApp.Document, actor, domain: MyApp.Docs)
 
 ## The DSL is override-only
 
-There are **no per-action "enable" entries**. Everything routed is advertised;
-the block carries deviations only.
+There are **no per-action "enable" entries**. Saying nothing yields the full
+surface; the block subtracts from it or corrects it.
 
 ```elixir
 hateoas do
   enabled? true
   exclude :internal_reconcile
   override :approve, href: "/documents/:id/approve"
+  unrouted :sync_from_stripe
+  method :tally, :get
 end
 ```
 
-A compile-time verifier rejects an `exclude` or `override` naming an action that
-does not exist — so a renamed action fails the build rather than silently
-dropping an affordance.
+| entry | effect |
+|---|---|
+| `exclude` | routed and callable, but not advertised |
+| `override` | replaces the derived `href` |
+| `unrouted` | no route at all — not reachable over HTTP |
+| `method` | the verb for a generic action, whose type declares none |
+
+`unrouted` is the one to reach for when an action must not be public. Since
+every action is routed by default, this is how you say otherwise — and a
+compile-time verifier rejects any entry naming an action that does not exist,
+so a renamed action fails the build rather than silently becoming routed again.
+
+Two kinds of action are skipped without any declaration, because the fact is
+already in the code: **Reactor compensations** (Ash requires a single
+`changeset` argument, which no HTTP caller can construct) and **everything
+AshAuthentication generates** (served by its own router; the subject resolver is
+guarded by a bypass that only matches in-process calls).
 
 ## Authorization
 
@@ -94,6 +116,60 @@ Two consequences worth internalising:
 Affordances are **advisory**. The endpoint re-runs every policy, validation and
 state check on invocation, so a stale or optimistic proposal degrades to a clean
 error, never an invalid write.
+
+## Actions a delegated credential may not execute
+
+An actor may be *authorized* to run an action and still be the wrong party to run
+it **alone** — an agent holding a key derived from a person's authority, a
+service account, a sandbox session. `Ash.can?/3` is a boolean and cannot say
+this, so it is declared:
+
+```elixir
+agentic_hateoas do
+  not_delegable :publish
+end
+```
+
+Then name, once for the whole application, which credentials commit:
+
+```elixir
+config :ash_hateoas, commit_authority: AshHateoas.CommitAuthority.ApiKey
+```
+
+`ApiKey` answers **false** for any actor carrying
+`__metadata__[:using_api_key?]` — the field `ash_authentication`'s api_key
+strategy already stamps. Unconfigured, every credential commits and the
+declaration is documentation only, so adding this to a live deployment changes
+nothing until you opt in.
+
+**The action stays advertised.** This is the whole point, and it is the opposite
+of `exclude` and `unrouted`:
+
+| | in the affordance set | executes |
+|---|---|---|
+| `unrouted` | no — no route at all | — |
+| `exclude` | no — routed but unadvertised | yes |
+| `not_delegable` | **yes**, flagged `notDelegable` | only a committing credential |
+
+Withholding it would leave the caller unable to tell "this does not exist" from
+"you may propose this but not perform it", and so unable to ask anyone for it.
+
+A non-committing credential invoking it gets **403**, carrying in
+`errors[].meta` a projection of what the action would have done — for a state
+machine, which state it would move to and which affordances that gains and
+loses. Nothing is executed to produce that: it is read from the transitions and
+the gate chain, so no change module runs and no side effect fires.
+
+Three things to know before declaring it:
+
+- **It means "holds a delegated credential", not "is an agent".** A person
+  scripting with their own API key is refused too. Write your own
+  `AshHateoas.CommitAuthority` if you need a narrower rule.
+- **Enforcement is inside Ash, not in the transport.** A consumer calling
+  `Ash.update/2` directly is refused identically to one going through JSON:API.
+- **The action can no longer run atomically.** An atomic update never calls
+  `change/3`, so the refusal would be skipped; the installed change declines
+  atomicity rather than let that happen.
 
 ## Field descriptors
 
@@ -185,3 +261,12 @@ determine that — a wrong guess returns a wrong authorization answer.
   you read THIS record?" rather than "may you run this query?".
 - **Assuming affordances are a security boundary.** They are a *hint*. Security
   is the policy the endpoint enforces on invocation.
+- **Reaching for `not_delegable` to hide an action.** It does the opposite: the
+  action stays routed and stays advertised, and only its execution is gated. Use
+  `unrouted` to keep it off the surface, or a policy to make it unauthorized.
+- **Reading `notDelegable` as "you will be refused".** The flag is a declared
+  property of the *action*, identical for every actor — a person sees it too. It
+  says the action needs a committing credential, not that the reader lacks one.
+- **Expecting `not_delegable` to enforce anything with no commit authority
+  configured.** The default commits for everyone, so the flag is advertised and
+  nothing is refused. The verifier warns at compile time.

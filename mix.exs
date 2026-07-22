@@ -44,6 +44,7 @@ defmodule AshHateoas.MixProject do
       source_url: @source_url,
       extras: [
         "README.md",
+        "CHANGELOG.md",
         "usage-rules.md",
         "documentation/profiles/affordances.md"
       ]
