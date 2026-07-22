@@ -263,6 +263,69 @@ defmodule AshHateoas.Req.R10Test do
     end
   end
 
+  describe "the refusal" do
+    alias AshHateoas.Error.NotDelegable
+
+    defp error do
+      NotDelegable.exception(
+        resource: AshHateoas.Test.Order,
+        action: :confirm,
+        deltas: [%{to: :confirmed, gained: %{ship: :_, cancel: :_}, lost: [:confirm]}]
+      )
+    end
+
+    # 403 comes from the error class, not from a hand-written mapping: Ash
+    # wraps it into a :forbidden class and ash_json_api's own class_to_status/1
+    # turns that into 403.
+    test "is classed forbidden, which is what makes it a 403" do
+      assert error().class == :forbidden
+      assert Ash.Error.to_error_class(error()).class == :forbidden
+      assert AshJsonApi.Error.class_to_status(:forbidden) == 403
+    end
+
+    test "renders as a 403 JSON:API error" do
+      rendered = AshJsonApi.ToJsonApiError.to_json_api_error(error())
+
+      assert rendered.status_code == 403
+      assert rendered.code == "not_delegable"
+    end
+
+    # R10: the body MUST be structured, never prose. A consumer
+    # pattern-matching on an English sentence breaks when the sentence is
+    # edited, and the sentence is the part most likely to be edited.
+    test "carries the projection as data in meta" do
+      meta = AshJsonApi.ToJsonApiError.to_json_api_error(error()).meta
+
+      assert meta["action"] == "confirm"
+
+      assert [%{"to" => "confirmed", "gained" => gained, "lost" => lost}] = meta["projection"]
+
+      assert gained == ["cancel", "ship"]
+      assert lost == ["confirm"]
+    end
+
+    # Several `to` states must be presented as alternatives, so the projection
+    # is a list even when it holds one entry.
+    test "the projection is always a list" do
+      meta = AshJsonApi.ToJsonApiError.to_json_api_error(error()).meta
+
+      assert is_list(meta["projection"])
+    end
+
+    # to_meta/1 lives on the error rather than in the JSON:API impl so a
+    # transport built against the profile can reuse it (§5.2).
+    test "to_meta/1 is available without ash_json_api" do
+      assert NotDelegable.to_meta(error()) ==
+               AshJsonApi.ToJsonApiError.to_json_api_error(error()).meta
+    end
+
+    test "an empty projection is still well-formed" do
+      bare = NotDelegable.exception(resource: AshHateoas.Test.Order, action: :confirm)
+
+      assert NotDelegable.to_meta(bare) == %{"action" => "confirm", "projection" => []}
+    end
+  end
+
   defmodule Raising do
     @behaviour AshHateoas.CommitAuthority
 
