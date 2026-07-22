@@ -326,6 +326,102 @@ defmodule AshHateoas.Req.R10Test do
     end
   end
 
+  describe "enforcement" do
+    alias AshHateoas.Test.Article
+
+    @human %AshHateoas.Test.Actor{id: "h", role: :admin}
+    @delegated %{__metadata__: %{using_api_key?: true}}
+
+    setup do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "enforce"})
+        |> Ash.create!(authorize?: false)
+
+      previous = Application.get_env(:ash_hateoas, :commit_authority)
+      Application.put_env(:ash_hateoas, :commit_authority, AshHateoas.CommitAuthority.ApiKey)
+
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:ash_hateoas, :commit_authority, previous)
+        else
+          Application.delete_env(:ash_hateoas, :commit_authority)
+        end
+      end)
+
+      %{article: article}
+    end
+
+    defp publish(article, actor) do
+      article
+      |> Ash.Changeset.for_update(:publish, %{}, actor: actor)
+      |> Ash.update(authorize?: false)
+    end
+
+    # The author declares `not_delegable :publish` and nothing else; the
+    # enforcement is derived from the declaration (R1 applied to R10).
+    test "the transformer installs the refusal on the declared action" do
+      changes = Ash.Resource.Info.action(Article, :publish).changes
+
+      assert Enum.any?(
+               changes,
+               &match?({AshHateoas.Resource.Changes.EnforceNotDelegable, _}, &1.change)
+             )
+    end
+
+    test "an undeclared action is left alone" do
+      changes = Ash.Resource.Info.action(Article, :update).changes
+
+      refute Enum.any?(
+               changes,
+               &match?({AshHateoas.Resource.Changes.EnforceNotDelegable, _}, &1.change)
+             )
+    end
+
+    test "a committing actor is not refused", %{article: article} do
+      assert {:ok, _} = publish(article, @human)
+    end
+
+    test "a delegated credential is refused", %{article: article} do
+      assert {:error, %{errors: [%AshHateoas.Error.NotDelegable{} = error]}} =
+               publish(article, @delegated)
+
+      assert error.action == :publish
+      assert error.resource == Article
+    end
+
+    test "the refusal is classed forbidden, so it renders as 403", %{article: article} do
+      assert {:error, error} = publish(article, @delegated)
+      assert error.class == :forbidden
+    end
+
+    # The whole point of refusing before the data layer: nothing the action
+    # would have done may happen. A refusal that wrote first and objected
+    # afterwards would be no protection at all.
+    #
+    # `:publish` on the fixture changes no attribute, so the assertion that
+    # carries weight is the one on the accepted input — the refused update must
+    # not reach the record.
+    test "the refused action does not write", %{article: article} do
+      assert {:error, _} =
+               article
+               |> Ash.Changeset.for_update(:publish, %{title: "rewritten"}, actor: @delegated)
+               |> Ash.update(authorize?: false)
+
+      reloaded = Ash.get!(Article, article.id, authorize?: false)
+      assert reloaded.title == "enforce", "the refused update must not have been applied"
+    end
+
+    # Unconfigured, every credential commits — so the same actor that is refused
+    # above goes through. This is what makes adding the extension to an existing
+    # deployment safe.
+    test "with no authority configured, the same actor commits", %{article: article} do
+      Application.delete_env(:ash_hateoas, :commit_authority)
+
+      assert {:ok, _} = publish(article, @delegated)
+    end
+  end
+
   defmodule Raising do
     @behaviour AshHateoas.CommitAuthority
 

@@ -236,7 +236,8 @@ defmodule AshHateoas.Resource do
     transformers: [
       AshHateoas.Resource.Transformers.MarkPrimaryGet,
       AshHateoas.Resource.Transformers.DeriveActionRoutes,
-      AshHateoas.Resource.Transformers.DeriveRelationshipRoutes
+      AshHateoas.Resource.Transformers.DeriveRelationshipRoutes,
+      AshHateoas.Resource.Transformers.EnforceNotDelegable
     ],
     verifiers: [AshHateoas.Resource.Verifiers.VerifyActions]
 end
