@@ -4,7 +4,9 @@ defmodule AshHateoas.Req.R10Test do
   credential.
   """
 
-  use ExUnit.Case, async: true
+  # Not async: the commit-authority tests swap application config, which is
+  # global. Everything else here would be safe concurrently.
+  use ExUnit.Case, async: false
 
   alias AshHateoas.Resource.Info
 
@@ -122,6 +124,83 @@ defmodule AshHateoas.Req.R10Test do
         end
       end
     end
+  end
+
+  describe "commit authority" do
+    alias AshHateoas.CommitAuthority
+
+    test "defaults to Always, so the feature is inert unless configured" do
+      assert CommitAuthority.module() == CommitAuthority.Always
+      assert CommitAuthority.commits?(%{anything: true})
+      assert CommitAuthority.commits?(nil)
+    end
+
+    test "ApiKey refuses an actor carrying the strategy's metadata" do
+      key_holder = %{__metadata__: %{using_api_key?: true, api_key: %{id: "k"}}}
+
+      refute CommitAuthority.ApiKey.commits?(key_holder)
+    end
+
+    test "ApiKey commits for anything without that metadata" do
+      assert CommitAuthority.ApiKey.commits?(%{__metadata__: %{}})
+      assert CommitAuthority.ApiKey.commits?(%{id: "a person"})
+      assert CommitAuthority.ApiKey.commits?(nil)
+    end
+
+    # R10 inverts R7's posture deliberately. Gate.Authorization logs and drops
+    # an affordance because affordances are advisory; this is enforcement, so a
+    # raising authority must not let the write through.
+    test "a raising authority answers false, loudly" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          with_authority(Raising, fn ->
+            refute CommitAuthority.commits?(%{id: "x"})
+          end)
+        end)
+
+      assert log =~ "raised"
+      assert log =~ "non-committing"
+    end
+
+    test "a non-boolean answer is treated as non-committing, loudly" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          with_authority(Nonsense, fn ->
+            refute CommitAuthority.commits?(%{id: "x"})
+          end)
+        end)
+
+      assert log =~ "non-boolean"
+    end
+
+    defp with_authority(module, fun) do
+      previous = Application.get_env(:ash_hateoas, :commit_authority)
+      Application.put_env(:ash_hateoas, :commit_authority, Module.concat(__MODULE__, module))
+
+      try do
+        fun.()
+      after
+        if previous do
+          Application.put_env(:ash_hateoas, :commit_authority, previous)
+        else
+          Application.delete_env(:ash_hateoas, :commit_authority)
+        end
+      end
+    end
+  end
+
+  defmodule Raising do
+    @behaviour AshHateoas.CommitAuthority
+
+    @impl true
+    def commits?(_actor), do: raise("policy blew up")
+  end
+
+  defmodule Nonsense do
+    @behaviour AshHateoas.CommitAuthority
+
+    @impl true
+    def commits?(_actor), do: :maybe
   end
 
   defp compile_resource(name, agentic_body, actions_body) do
