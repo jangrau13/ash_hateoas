@@ -1,13 +1,15 @@
 defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   @moduledoc """
-  Compile-time checks for the `hateoas` section (R2).
+  Compile-time checks for the `hateoas` and `agentic_hateoas` sections (R2, R10).
 
   Two things are verified:
 
-    * every `exclude` and `override` names an action that exists — a renamed
+    * every entry in either section names an action that exists — a renamed
       action should fail the build, not silently stop being excluded. This also
       protects the backbone, since `Ash.can?/3` raises `ArgumentError` on an
-      unknown action rather than returning false.
+      unknown action rather than returning false. For `not_delegable` the stake
+      is higher: a silently dropped entry republishes the action to delegated
+      credentials.
 
     * a resource carrying the extension declares authorizers. Without them
       `Ash.can?/3` short-circuits to `true` before evaluating anything, so every
@@ -30,8 +32,41 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       warn_on_unaddressable_records(dsl_state, module)
       warn_on_assumed_methods(dsl_state, module)
       warn_on_ambiguous_collection(dsl_state, module)
+      warn_on_inert_not_delegable(dsl_state, module)
       :ok
     end
+  end
+
+  # `not_delegable` does nothing until a commit authority says some credential
+  # does not commit. Unconfigured, the default answers true for everyone and the
+  # declaration is documentation — which is a defensible state to ship in, but
+  # not one to arrive at by accident on a control an author believes is enforcing
+  # something.
+  #
+  # Warns rather than fails: config is a deployment concern and may legitimately
+  # be absent at compile time, in a library or in a test build.
+  defp warn_on_inert_not_delegable(dsl_state, module) do
+    declared = AshHateoas.Resource.Info.not_delegable(dsl_state)
+
+    if declared != [] and is_nil(Application.get_env(:ash_hateoas, :commit_authority)) do
+      IO.warn(
+        """
+        #{inspect(module)} declares #{Enum.map_join(declared, ", ", &"`not_delegable :#{&1}`")}, \
+        but no commit authority is configured.
+
+        Every credential commits by default, so these actions are advertised
+        with the flag and executed by anyone authorized — the declaration is
+        documentation only.
+
+        To enforce it:
+
+            config :ash_hateoas, commit_authority: AshHateoas.CommitAuthority.ApiKey
+        """,
+        Macro.Env.stacktrace(__ENV__)
+      )
+    end
+
+    :ok
   end
 
   # `AshHateoas.Navigation` resolves a type's collection URL — and whether the
@@ -251,19 +286,26 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       |> Ash.Resource.Info.actions()
       |> MapSet.new(& &1.name)
 
-    dsl_state
-    |> AshHateoas.Resource.Info.hateoas()
-    |> Enum.find(&(not MapSet.member?(action_names, &1.action)))
-    |> case do
-      nil -> :ok
-      entity -> {:error, unknown_action_error(entity, module, action_names)}
-    end
+    # Both sections are checked. A renamed action silently losing its
+    # `not_delegable` would republish it to delegated credentials, which is a
+    # safety regression rather than a cosmetic one.
+    [
+      {:hateoas, AshHateoas.Resource.Info.hateoas(dsl_state)},
+      {:agentic_hateoas, AshHateoas.Resource.Info.agentic_hateoas(dsl_state)}
+    ]
+    |> Enum.find_value(fn {section, entities} ->
+      case Enum.find(entities, &(not MapSet.member?(action_names, &1.action))) do
+        nil -> nil
+        entity -> {:error, unknown_action_error(entity, section, module, action_names)}
+      end
+    end)
+    |> Kernel.||(:ok)
   end
 
-  defp unknown_action_error(entity, module, action_names) do
+  defp unknown_action_error(entity, section, module, action_names) do
     Spark.Error.DslError.exception(
       module: module,
-      path: [:hateoas, entity_name(entity), entity.action],
+      path: [section, entity_name(entity), entity.action],
       message: """
       `#{entity_name(entity)} :#{entity.action}` names an action that does not exist on #{inspect(module)}.
 
@@ -313,4 +355,5 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   defp entity_name(%AshHateoas.Resource.Override{}), do: :override
   defp entity_name(%AshHateoas.Resource.Unrouted{}), do: :unrouted
   defp entity_name(%AshHateoas.Resource.Method{}), do: :method
+  defp entity_name(%AshHateoas.Resource.NotDelegable{}), do: :not_delegable
 end
