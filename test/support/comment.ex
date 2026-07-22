@@ -26,9 +26,8 @@ defmodule AshHateoas.Test.Comment do
 
     routes do
       base("/comments")
-      get(:read)
-      index(:read)
-      post(:create)
+      # Everything else is derived: the primaries by DeriveActionRoutes, the
+      # relationship links by DeriveRelationshipRoutes.
     end
   end
 

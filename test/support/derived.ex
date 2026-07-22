@@ -8,11 +8,15 @@ defmodule AshHateoas.Test.Derived do
     * the subset that is actually ROUTED
 
   `:unrouted_touch` is a perfectly ordinary, authorized update action that is
-  simply never given a JSON:API route. R1 says the candidate set comes from the
-  declared routes, so it must NOT be advertised even though the actor may run
-  it. `:touch` is the same action shape but routed, as the control.
+  declared `unrouted`, so it never reaches the HTTP surface. R1 says the
+  candidate set comes from the routes, so it must NOT be advertised even though
+  the actor may run it. `:touch` is the same action shape, left routed, as the
+  control.
 
-  It carries NO `hateoas` block at all — R1's "zero per-resource config".
+  The `hateoas` block was once absent here — under the old allow-list default,
+  saying nothing was enough to keep an action off the surface. Now that every
+  action is routed by default, keeping one off is a declaration, and this is
+  what that declaration looks like.
   """
 
   use Ash.Resource,
@@ -30,12 +34,14 @@ defmodule AshHateoas.Test.Derived do
 
     routes do
       base "/deriveds"
-      get :read, primary?: true
-      index :read
-      post :create
-      patch :touch, route: "/:id/touch"
-      # NOTE: :unrouted_touch and :admin_only are deliberately NOT routed here.
+      # Every route here is derived. :unrouted_touch and :admin_only are kept
+      # off the surface by the `hateoas` block below, not by omission.
     end
+  end
+
+  hateoas do
+    unrouted :unrouted_touch
+    unrouted :admin_only
   end
 
   attributes do

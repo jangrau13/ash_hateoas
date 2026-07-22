@@ -28,8 +28,67 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
     with :ok <- verify_action_names(dsl_state, module) do
       warn_on_missing_authorizers(dsl_state, module)
       warn_on_unaddressable_records(dsl_state, module)
+      warn_on_assumed_methods(dsl_state, module)
       :ok
     end
+  end
+
+  # A generic action IS routed like any other — `ash_json_api`'s `:route` entity
+  # takes the method as data and applies no return-type check, so `action
+  # :tally, :boolean` routes fine at `/:id/tally`.
+  #
+  # What cannot be derived is the verb. Every other action kind announces its
+  # HTTP semantics by its type; a generic action announces nothing, because
+  # being an escape hatch is the point of it. POST is assumed since it
+  # understates nothing, but a generic action that only reads is then advertised
+  # as unsafe and uncacheable — wrong, and invisible unless said out loud.
+  #
+  # So the warning marks an assumption, not a failure. Silence it by confirming
+  # the verb either way: `method :tally, :post` is as good an answer as `:get`.
+  defp warn_on_assumed_methods(dsl_state, module) do
+    declared = declared_methods(dsl_state)
+    unrouted = AshHateoas.Resource.Info.unrouted(dsl_state)
+
+    dsl_state
+    |> Ash.Resource.Info.actions()
+    |> Enum.filter(&(&1.type == :action))
+    |> Enum.reject(&(&1.name in declared or &1.name in unrouted))
+    |> Enum.each(&warn_assumed_method(&1, module))
+
+    :ok
+  end
+
+  defp warn_assumed_method(action, module) do
+    IO.warn(
+      """
+      #{inspect(module)} routes the generic action `:#{action.name}` as POST, by assumption.
+
+      Generic actions declare no HTTP semantics — nothing in `action
+      :#{action.name}, ...` says whether it reads or writes — so the method cannot be
+      derived the way it can for a read, create, update or destroy. POST is
+      assumed because it understates nothing.
+
+      If it only reads, POST advertises it as unsafe and uncacheable:
+
+          hateoas do
+            method :#{action.name}, :get
+          end
+
+      If POST is right, say so and this warning stops:
+
+          hateoas do
+            method :#{action.name}, :post
+          end
+      """,
+      []
+    )
+  end
+
+  defp declared_methods(dsl_state) do
+    dsl_state
+    |> AshHateoas.Resource.Info.hateoas()
+    |> Enum.filter(&match?(%AshHateoas.Resource.Method{}, &1))
+    |> Enum.map(& &1.action)
   end
 
   # `ash_json_api` emits a record's `self` link from the `:get` route marked
@@ -152,4 +211,6 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
   defp entity_name(%AshHateoas.Resource.Exclusion{}), do: :exclude
   defp entity_name(%AshHateoas.Resource.Override{}), do: :override
+  defp entity_name(%AshHateoas.Resource.Unrouted{}), do: :unrouted
+  defp entity_name(%AshHateoas.Resource.Method{}), do: :method
 end

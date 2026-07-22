@@ -237,5 +237,13 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Quiet)
     resource(AshHateoas.Test.Derived)
     resource(AshHateoas.Test.AdminOnly)
+    resource(AshHateoas.Test.AutoRouted)
+    resource(AshHateoas.Test.HandRouted)
+    resource(AshHateoas.Test.NoJsonApi)
+    resource(AshHateoas.Test.GenericGet)
+    resource(AshHateoas.Test.NoBase)
+    resource(AshHateoas.Test.Compensating)
+    resource(AshHateoas.Test.AuthUser)
+    resource(AshHateoas.Test.AuthToken)
   end
 end

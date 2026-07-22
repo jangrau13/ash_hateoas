@@ -61,6 +61,11 @@ defmodule AshHateoas.MixProject do
       # it only tells Hex not to force them on consumers.
       {:ash_json_api, "~> 1.7", optional: true},
       {:ash_state_machine, "~> 0.2", optional: true},
+      # Route derivation skips the actions AshAuthentication generates — they
+      # are served by its own router, and the subject resolver is guarded by a
+      # bypass no HTTP caller can satisfy. Optional: a consumer without
+      # authentication never loads it, and the check degrades to a no-op.
+      {:ash_authentication, "~> 4.0", optional: true},
       # Igniter powers `mix igniter.install ash_hateoas`; optional so consumers
       # who install by hand are not forced to take it.
       {:igniter, "~> 0.8", optional: true},

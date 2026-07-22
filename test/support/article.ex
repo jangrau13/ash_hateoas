@@ -19,10 +19,9 @@ defmodule AshHateoas.Test.Article do
 
     routes do
       base "/articles"
-      get :read, primary?: true
-      index :read
-      post :create
-      patch :update
+      # The primaries are derived. Only the two custom paths are declared —
+      # `/reconcile` is not what `:internal_reconcile` would derive to, so it
+      # has to be said.
       patch :internal_reconcile, route: "/:id/reconcile"
       patch :publish, route: "/:id/publish"
     end

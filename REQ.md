@@ -49,11 +49,44 @@ They are derived from what is already declared:
 Default: advertise every routed action the current actor is authorized to invoke
 and that is legal from the record's current state. Zero per-resource config.
 
+**Routes are themselves derived.** Until now they were only an input — the
+author declared them and this package read them. `DeriveActionRoutes` (§5.1)
+now derives them too, from the same principle applied one level down: every
+action is routed unless declared `unrouted`, and the `base` comes from the
+domain's `short_name` plus the json_api `type`. A resource declaring a `type`
+and its actions needs no `routes` block at all.
+
+This inverts the exposure default, and the trade is worth stating plainly.
+Under the old allow-list, forgetting to think about an action yielded a 404;
+under this deny-list it yields a live endpoint, with no diff to show for it
+because the omission is in a file nobody edited. What buys it back is that
+`unrouted` is verified against the action list, so a rename fails the build
+rather than silently republishing — and that policies, not routes, remain the
+actual gate on what any actor may invoke.
+
+Two things are read rather than guessed, deliberately. The `base` uses the
+`type` verbatim and is **not** pluralised: ash#31 removed exactly this guess
+across the framework — ash_postgres stopped guessing table names and
+ash_json_api stopped guessing base routes in one decision — because
+pluralisation is where the guessing lives (`person` → `/persons`, `status` →
+`/statuss`). And a generic action's **method** cannot be derived at all, since
+`action :tally, :boolean` says nothing about whether it mutates; POST is
+assumed because it understates nothing, and the verifier warns so the
+assumption is visible rather than silent.
+
 ### R2 — The DSL is override-only.
-An optional per-resource block carries deviations only: `exclude` an action that
-is routed but must not be advertised, `override` an action's derived `href`.
-There are no per-action "enable" entries. A compile-time verifier rejects an
-`exclude`/`override` naming an action that does not exist.
+An optional per-resource block carries deviations only:
+
+| entry | deviation |
+|---|---|
+| `exclude :action` | routed, but not advertised |
+| `override :action, href:` | replaces the derived `href` |
+| `unrouted :action` | not routed at all, so not reachable over HTTP |
+| `method :action, :get` | the verb for a generic action, whose type declares none |
+
+There are no per-action "enable" entries: saying nothing yields the full
+surface, and every entry above subtracts from it or corrects it. A compile-time
+verifier rejects any of them naming an action that does not exist.
 
 Applied once per `Ash.Domain`; every resource in that domain gets affordances
 automatically.
@@ -368,23 +401,34 @@ variants). Our override-only section (R2) gets its reader for free this way.
 `Spark.Dsl.Extension.get_entities/2` then `Enum.filter` on the entity struct —
 which is the pattern to use where the generated functions do not suffice.
 
-**Transformer discipline.** No entity-building transformer was needed. R2's
-override-only DSL means there is nothing to auto-wire: affordances are computed
-at request time from what is already declared, never materialised into the DSL
-at compile time.
+**Transformer discipline.** Affordances themselves are never materialised into
+the DSL — they are computed at request time from what is already declared, and
+R2's override-only DSL leaves nothing to auto-wire. Routes are the exception,
+and three transformers ship:
 
-The one transformer that shipped, `MarkPrimaryGet`, *edits* an existing entity
-rather than adding one — it marks a resource's sole `:get` route `primary?` so
-`ash_json_api` emits a `self` link (§5.1). Three of `ash_archival`'s four rules
-still apply and are followed: explicit `after?/1`/`before?/1` ordering, bailing
-out on embedded resources via
+| transformer | shape |
+|---|---|
+| `MarkPrimaryGet` | *edits* an entity — marks a sole `:get` route `primary?` |
+| `DeriveActionRoutes` | *builds* entities — a route per action, and the `base` |
+| `DeriveRelationshipRoutes` | *builds* entities — `related`/`relationship` per public relationship |
+
+All four of `ash_archival`'s rules apply across the set: explicit
+`after?/1`/`before?/1` ordering, bailing out on embedded resources via
 `Transformer.get_persisted(dsl_state, :embedded?, false)` (they have no routes
-and no identity, so there is no record to link to), and threading
-`{:ok, dsl_state}` so a failure short-circuits. The fourth —
-`Transformer.build_entity/4` plus the idempotent
-`Ash.Resource.Builder.add_new_*` helpers — does not apply to an edit;
-`replace_entity/4` is its counterpart. It is the shape to follow if an
-entity-building transformer is ever added.
+and no identity, so there is no record to link to), threading `{:ok, dsl_state}`
+so a failure short-circuits, and `Transformer.build_entity/4` for the two that
+add entities. `replace_entity/4` is the counterpart for `MarkPrimaryGet`'s edit.
+
+**Ordering is load-bearing between the two derivers.** `DeriveRelationshipRoutes`
+declares itself `after?` `DeriveActionRoutes`, because the `related`/
+`relationship` routes it builds carry `action: :read` — the read used to fetch
+the source record. `DeriveActionRoutes` treats any route naming an action as
+the author having claimed it, so running second it would read those as a
+hand-routed primary read and suppress that resource's `get` and `index`
+entirely. It also filters relationship route types out of its "already routed"
+check, so the ordering is belt-and-braces rather than the only thing holding it
+up. This was a real bug, caught by a relationship-link test rather than by any
+route test.
 
 **Type mapping needs an explicit table (from `ash_typescript`).** R5 requires a
 typed `Field.type`. `ash_typescript` does not stringify Ash types ad hoc — it
@@ -475,6 +519,35 @@ as link `meta` with `name`, `link{rel,href}`, `httpMethod`,
 Publish the semantics as a JSON:API **profile** so it is a documented, shareable
 convention rather than a private one.
 
+**Route derivation.** The routes affordances are computed from are themselves
+derived, so a resource declares a `type` and its actions and nothing else:
+
+| declared | derived |
+|---|---|
+| `type "comment"` in domain `MyApp.Blog` | `base "/blog/comment"` |
+| primary read | `get` at `/:id` (marked `primary?`) and `index` at `/` |
+| primary create / update / destroy | `post /`, `patch /:id`, `delete /:id` |
+| any other read/write action | its own name under `/:id/<name>` |
+| a generic action | `route` entity at `/:id/<name>`, method assumed `POST` |
+| a public relationship | `related` and `relationship` routes |
+
+Three rules govern the whole set:
+
+1. **A declared route wins.** Derivation fills gaps and never overrules; a
+   partial `routes` block is a partial declaration, not an opt-out for the rest.
+2. **`unrouted :action` suppresses entirely**, and is verified against the
+   action list so a rename fails the build rather than silently republishing.
+3. **Nothing is guessed.** The `base` reads two declared facts and does not
+   pluralise (see R1 on ash#31). The one fact that cannot be read — a generic
+   action's HTTP method — is assumed `POST` *and warned about*, correctable
+   with `method :action, :get`.
+
+Generic actions route through `ash_json_api`'s `:route` entity rather than a
+verb entity. That is load-bearing: `get`/`index`/`post` require a generic action
+to return the resource struct, because they serialize the result as a resource
+object, while `:route` has its own controller and applies no return-type check.
+So `action :tally, :boolean` is routable, and `returns` needs no inspection.
+
 **Navigation (R9).** Structural links use registered IANA relation types in the
 same `links` object, so navigation and affordances arrive together:
 - on a record: a `collection` link to its type's collection, and a link to the
@@ -532,10 +605,15 @@ Requirements on the transform:
   default, or anything a resource/domain has switched off).
 - It MUST handle both single-resource and collection documents, and `included`
   resources, matching objects by `type`+`id`.
-- It computes affordances for any **routed** resource. The extension is not a
-  gate on that — the backbone is usable without it, and it supplies declarations
-  (`exclude`, `override`, `enabled?`) rather than opting a resource in. R8's
-  `enabled?` is what switches a resource off.
+- It computes affordances for any **routed** resource. The backbone is usable
+  without the extension, and R8's `enabled?` is what switches a resource off.
+
+  Note that carrying the extension is no longer surface-neutral. It once only
+  *supplied declarations* (`exclude`, `override`, `enabled?`) over routes the
+  author had written; since R1's route derivation it also *creates* routes, so
+  adding `AshHateoas.Resource` to a resource widens that resource's HTTP
+  surface to every action it declares. That is the intended behaviour, but it
+  makes the extension something to add deliberately rather than incidentally.
 - Streaming/chunked responses, if used, MUST be considered — the transform needs
   the whole document, so it is incompatible with a streamed body.
 

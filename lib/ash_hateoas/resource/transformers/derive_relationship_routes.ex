@@ -51,7 +51,14 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
   # are not in the DSL state until Ash's own transformers have populated them —
   # reading earlier finds an empty list, which is a silent no-op rather than an
   # error.
+  # Also after `DeriveActionRoutes`, which must see a route list containing only
+  # what the author wrote. The `related`/`relationship` routes derived here
+  # carry `action: :read`, and that transformer treats any route naming an
+  # action as the author having claimed it — so running first would make the
+  # primary read look hand-routed and suppress its `get`/`index` entirely.
   @impl true
+  def after?(AshHateoas.Resource.Transformers.DeriveActionRoutes), do: true
+
   def after?(module) do
     module |> Module.split() |> Enum.take(3) == ~w(Ash Resource Transformers)
   rescue

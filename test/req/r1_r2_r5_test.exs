@@ -239,8 +239,12 @@ defmodule AshHateoas.Req.R1R2R5Test do
         |> Enum.map(& &1.name)
         |> MapSet.new()
 
-      assert section_entity_names == MapSet.new([:exclude, :override]),
-             "the section must expose exclude/override only, got: #{inspect(section_entity_names)}"
+      # Every entity is a *deviation* — something withheld or replaced. R2
+      # forbids the opposite shape: an entry whose presence is what turns an
+      # action on. `unrouted` is the third deviation, not a counterexample;
+      # saying nothing still yields the full surface.
+      assert section_entity_names == MapSet.new([:exclude, :override, :unrouted, :method]),
+             "the section must expose deviations only, got: #{inspect(section_entity_names)}"
     end
 
     test "exclude withholds a routed action from advertisement", %{article: article} do

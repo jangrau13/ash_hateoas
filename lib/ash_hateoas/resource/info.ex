@@ -24,7 +24,37 @@ defmodule AshHateoas.Resource.Info do
     extension: AshHateoas.Resource,
     sections: [:hateoas]
 
-  alias AshHateoas.Resource.{Exclusion, Override}
+  alias AshHateoas.Resource.{Exclusion, Method, Override, Unrouted}
+
+  @doc """
+  The HTTP method declared for a generic action, or `nil` if none is.
+
+  `nil` means the route deriver assumes POST — see
+  `AshHateoas.Resource.Transformers.DeriveActionRoutes`.
+  """
+  @spec method(Ash.Resource.t() | map(), atom()) :: atom() | nil
+  def method(resource_or_dsl, action) do
+    resource_or_dsl
+    |> hateoas()
+    |> Enum.find_value(fn
+      %Method{action: ^action, method: method} -> method
+      _ -> nil
+    end)
+  end
+
+  @doc """
+  Action names this resource keeps off the HTTP surface entirely.
+
+  Distinct from `exclusions/1`: an exclusion is routed but unadvertised, an
+  unrouted action has no route at all.
+  """
+  @spec unrouted(Ash.Resource.t() | map()) :: [atom()]
+  def unrouted(resource_or_dsl) do
+    resource_or_dsl
+    |> hateoas()
+    |> Enum.filter(&match?(%Unrouted{}, &1))
+    |> Enum.map(& &1.action)
+  end
 
   @doc """
   Action names this resource excludes from advertisement (R2).

@@ -8,27 +8,90 @@ defmodule AshHateoas.Resource do
           extensions: [AshJsonApi.Resource, AshHateoas.Resource]
       end
 
-  That is the whole per-resource setup. Every routed action the actor may invoke
-  — and that is legal from the record's current state — is advertised
-  automatically, in every transport, from this one declaration.
+  That is the whole per-resource setup. Every action is routed, and every routed
+  action the actor may invoke — and that is legal from the record's current
+  state — is advertised automatically, in every transport, from this one
+  declaration.
+
+  ## Routes are derived, not written (R1)
+
+  A resource needs no `routes` block. The `base` comes from the domain's
+  `short_name` and the json_api `type`; each action is routed by its kind, with
+  primaries taking the REST verbs and everything else addressed by name under
+  `/:id/`. A declared route always wins, so hand-routing one action leaves the
+  rest derived.
+
+  This means **adding this extension widens a resource's HTTP surface** to every
+  action it declares. Under the older allow-list an unrouted action was simply
+  invisible; now keeping one off the surface is something you say out loud.
+  Policies remain the actual gate on what any actor may invoke.
 
   ## The DSL is override-only (R2)
 
-  There are deliberately **no per-action "enable" entries**. Everything routed
-  is advertised; the block carries deviations only:
+  There are deliberately **no per-action "enable" entries**. Saying nothing
+  yields the full surface; the block subtracts from it or corrects it:
 
       hateoas do
         enabled? true
         exclude :internal_reconcile
         override :approve, href: "/documents/:id/approve"
+        unrouted :sync_from_stripe
+        method :tally, :get
       end
 
-  A compile-time verifier rejects an `exclude` or `override` naming an action
-  that does not exist, so a renamed action fails the build rather than silently
-  losing its deviation.
+  `exclude` withholds an action from advertisement but leaves it routed;
+  `unrouted` keeps it off the HTTP surface entirely. `method` supplies the one
+  fact that cannot be derived — a generic action's verb, since `action :tally,
+  :boolean` says nothing about whether it mutates. POST is assumed and warned
+  about; declaring the method either way silences the warning.
+
+  A compile-time verifier rejects any entry naming an action that does not
+  exist, so a renamed action fails the build rather than silently losing its
+  deviation — which for `unrouted` would mean silently republishing it.
   """
 
-  alias AshHateoas.Resource.{Exclusion, Override}
+  alias AshHateoas.Resource.{Exclusion, Method, Override, Unrouted}
+
+  @method %Spark.Dsl.Entity{
+    name: :method,
+    target: Method,
+    args: [:action, :method],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    The HTTP method for a generic action, whose verb cannot be derived.
+    """,
+    examples: ["method :tally, :get"],
+    schema: [
+      action: [
+        type: :atom,
+        required: true,
+        doc: "The generic action being routed."
+      ],
+      method: [
+        type: {:in, [:get, :post, :patch, :delete, :put, :head, :options]},
+        required: true,
+        doc: "The HTTP method to route it under. POST is assumed otherwise."
+      ]
+    ]
+  }
+
+  @unrouted %Spark.Dsl.Entity{
+    name: :unrouted,
+    target: Unrouted,
+    args: [:action],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    An action that must not be given an HTTP route.
+    """,
+    examples: ["unrouted :sync_from_stripe"],
+    schema: [
+      action: [
+        type: :atom,
+        required: true,
+        doc: "The action to keep off the HTTP surface entirely."
+      ]
+    ]
+  }
 
   @exclude %Spark.Dsl.Entity{
     name: :exclude,
@@ -87,7 +150,7 @@ defmodule AshHateoas.Resource do
       end
       """
     ],
-    entities: [@exclude, @override],
+    entities: [@exclude, @override, @unrouted, @method],
     schema: [
       enabled?: [
         type: {:or, [:boolean, {:literal, nil}]},
@@ -119,6 +182,7 @@ defmodule AshHateoas.Resource do
     sections: [@hateoas],
     transformers: [
       AshHateoas.Resource.Transformers.MarkPrimaryGet,
+      AshHateoas.Resource.Transformers.DeriveActionRoutes,
       AshHateoas.Resource.Transformers.DeriveRelationshipRoutes
     ],
     verifiers: [AshHateoas.Resource.Verifiers.VerifyActions]
