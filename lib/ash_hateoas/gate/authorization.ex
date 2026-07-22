@@ -15,12 +15,11 @@ defmodule AshHateoas.Gate.Authorization do
   the owner and `false` for anyone else, rather than degrading to `:maybe`.
 
   Where a decision genuinely cannot be reached, `Ash.can?/3` defaults to
-  `maybe_is: true` and answers `true`, so the affordance is advertised.
-  `AshAi.exposed_tools/1` filters MCP tools on the same default. The consequence
-  is accepted (R6): a client may occasionally be offered an action it turns out
-  not to be permitted, and receive a `403`. Affordances are advisory — the
-  endpoint re-runs every policy on invocation, so an optimistic proposal
-  degrades to a clean error, never an invalid write.
+  `maybe_is: true` and answers `true`, so the affordance is advertised. The
+  consequence is accepted (R6): a client may occasionally be offered an action
+  it turns out not to be permitted, and receive a `403`. Affordances are
+  advisory — the endpoint re-runs every policy on invocation, so an optimistic
+  proposal degrades to a clean error, never an invalid write.
 
   ## Errors are loud (R7)
 

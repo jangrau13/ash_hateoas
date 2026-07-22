@@ -604,8 +604,8 @@ defmodule AshHateoas.Req.R1R2R5Test do
     test "field names are unique within an affordance" do
       # An action's inputs are its accepted attributes PLUS its public
       # arguments. If an argument shadows an accepted attribute the same name
-      # would appear twice, which no transport can represent (JSON Schema
-      # properties and MCP inputSchema are both keyed by name).
+      # would appear twice, which no wire format can represent — JSON Schema
+      # properties, HAL-FORMS fields and `meta.fields` are all keyed by name.
       for affordance <- every_affordance() do
         names = Enum.map(affordance.fields, & &1.name)
 
@@ -666,7 +666,6 @@ defmodule AshHateoas.Req.R1R2R5Test do
         end
       end
     end
-
   end
 
   # Spark verifiers run in `__verify_spark_dsl__`, invoked at module

@@ -235,7 +235,7 @@ defmodule AshHateoas.BackboneTest do
     end
 
     test "carry Ash's allow_nil? name and polarity, not the wire's required", %{doc: doc} do
-      # Renderers invert this at the edge (JSON Schema/HAL-FORMS/MCP say
+      # Renderers invert this at the edge (JSON Schema and HAL-FORMS both say
       # `required`). Pinning the polarity here means an accidental flip fails
       # loudly rather than silently marking optional fields mandatory.
       approve = affordances(doc, @admin)[:approve]

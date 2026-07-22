@@ -17,8 +17,9 @@ defmodule AshHateoas.Candidates do
   Actions reachable for `resource`, as `{action, route}` pairs.
 
   `route` is `nil` when there is no `ash_json_api` route for the action — either
-  because the dependency is absent, or because the action is simply not routed
-  in a transport that does not use routes (MCP).
+  because the dependency is absent, or because the action is not routed. An
+  affordance without a route still has a name and its fields, which is all a
+  caller reading the backbone directly needs; only the `href` is missing.
 
   `kind` selects which actions are eligible:
 

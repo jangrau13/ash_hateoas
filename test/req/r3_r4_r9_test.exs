@@ -65,7 +65,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
                backbone: #{inspect(Enum.sort(backbone_names))}
                json:api: #{inspect(Enum.sort(json_api_names))}
              """
-
     end
 
     test "an affordance is rendered in the transport's own idiom", %{doc: doc} do
@@ -75,7 +74,8 @@ defmodule AshHateoas.Req.R3R4R9Test do
       approve = links_for(get("/documents/#{doc.id}", @admin))["approve"]
 
       refute Map.has_key?(approve, "inputSchema"),
-             "a JSON:API link carrying an MCP inputSchema is tunnelling"
+             "a JSON:API link carrying a foreign schema key is tunnelling " <>
+               "another format's vocabulary through this one"
 
       assert Map.has_key?(approve, "href"), "a JSON:API affordance must be a link object"
       assert Map.has_key?(approve, "rel"), "and must carry a relation type"
@@ -89,7 +89,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
 
       assert Map.has_key?(admin_links, "approve")
       refute Map.has_key?(viewer_links, "approve")
-
     end
 
     test "adding a third adapter requires no backbone change" do
@@ -152,8 +151,8 @@ defmodule AshHateoas.Req.R3R4R9Test do
       assert signing_key, "a sensitive argument must still be advertised as a field"
       refute Map.has_key?(signing_key, "default")
 
-      # Same rule on the MCP side: Document is not MCP-mounted, so probe the
-      # backbone descriptor the MCP adapter renders from.
+      # The same rule must hold before rendering, not just at the JSON:API
+      # edge, so probe the backbone descriptor every renderer projects from.
       affordance = Backbone.for_record(doc, @admin, domain: AshHateoas.Test.Domain)[:approve]
       key_field = Enum.find(affordance.fields, &(&1.name == :signing_key))
 
@@ -484,7 +483,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
     end
   end
 
-
   # ------------------------------------------------------------------
   # helpers
   # ------------------------------------------------------------------
@@ -521,10 +519,6 @@ defmodule AshHateoas.Req.R3R4R9Test do
     |> links_for()
     |> get_in([action, "meta", "fields"]) || []
   end
-
-
-
-
 
   defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 end

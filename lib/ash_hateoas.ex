@@ -3,10 +3,9 @@ defmodule AshHateoas do
   Authorization- and state-aware HATEOAS affordances for Ash.
 
   One backbone computes *what may be done next* for a given record (or resource)
-  and actor. Every transport is a rendering of that single result:
-
-    * JSON:API — affordances become named `links.<action>` objects
-    * MCP — affordances become the `tools/list` result
+  and actor. This package renders that result as JSON:API — affordances become
+  named `links.<action>` objects, published under a documented profile so that
+  clients which have never seen this code can act on them.
 
   Affordances are derived from what a resource already declares — its actions,
   its JSON:API routes, its policies, and its `AshStateMachine` transitions where

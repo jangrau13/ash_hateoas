@@ -29,8 +29,52 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       warn_on_missing_authorizers(dsl_state, module)
       warn_on_unaddressable_records(dsl_state, module)
       warn_on_assumed_methods(dsl_state, module)
+      warn_on_ambiguous_collection(dsl_state, module)
       :ok
     end
+  end
+
+  # `AshHateoas.Navigation` resolves a type's collection URL — and whether the
+  # type appears in the root document at all — from its `index` route, with
+  # `Enum.find(&(&1.type == :index))`. That takes the first and asks no
+  # questions, so a second `index` makes both answers depend on route ordering.
+  #
+  # This is not hypothetical. A resource ended up with an `index` derived for a
+  # non-primary read at `/:id/<name>`, `Navigation` found that one first, and
+  # the type vanished from the root document: still reachable by URL, no longer
+  # reachable by following links, which is exactly what R9 forbids. The bug was
+  # in this package and no test here caught it — the demo did.
+  #
+  # Warns rather than fails. `index :search` is documented and supported by
+  # ash_json_api, so several indexes is a legitimate declaration this package
+  # cannot interpret, not an error to reject. An author who wants the second
+  # one keeps it and accepts that navigation names the first.
+  defp warn_on_ambiguous_collection(dsl_state, module) do
+    indexes = routes_of_type(dsl_state, :index)
+
+    if length(indexes) > 1 do
+      IO.warn(
+        """
+        #{inspect(module)} declares #{length(indexes)} `index` routes, but a type has one collection.
+
+        Routes: #{Enum.map_join(indexes, ", ", &"#{&1.route} (:#{&1.action})")}
+
+        `AshHateoas.Navigation` reads the `index` route to answer two questions:
+        what this type's collection URL is, and whether the type is reachable
+        for a given actor — which decides if it appears in the root document at
+        all. With several, it takes whichever comes first, so both answers
+        depend on route ordering rather than on anything declared.
+
+        If one of these is the canonical collection, declare it first or make
+        the others non-`index` routes. A filtered sub-collection is better
+        expressed as a `get` at `/:id/<name>` or a query parameter on the
+        collection itself.
+        """,
+        []
+      )
+    end
+
+    :ok
   end
 
   # A generic action IS routed like any other — `ash_json_api`'s `:route` entity
@@ -122,37 +166,74 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   #
   # Warns rather than fails: several `:get` routes with none primary is a real
   # authorial choice, and a resource may legitimately not be addressable alone.
+  # Marking SEVERAL is the mirror failure, and it is the quieter one. Ash
+  # rejects two actions of a type both `primary?`, but that is a check on
+  # actions, not on routes — two `get` ROUTES both marked compile silently.
+  # `ash_json_api` then picks one by no rule the author controls, so a record's
+  # canonical URL depends on route ordering and can change under an edit that
+  # touched neither route.
   defp warn_on_unaddressable_records(dsl_state, module) do
     gets = get_routes(dsl_state)
+    primaries = Enum.filter(gets, & &1.primary?)
 
-    if gets != [] and not Enum.any?(gets, & &1.primary?) do
-      IO.warn(
-        """
-        #{inspect(module)} declares #{length(gets)} `get` route(s) but marks none `primary?`.
-
-        `ash_json_api` renders a record's `self` link from the primary `get`
-        route, so records of this type are serialized without one. A hypermedia
-        client cannot address them: it is told what it may do with a record but
-        has no URL to name it by.
-
-        Mark the canonical one:
-
-            routes do
-              get :read, primary?: true
-            end
-        """,
-        []
-      )
+    cond do
+      gets == [] -> :ok
+      primaries == [] -> warn_no_primary_get(gets, module)
+      length(primaries) > 1 -> warn_several_primary_gets(primaries, module)
+      true -> :ok
     end
 
     :ok
   end
 
-  defp get_routes(dsl_state) do
+  defp warn_no_primary_get(gets, module) do
+    IO.warn(
+      """
+      #{inspect(module)} declares #{length(gets)} `get` route(s) but marks none `primary?`.
+
+      `ash_json_api` renders a record's `self` link from the primary `get`
+      route, so records of this type are serialized without one. A hypermedia
+      client cannot address them: it is told what it may do with a record but
+      has no URL to name it by.
+
+      Mark the canonical one:
+
+          routes do
+            get :read, primary?: true
+          end
+      """,
+      []
+    )
+  end
+
+  defp warn_several_primary_gets(primaries, module) do
+    IO.warn(
+      """
+      #{inspect(module)} marks #{length(primaries)} `get` routes `primary?`, but only one can be.
+
+      Routes: #{Enum.map_join(primaries, ", ", &"#{&1.route} (:#{&1.action})")}
+
+      `ash_json_api` renders a record's `self` link from the primary `get`
+      route. With several, it takes one by no rule an author controls — so the
+      canonical URL for a record is whichever happens to come first, and it can
+      change under an edit that touched neither route.
+
+      Note Ash's own check does not cover this: it rejects two ACTIONS of a
+      type marked `primary?`, which is a different thing from two ROUTES.
+
+      Mark exactly one, and leave the others unmarked.
+      """,
+      []
+    )
+  end
+
+  defp get_routes(dsl_state), do: routes_of_type(dsl_state, :get)
+
+  defp routes_of_type(dsl_state, type) do
     if Code.ensure_loaded?(AshJsonApi.Resource.Info) do
       dsl_state
       |> AshJsonApi.Resource.Info.routes([])
-      |> Enum.filter(&(&1.type == :get))
+      |> Enum.filter(&(&1.type == type))
     else
       []
     end

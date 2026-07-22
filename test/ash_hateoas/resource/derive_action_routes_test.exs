@@ -113,6 +113,35 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
       end
     end
 
+    test "a resource has exactly one index route" do
+      # `index` is not just "a read route" — it is THE collection, and
+      # `AshHateoas.Navigation.root/2` looks it up to find a type's collection
+      # URL. A second `index` makes that lookup ambiguous, and the type can
+      # drop out of the root document entirely: a client following links from
+      # the entry point can no longer reach it.
+      #
+      # This regressed once. A non-primary read was derived as `index` at
+      # `/:id/<name>`, which is a member-scoped read, not a collection. The
+      # path-uniqueness test below passed throughout, because the paths WERE
+      # unique — it is the route TYPE that has to be singular.
+      indexes =
+        AshHateoas.Test.MultiRead
+        |> routes()
+        |> Enum.filter(&(&1.type == :index))
+
+      assert length(indexes) == 1,
+             "expected one index, got: #{inspect(Enum.map(indexes, & &1.route))}"
+
+      assert hd(indexes).action == :read, "the index must be the PRIMARY read"
+    end
+
+    test "a non-primary read is a member route, not a collection" do
+      route = route_for(AshHateoas.Test.MultiRead, :by_label)
+
+      assert route.type == :get
+      assert route.route == "/domain/multi_read/:id/by_label"
+    end
+
     test "a non-primary read does not squat the collection path" do
       # Two reads both claiming "/" would be a duplicate route, and which one
       # answers GET /things is exactly the ambiguity that justifies making
@@ -286,6 +315,148 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
       assert AshHateoas.Test.AutoRouted
              |> routes()
              |> Enum.all?(&String.starts_with?(&1.route, "/auto_routeds"))
+    end
+  end
+
+  describe "an ambiguous canonical URL is announced" do
+    # `ash_json_api` renders a record's `self` from the `get` route marked
+    # `primary?`. Exactly one must be marked: none and there is no `self` at
+    # all, several and it picks one with no rule an author can predict — so the
+    # canonical URL for a record can change under them without any edit.
+    #
+    # Ash's own check does not cover this. It rejects two ACTIONS of a type
+    # both marked `primary?`, which is a different thing from two ROUTES.
+    defp compile_gets(marks) do
+      routes =
+        marks
+        |> Enum.with_index()
+        |> Enum.map_join("\n", fn {primary?, i} ->
+          ~s(get :read#{i}, route: "/r#{i}/:id", primary?: #{primary?})
+        end)
+
+      reads =
+        marks
+        |> Enum.with_index()
+        |> Enum.map_join("\n", fn {_p, i} -> "read :read#{i} do\n get? true\n end" end)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        Code.compile_string("""
+        defmodule AshHateoasGets#{System.unique_integer([:positive])} do
+          use Ash.Resource,
+            domain: nil,
+            data_layer: Ash.DataLayer.Ets,
+            extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+
+          json_api do
+            type "gets"
+            routes do
+              #{routes}
+            end
+          end
+
+          hateoas do
+            warn_on_missing_authorizers?(false)
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+
+          actions do
+            # No `defaults [:read]`: a primary read would be derived into a
+            # third `get`, correctly marked primary?, and there would be
+            # nothing ambiguous left to warn about. The declared reads below
+            # are the only ones.
+            #{reads}
+          end
+        end
+        """)
+      end)
+    end
+
+    test "several `get` routes marked primary? warns" do
+      # The gap this closes. Two primaries compiled silently, and a client's
+      # notion of a record's canonical URL depended on route ordering.
+      stderr = compile_gets([true, true])
+
+      assert stderr =~ "primary?"
+      assert stderr =~ "2", "the diagnostic must say how many were marked"
+    end
+
+    test "several `get` routes with none primary? still warns" do
+      # Pre-existing behaviour, previously untested.
+      stderr = compile_gets([false, false])
+
+      assert stderr =~ "primary?"
+    end
+
+    test "exactly one primary? is silent" do
+      refute compile_gets([true, false]) =~ "primary?"
+    end
+  end
+
+  describe "an ambiguous collection is announced" do
+    # The failure this closes actually happened. `Member` ended up with two
+    # `index` routes, `AshHateoas.Navigation` took the first with
+    # `Enum.find(&(&1.type == :index))`, got a member-scoped path, and the type
+    # dropped out of the root document — reachable by URL, unreachable by
+    # following links, which is the whole of R9.
+    #
+    # A warning rather than an error: `index :search` is documented and
+    # supported by ash_json_api, so a second index is a legitimate declaration
+    # this package cannot interpret, not a mistake to reject.
+    defp compile_indexes(count) do
+      routes =
+        1..count
+        |> Enum.map_join("\n", fn i -> ~s(index :list#{i}, route: "/l#{i}") end)
+
+      reads =
+        1..count
+        |> Enum.map_join("\n", fn i -> "read :list#{i}" end)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        Code.compile_string("""
+        defmodule AshHateoasIdx#{System.unique_integer([:positive])} do
+          use Ash.Resource,
+            domain: nil,
+            data_layer: Ash.DataLayer.Ets,
+            extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+
+          json_api do
+            type "idx"
+            routes do
+              get :read, primary?: true
+              #{routes}
+            end
+          end
+
+          hateoas do
+            warn_on_missing_authorizers?(false)
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+
+          actions do
+            defaults [:read]
+            #{reads}
+          end
+        end
+        """)
+      end)
+    end
+
+    test "several `index` routes warn" do
+      stderr = compile_indexes(2)
+
+      assert stderr =~ "index"
+      assert stderr =~ "collection", "the diagnostic must say what breaks"
+      assert stderr =~ "/l1", "it must name the competing routes"
+    end
+
+    test "one `index` route is silent" do
+      refute compile_indexes(1) =~ "`index` routes"
     end
   end
 

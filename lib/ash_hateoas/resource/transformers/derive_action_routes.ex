@@ -389,7 +389,17 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # but it has to be reachable by *some* verb. POST is the honest default: it is
   # not safe and not idempotent, which is what "arbitrary action" means over
   # HTTP.
-  defp non_primary_type(:read), do: :index
+  # `:get`, NOT `:index`. A non-primary read at `/:id/<name>` is scoped to one
+  # record, and `index` means "the collection" — `AshHateoas.Navigation.root/2`
+  # reads a type's `index` route to find its collection URL. Deriving a second
+  # `index` made that lookup return a member path, and the type vanished from
+  # the root document: reachable by URL, but not by following links from the
+  # entry point, which is the whole of R9.
+  #
+  # Caught by the demo, not by this suite. The test asserting non-primary reads
+  # do not collide checked that their PATHS were unique — they were. It is the
+  # route TYPE that has to be singular, and nothing checked that until now.
+  defp non_primary_type(:read), do: :get
   defp non_primary_type(:create), do: :post
   defp non_primary_type(:update), do: :patch
   defp non_primary_type(:destroy), do: :delete

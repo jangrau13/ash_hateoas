@@ -74,9 +74,8 @@ defmodule AshHateoas.MixProject do
       {:simple_sat, "~> 0.1", only: [:dev, :test]},
       # `ash_json_api` reaches for `AshJsonApi.OpenApi` when validating a write,
       # and that module only compiles when `open_api_spex` is present — so a
-      # PATCH or POST through the router raises without it. It was previously
-      # pulled in transitively by `ash_ai`; the test suite needs it directly
-      # now, and a consumer needs it in their own deps.
+      # PATCH or POST through the router raises without it. The test suite
+      # needs it directly, and so does a consumer, in their own deps.
       {:open_api_spex, "~> 3.18", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: [:dev], runtime: false}
     ]

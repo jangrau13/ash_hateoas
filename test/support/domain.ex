@@ -243,6 +243,7 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.GenericGet)
     resource(AshHateoas.Test.NoBase)
     resource(AshHateoas.Test.Compensating)
+    resource(AshHateoas.Test.MultiRead)
     resource(AshHateoas.Test.AuthUser)
     resource(AshHateoas.Test.AuthToken)
   end

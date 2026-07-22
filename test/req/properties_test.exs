@@ -238,8 +238,8 @@ defmodule AshHateoas.Req.PropertiesTest do
   describe "R4: a sensitive argument's default never reaches any transport" do
     # "never emit a `sensitive?` argument's `default`". Document's :approve
     # declares `signing_key` sensitive with default #{@leak}. It must be absent
-    # from the serialized JSON:API document and from the MCP inputSchema, for
-    # every actor and record.
+    # from the serialized JSON:API document and from the backbone descriptor
+    # every other renderer projects from, for every actor and record.
     property "the sensitive default appears in no rendered output" do
       check all(
               attrs <- document_attrs_gen(),

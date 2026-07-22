@@ -372,14 +372,14 @@ optional `multi_step` flag may signal a compound operation.
 ## 4. The package
 
 **One standalone hex package** (working name `ash_hateoas`), **not split per
-transport**: it carries the core plus both
-renderings. Splitting would contradict the architecture — the transports are
-projections of a single backbone, so the backbone needs one home.
+transport**: it carries the core plus the
+JSON:API rendering. Splitting those would contradict the architecture — the
+rendering is a projection of the backbone, so the two belong in one home.
 
-It extends AshJsonApi and AshAI through public surface only (route/type
-introspection, a Spark extension, `exposed_tools`, and the serialized document),
-so it is not app-coupled and runs on **stock, unmodified dependencies** — no
-fork, no patched dep, no upstream change required.
+It extends AshJsonApi through public surface only (route/type introspection, a
+Spark extension, and the serialized document), so it is not app-coupled and runs
+on **stock, unmodified dependencies** — no fork, no patched dep, no upstream
+change required.
 
 **Modules, by role.** Exact layout, dep pins, CI matrix and `hex.publish`
 metadata are decided when the repo is created:
@@ -388,7 +388,6 @@ metadata are decided when the repo is created:
   wires the backbone onto every resource carrying the extension.
 - *JSON:API rendering:* the `links.<action>` renderer and the post-serialization
   transform that injects it (§5.1) — self-contained, stock deps.
-- *MCP rendering:* the tool-list projection and the `list_changed` push (§5.2).
 
 ### Conventions taken from established Ash extensions
 Read from source; adopt rather than reinvent.
@@ -715,14 +714,8 @@ Kept as findings, since each cost something to establish.
   https://toedter.github.io/spring-hateoas-jsonapi/
 - AshJsonApi: https://ash-json-api.hexdocs.pm/ · serializer:
   https://github.com/ash-project/ash_json_api/blob/main/lib/ash_json_api/serializer.ex
-- AshAI (MCP server, `exposed_tools`): https://hexdocs.pm/ash_ai/
-- MCP tools spec (`listChanged`, `notifications/tools/list_changed`):
-  https://modelcontextprotocol.io/specification/2025-11-25/server/tools
-- MCP resources spec (`resources/list`, `resources/templates/list` RFC 6570 URI
-  templates, `resource_link`, subscriptions) — the navigation primitive (R9):
-  https://modelcontextprotocol.io/specification/2025-11-25/server/resources
-- MCP SEP-1821 (draft): …/modelcontextprotocol/issues/1821 · SEP-1300
-  (rejected): …/issues/1300
+- `hateoas_mcp` — an MCP server built against the published profile, over HTTP,
+  with no dependency on this package: https://github.com/jangrau13/hateoas_mcp
 - Spark extensions: https://hexdocs.pm/ash/writing-extensions.html ·
   `Spark.InfoGenerator`: https://spark.hexdocs.pm/Spark.InfoGenerator.html
 - Extension design precedents (read from source): `ash_archival`

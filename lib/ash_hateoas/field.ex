@@ -2,10 +2,10 @@ defmodule AshHateoas.Field do
   @moduledoc """
   A single input a client may supply when invoking an affordance (R4, R5).
 
-  Fields derive from an action's **public** arguments. The shape is fixed:
-  every transport projects from it (JSON:API renders them as `meta.fields`, MCP
-  as the tool's `inputSchema`), so changing it is a breaking change for every
-  client reading affordances.
+  Fields derive from an action's **public** arguments. The shape is fixed and
+  transport-neutral — JSON:API renders it as `meta.fields`, and anything else
+  built on the profile projects from the same structure — so changing it is a
+  breaking change for every client reading affordances.
 
   ## Sensitive arguments
 
@@ -20,9 +20,9 @@ defmodule AshHateoas.Field do
   ## `allow_nil?` mirrors Ash
 
   This field carries Ash's own name and polarity rather than the wire format's
-  `required`. Transports invert it at the edge — JSON Schema, HAL-FORMS and
-  MCP's `inputSchema` all say `required` — so the inversion lives in each
-  renderer, and everything upstream reads the way the resource DSL does.
+  `required`. Renderers invert it at the edge — JSON Schema and HAL-FORMS both
+  say `required` — so the inversion lives at the boundary, and everything
+  upstream reads the way the resource DSL does.
   """
 
   @type t :: %__MODULE__{
