@@ -319,8 +319,8 @@ not rendered-and-rejected — the same fail-closed posture as R6.
 
 ### R10 — Some actions may be advertised but not exercised by a delegated credential.
 
-> **Status:** designed, not built. This section is the requirement set; nothing
-> below exists in the package yet.
+> **Status:** built. This section is the requirement set and the record of what
+> was decided; `test/req/r10_test.exs` is the check that it holds.
 
 An actor may be *authorized* to run an action and still be the wrong party to
 run it **alone**. An autonomous agent holding a scoped credential derived from
@@ -740,7 +740,9 @@ derived, so a resource declares a `type` and its actions and nothing else:
 | `type "comment"` in domain `MyApp.Blog` | `base "/blog/comment"` |
 | primary read | `get` at `/:id` (marked `primary?`) and `index` at `/` |
 | primary create / update / destroy | `post /`, `patch /:id`, `delete /:id` |
-| any other read/write action | its own name under `/:id/<name>` |
+| a non-primary **collection** read (`get?: false`) | `index` at `/<name>` |
+| a non-primary **member** read (`get?: true`) | `get` at `/:id/<name>` |
+| any other non-read action | its own name under `/:id/<name>` |
 | a generic action | `route` entity at `/:id/<name>`, method assumed `POST` |
 | a public relationship | `related` and `relationship` routes |
 
@@ -754,6 +756,20 @@ Three rules govern the whole set:
    pluralise (see R1 on ash#31). The one fact that cannot be read — a generic
    action's HTTP method — is assumed `POST` *and warned about*, correctable
    with `method :action, :get`.
+
+A non-primary read is split by what it returns, because that decides whether it
+even has a member URL. Ash's own `get?` flag is the signal — it "expresses that
+this action innately only returns a single result". A `get?: false` read returns
+a collection, so `/:id/<name>` is meaningless (there is no `:id` for a search),
+and it derives an `:index` at `/<name>`: reachable without an identity, its
+public arguments arriving as query params, and advertised as a collection
+affordance. A `get?: true` read returns one record and keeps `/:id/<name>`. This
+is what lets a resource carry several reads — `search`, `recent`, `by_region` —
+and have each routed and advertised correctly without a hand-written route.
+Several `index` routes therefore coexist: `AshHateoas.Navigation` names the
+canonical collection as the index at the base path (the one whose route does not
+end in its own action name), so the named sub-collections never shadow it and
+the type stays reachable from the root document (R9).
 
 Generic actions route through `ash_json_api`'s `:route` entity rather than a
 verb entity. That is load-bearing: `get`/`index`/`post` require a generic action

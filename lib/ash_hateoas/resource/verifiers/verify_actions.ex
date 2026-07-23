@@ -70,40 +70,44 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   end
 
   # `AshHateoas.Navigation` resolves a type's collection URL — and whether the
-  # type appears in the root document at all — from its `index` route, with
-  # `Enum.find(&(&1.type == :index))`. That takes the first and asks no
-  # questions, so a second `index` makes both answers depend on route ordering.
+  # type appears in the root document at all — from its `index` route.
   #
-  # This is not hypothetical. A resource ended up with an `index` derived for a
-  # non-primary read at `/:id/<name>`, `Navigation` found that one first, and
-  # the type vanished from the root document: still reachable by URL, no longer
-  # reachable by following links, which is exactly what R9 forbids. The bug was
-  # in this package and no test here caught it — the demo did.
+  # Several indexes is now NORMAL, not a smell: a collection read (`get?:
+  # false`) legitimately derives its own `:index` at `/<name>`, so a resource
+  # with `search`/`recent`/`by_region` carries one canonical index at the base
+  # plus one per named read. `Navigation.index_route/2` disambiguates by path —
+  # the canonical collection is the one whose route does NOT end in its action
+  # name — so navigation is deterministic, not order-dependent.
   #
-  # Warns rather than fails. `index :search` is documented and supported by
-  # ash_json_api, so several indexes is a legitimate declaration this package
-  # cannot interpret, not an error to reject. An author who wants the second
-  # one keeps it and accepts that navigation names the first.
+  # What still breaks R9 is having no resolvable canonical index: zero base-path
+  # indexes, or two of them (which would be an author hand-declaring a second
+  # `index` at the base). Then `Navigation` cannot name the collection and the
+  # type can drop out of the root document — reachable by URL, unreachable by
+  # following links. THAT is what this warns about, and only that.
+  #
+  # Warns rather than fails: it is a navigation ambiguity the author can resolve
+  # by giving one index the base path, not an illegal declaration to reject.
   defp warn_on_ambiguous_collection(dsl_state, module) do
     indexes = routes_of_type(dsl_state, :index)
+    canonical = Enum.filter(indexes, &base_path_index?/1)
 
-    if length(indexes) > 1 do
+    if indexes != [] and length(canonical) != 1 do
       IO.warn(
         """
-        #{inspect(module)} declares #{length(indexes)} `index` routes, but a type has one collection.
+        #{inspect(module)} has #{length(indexes)} `index` routes and #{length(canonical)} at the collection base, but navigation needs exactly one base index.
 
         Routes: #{Enum.map_join(indexes, ", ", &"#{&1.route} (:#{&1.action})")}
 
-        `AshHateoas.Navigation` reads the `index` route to answer two questions:
-        what this type's collection URL is, and whether the type is reachable
-        for a given actor — which decides if it appears in the root document at
-        all. With several, it takes whichever comes first, so both answers
-        depend on route ordering rather than on anything declared.
+        `AshHateoas.Navigation` names a type's collection — and decides whether
+        the type appears in the root document at all — from the index route at
+        the base path (the one whose path does not end in its own action name).
+        Named collection reads (`get?: false`) each get their own index at
+        `/<name>` and are fine; what is missing here is a single canonical index
+        at the base.
 
-        If one of these is the canonical collection, declare it first or make
-        the others non-`index` routes. A filtered sub-collection is better
-        expressed as a `get` at `/:id/<name>` or a query parameter on the
-        collection itself.
+        Give the primary read its base index (the usual case, derived
+        automatically), or if you hand-declared indexes, ensure exactly one sits
+        at the collection base.
         """,
         []
       )
@@ -111,6 +115,15 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
     :ok
   end
+
+  # The base collection index — its route ends at the resource base, not in a
+  # named `/<action>` segment. Mirrors `AshHateoas.Navigation.canonical_index?/1`;
+  # kept local so the verifier does not reach into Navigation's privates.
+  defp base_path_index?(%{route: route, action: action}) when is_atom(action) do
+    not String.ends_with?(route, "/#{action}")
+  end
+
+  defp base_path_index?(_route), do: true
 
   # A generic action IS routed like any other — `ash_json_api`'s `:route` entity
   # takes the method as data and applies no return-type check, so `action

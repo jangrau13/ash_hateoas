@@ -246,9 +246,32 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
       authentication_action?(dsl_state, action) -> []
       generic?(action) -> generic_specs(dsl_state, action)
       primary?(dsl_state, action) -> primary_specs(action.type)
+      collection_read?(action) -> [{:index, [route: "/#{action.name}"]}]
       true -> [{non_primary_type(action.type), [route: "/:id/#{action.name}"]}]
     end
   end
+
+  # A non-primary read that returns a COLLECTION, not a member.
+  #
+  # `/:id/<name>` is right for a read scoped to one record — a variant `get`
+  # that loads more, filters to the actor's own, and so on. It is wrong for a
+  # read that searches or lists the whole type: there is no `:id` to supply, so
+  # the derived route is unreachable, and the action is a collection operation
+  # wearing a member's URL.
+  #
+  # `get?` is the exact signal, and Ash defines it for this: "expresses that
+  # this action innately only returns a single result... used by extensions to
+  # validate and/or modify behavior". A read that is NOT `get?` returns many, so
+  # it belongs at the collection as an `:index` at `/<name>` — where its public
+  # arguments arrive as query params (`?query=solar`), which is also what makes
+  # it advertise as a COLLECTION affordance rather than one buried under a
+  # record. A `get?` read keeps `/:id/<name>`.
+  #
+  # Multiple `:index` routes are now expected — the primary read's `/` and one
+  # per named collection read. `AshHateoas.Navigation` treats the base-path
+  # index as the canonical collection, so the others do not shadow it.
+  defp collection_read?(%{type: :read} = action), do: not Map.get(action, :get?, false)
+  defp collection_read?(_action), do: false
 
   # An action AshAuthentication generated, rather than one the author wrote.
   # Two reasons, and they differ by action:
@@ -389,16 +412,20 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # but it has to be reachable by *some* verb. POST is the honest default: it is
   # not safe and not idempotent, which is what "arbitrary action" means over
   # HTTP.
-  # `:get`, NOT `:index`. A non-primary read at `/:id/<name>` is scoped to one
-  # record, and `index` means "the collection" — `AshHateoas.Navigation.root/2`
-  # reads a type's `index` route to find its collection URL. Deriving a second
-  # `index` made that lookup return a member path, and the type vanished from
-  # the root document: reachable by URL, but not by following links from the
-  # entry point, which is the whole of R9.
+  # This handles the `get?: true` read — one scoped to a single record, which
+  # `collection_read?` has already separated out. Such a read belongs at
+  # `/:id/<name>` as a `:get`, NOT an `:index`: `index` means "the collection",
+  # and `AshHateoas.Navigation.root/2` reads a type's index route to find its
+  # collection URL. A member read wearing an `:index` made that lookup return a
+  # member path, and the type vanished from the root document — reachable by
+  # URL but not by following links from the entry point, which is the whole of
+  # R9.
   #
-  # Caught by the demo, not by this suite. The test asserting non-primary reads
-  # do not collide checked that their PATHS were unique — they were. It is the
-  # route TYPE that has to be singular, and nothing checked that until now.
+  # A non-primary read that is NOT `get?` never reaches here — it is a
+  # collection read and routes as an `:index` at `/<name>`. That the two now
+  # split on `get?` is what lets a resource carry several collection reads
+  # (`search`, `recent`, `by_region`) and have each advertise as its own
+  # collection affordance, without any of them shadowing the canonical one.
   defp non_primary_type(:read), do: :get
   defp non_primary_type(:create), do: :post
   defp non_primary_type(:update), do: :patch

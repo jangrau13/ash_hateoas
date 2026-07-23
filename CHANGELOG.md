@@ -106,10 +106,18 @@ for the conventional plural.
   `mix format` rewrote the rest into calls — `method :tally, :post` became
   `method(:tally, :post)`. The exported `locals_without_parens` now covers every
   entry, which also fixes the same churn in consuming applications.
-- Non-primary reads were derived as `index` routes rather than `get`. A resource
-  with two reads got two `index` routes, `AshHateoas.Navigation` resolved the
-  member-scoped one as the collection, and the type dropped out of the root
-  document: still reachable by URL, no longer reachable by following links.
+- Non-primary reads are now routed by what they RETURN, not lumped together. A
+  read that returns a collection (`get?: false` — a search, a filtered list)
+  derives an `:index` at `/<name>`, so it is reachable without an `:id` and
+  advertises as a collection affordance. A read that returns a single record
+  (`get?: true`) stays a member `:get` at `/:id/<name>`. Previously every
+  non-primary read went to `/:id/<name>`, which left a collection read
+  unreachable — there is no `:id` to supply — and was the reason a semantic
+  search action could not be exposed without a hand-written route. This
+  supersedes the earlier fix that routed all non-primary reads as `get`;
+  `AshHateoas.Navigation` now resolves the canonical collection by path (the
+  base index, not a named `/<name>` one), so several indexes coexist without the
+  type dropping out of the root document.
 - `Ash.Domain.Info.short_name/1` deadlocked the compiler when deriving `base`.
   It forces the domain module to finish compiling while the domain is itself
   waiting on its resources. The name now comes from the module, which needs

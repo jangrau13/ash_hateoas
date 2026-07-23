@@ -136,11 +136,34 @@ defmodule AshHateoas.Navigation do
     _ -> nil
   end
 
+  # The canonical collection, when a type has more than one index route.
+  #
+  # A resource with collection reads beyond its primary — a `search`, a
+  # `recent` — now derives an `:index` per read: the primary read's at the
+  # resource base and each named one at `base <> "/<name>"`. All are indexes,
+  # but exactly one is THE collection a client reaches by following `collection`
+  # from the entry point: the primary read's, at the base path.
+  #
+  # A named index's path ends with its own action name (`/inventory/process`
+  # vs `/inventory/process/semantic_search`); the canonical one does not. So the
+  # index whose route does NOT end in `/<its action>` is preferred, with
+  # `List.first` as the fallback for the ordinary single-index case. This is a
+  # pure read of the routes already in the DSL — no re-derivation of which read
+  # is primary.
   defp index_route(resource, domains) do
-    resource
-    |> routes(domains)
-    |> Enum.find(&(&1.type == :index))
+    indexes =
+      resource
+      |> routes(domains)
+      |> Enum.filter(&(&1.type == :index))
+
+    Enum.find(indexes, &canonical_index?/1) || List.first(indexes)
   end
+
+  defp canonical_index?(%{route: route, action: action}) when is_atom(action) do
+    not String.ends_with?(route, "/#{action}")
+  end
+
+  defp canonical_index?(_route), do: true
 
   defp routes(resource, domains) do
     if Code.ensure_loaded?(AshJsonApi.Resource.Info) do

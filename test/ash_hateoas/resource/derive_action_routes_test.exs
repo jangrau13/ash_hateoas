@@ -113,33 +113,41 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
       end
     end
 
-    test "a resource has exactly one index route" do
-      # `index` is not just "a read route" — it is THE collection, and
-      # `AshHateoas.Navigation.root/2` looks it up to find a type's collection
-      # URL. A second `index` makes that lookup ambiguous, and the type can
-      # drop out of the root document entirely: a client following links from
-      # the entry point can no longer reach it.
-      #
-      # This regressed once. A non-primary read was derived as `index` at
-      # `/:id/<name>`, which is a member-scoped read, not a collection. The
-      # path-uniqueness test below passed throughout, because the paths WERE
-      # unique — it is the route TYPE that has to be singular.
+    test "a collection read derives its own index; the canonical one stays resolvable" do
+      # A `get?: false` read returns many, so it earns an `:index` at `/<name>`
+      # — a real sub-collection. That means a type now legitimately has more
+      # than one index, which used to be forbidden outright. What must still
+      # hold is that `AshHateoas.Navigation` can pick THE collection out of the
+      # set: the primary read's, at the base path. If it can't, the type drops
+      # out of the root document and a client following links cannot reach it
+      # (R9) — the failure the single-index rule used to prevent by fiat.
       indexes =
         AshHateoas.Test.MultiRead
         |> routes()
         |> Enum.filter(&(&1.type == :index))
 
-      assert length(indexes) == 1,
-             "expected one index, got: #{inspect(Enum.map(indexes, & &1.route))}"
+      routes = Enum.map(indexes, & &1.route)
+      assert "/domain/multi_read" in routes, "the primary read's index must exist"
+      assert "/domain/multi_read/by_label" in routes, "the collection read must get its own index"
 
-      assert hd(indexes).action == :read, "the index must be the PRIMARY read"
+      canonical = AshHateoas.Navigation.collection_href(AshHateoas.Test.MultiRead, [Domain])
+
+      assert canonical == "/domain/multi_read",
+             "Navigation must resolve the base collection, not a named sub-collection"
     end
 
-    test "a non-primary read is a member route, not a collection" do
+    test "a collection read (get?: false) is a named index, not a member route" do
       route = route_for(AshHateoas.Test.MultiRead, :by_label)
 
+      assert route.type == :index
+      assert route.route == "/domain/multi_read/by_label"
+    end
+
+    test "a member read (get?: true) stays a member route under /:id" do
+      route = route_for(AshHateoas.Test.MultiRead, :by_id)
+
       assert route.type == :get
-      assert route.route == "/domain/multi_read/:id/by_label"
+      assert route.route == "/domain/multi_read/:id/by_id"
     end
 
     test "a non-primary read does not squat the collection path" do
