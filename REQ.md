@@ -218,14 +218,16 @@ POLICY depends on an argument value — `authorize_if expr(^arg(:tier) ==
 though some input would authorize it. This differs from a genuine denial: a
 denial is `false` from facts already known (the actor, the record, a constant);
 this is `false` *only* because an argument was not supplied. The two should be
-distinguished — a genuine denial stays hidden, an argument-gated one becomes a
-**maybe-affordance** (advertised, flagged conditional, the endpoint gives the
-definitive answer per R6). It cannot be done soundly in this package: Ash
-resolves an absent argument to `nil` and returns a definite `false`, erasing the
-distinction, and recovering it means either guessing argument values or coupling
-to Ash's private policy internals. The proper fix is an upstream Ash change that
-surfaces an absent-argument decision as `:maybe`; see
-`documentation/maybe-affordances.md`.
+distinguished — a genuine denial stays hidden, an argument-gated one is
+advertised as an **ordinary affordance**: its `fields` say what the caller must
+supply, and R6 makes the endpoint the authority, so no third "maybe" state is
+needed — that was a wrong framing. It cannot be fixed soundly in this package:
+Ash resolves an absent argument to `nil` and returns a definite `false`, erasing
+the distinction, and recovering it means either guessing argument values or
+coupling to Ash's private policy internals. The fix is an upstream Ash change
+that stops collapsing an absent argument to `nil` so the decision stays
+undecided (and is then advertised optimistically per R6); see
+`documentation/argument-gated-affordances.md`.
 
 ### R7 — Errors are loud.
 An affordance is dropped silently for the expected "not permitted" outcome. Any

@@ -115,9 +115,12 @@ for the conventional plural.
   Known limit, unchanged: an action whose POLICY (not preparation) depends on an
   argument value — `authorize_if expr(^arg(:tier) == "public")` — is decided
   `false` during the argument-less probe and stays hidden even though some input
-  would authorize it. Fixing that soundly needs Ash to distinguish an *absent*
-  argument from a `nil` one and surface the decision as `:maybe`; tracked as a
-  proposed upstream change (see `documentation/maybe-affordances.md`).
+  would authorize it. It should be advertised as an ordinary affordance (its
+  `fields` say what to supply; R6 makes the endpoint the authority), the way a
+  genuinely-forbidden action is not. Fixing it soundly needs Ash to stop
+  collapsing an *absent* argument to `nil` (which makes the decision a definite
+  `false`) and instead leave it undecided; tracked as a proposed upstream change
+  (see `documentation/argument-gated-affordances.md`).
 - `.formatter.exs` listed only three of this package's DSL entries, so
   `mix format` rewrote the rest into calls — `method :tally, :post` became
   `method(:tally, :post)`. The exported `locals_without_parens` now covers every
