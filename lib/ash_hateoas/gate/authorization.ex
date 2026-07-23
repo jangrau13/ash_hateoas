@@ -21,16 +21,38 @@ defmodule AshHateoas.Gate.Authorization do
   advisory — the endpoint re-runs every policy on invocation, so an optimistic
   proposal degrades to a clean error, never an invalid write.
 
+  ## The probe runs preparations, and preparations can raise
+
+  The probe supplies no arguments, and for a read/create/action `Ash.can?/3`
+  normalizes `{resource, action}` to `for_read(action, %{})`, which RUNS the
+  action's preparations. A preparation that dereferences a required argument
+  then meets `nil` and raises — a semantic search whose `prepare` embeds the
+  query is the canonical case (`"search_query: " <> nil`). That is the query
+  being malformed by the empty probe, not the authorization failing.
+
+  So a raise is not taken at face value. It is retried against a query with the
+  action set directly and `for_read` never called, so the preparation pipeline
+  never runs (`authorized_without_preparations/2`). Skipping preparations does
+  not weaken the check: policies authorize the ACTION, preparations shape WHICH
+  ROWS. If the retry answers, that answer stands and the action is advertised
+  as it should be.
+
   ## Errors are loud (R7)
 
-  `Ash.can?/3` raises rather than returning a tagged tuple, so a raising policy
-  check surfaces as an exception. Every exception is logged with full context
-  before the affordance is dropped — silently degrading a real bug into a
-  missing affordance is unacceptable on an authorization-adjacent surface.
+  If the preparation-free retry ALSO raises, the exception was a genuine
+  fault — a policy check itself blew up — not a missing argument. That is
+  logged with full context and the affordance dropped: silently degrading a
+  real bug into a missing affordance is unacceptable on an
+  authorization-adjacent surface.
 
-  The limit of this approach: a raised forbidden-error and a genuine bug arrive
-  through the same clause and cannot be told apart here. Both are logged;
-  neither is swallowed.
+  Known limit: an action whose POLICY (not preparation) depends on an argument
+  value — `authorize_if expr(^arg(:tier) == "public")` — resolves that arg to
+  `nil` during the probe and is decided `false`, so it is not advertised even
+  though some input would authorize it. This predates the retry above and is
+  unchanged by it; `Ash.can?/3` returns a definite `false` here rather than
+  `:maybe`, so no option flips it, and telling an argument-driven `false` from a
+  genuine denial needs reaching into Ash's policy internals. Left as a known
+  gap rather than fixed fragilely.
 
   ## Resources with no authorizers
 
@@ -53,28 +75,66 @@ defmodule AshHateoas.Gate.Authorization do
   end
 
   defp authorized?(action, %Context{} = context) do
-    subject = subject(action, context)
-
     # `:domain` is consumed by Ash.Helpers.domain!/2 before the option schema is
     # validated, so it is accepted here but is NOT in @can_opts — passing it to
     # Ash.can/3 would be rejected outright. Only forward `:tenant`, and let the
     # domain be resolved from the resource, which the backbone already verified.
-    Ash.can?(subject, context.actor, can_opts(action, context))
+    Ash.can?(subject(action, context), context.actor, can_opts(action, context))
   rescue
     exception ->
-      Logger.error("""
-      [ash_hateoas] Authorization check raised while computing affordances; \
-      dropping #{inspect(action.name)}.
+      # The probe runs with no arguments, and for a read/create/action that Ash
+      # is `{resource, action}` normalized to `for_read(action, %{})`, which
+      # RUNS the action's preparations. A preparation that dereferences a
+      # required argument then hits `nil` and raises — the query is malformed,
+      # not the authorization. Retry against a query the same probe would build
+      # WITHOUT running preparations; if that answers, the raise was the missing
+      # argument and the action is authorizable, so honour that answer.
+      case authorized_without_preparations(action, context) do
+        {:ok, decision} ->
+          decision
 
-        resource: #{inspect(context.resource)}
-        action:   #{inspect(action.name)}
-        record:   #{record_label(context.record)}
-        actor:    #{inspect(context.actor)}
+        :error ->
+          # A genuine raise — a policy check itself blew up — survives the
+          # preparation-free retry too. Keep the loud log and drop (R7): a real
+          # bug must not be silently degraded into a missing affordance.
+          Logger.error("""
+          [ash_hateoas] Authorization check raised while computing affordances; \
+          dropping #{inspect(action.name)}.
 
-      #{Exception.format(:error, exception, __STACKTRACE__)}
-      """)
+            resource: #{inspect(context.resource)}
+            action:   #{inspect(action.name)}
+            record:   #{record_label(context.record)}
+            actor:    #{inspect(context.actor)}
 
-      false
+          #{Exception.format(:error, exception, __STACKTRACE__)}
+          """)
+
+          false
+      end
+  end
+
+  # Authorize the action WITHOUT running its preparations.
+  #
+  # `Ash.can?` re-runs preparations when handed `{resource, action}` (via
+  # `for_read`) but takes a pre-built `%Ash.Query{}` as-is. So a query with the
+  # action set directly — never through `for_read` — carries the policies but
+  # not the preparation pipeline that crashed on the missing argument.
+  #
+  # This does not weaken the check: policies authorize the ACTION, while
+  # preparations shape WHICH ROWS. Verified against both a `forbid_if always()`
+  # and a record-dependent `expr(owner == ^actor(...))` policy — the
+  # preparation-free query denies and permits exactly as the normal path does.
+  # Only a read/create/action has preparations to skip; a member subject that is
+  # a plain record has none, so this applies to the resource/query forms.
+  defp authorized_without_preparations(action, %Context{} = context) do
+    query =
+      context.resource
+      |> Ash.Query.new()
+      |> Map.put(:action, action)
+
+    {:ok, Ash.can?(query, context.actor, can_opts(action, context))}
+  rescue
+    _ -> :error
   end
 
   # Record-level uses {record, action}, which makes Ash inject `data: [record]`

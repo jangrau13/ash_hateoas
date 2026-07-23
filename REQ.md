@@ -200,6 +200,33 @@ authorization-adjacent surface also invites divergence from every other Ash
 consumer. Revisit only if a deployment demonstrates that over-offering is
 causing real harm.
 
+**The probe runs preparations, and a preparation can raise.** The probe passes
+no arguments, and for a read/create/action `Ash.can?/3` builds the query via
+`for_read(action, %{})`, which runs the action's preparations. A preparation
+that dereferences a required argument then meets `nil` and raises — a semantic
+search whose `prepare` embeds the query is the canonical case. That is the query
+malformed by the empty probe, not authorization failing, so the gate retries
+against a query built with the action set directly and `for_read` never called:
+preparations do not run, the action is authorized on its policies alone, and it
+is advertised. Skipping preparations does not weaken the check — policies
+authorize the action, preparations shape which rows. A genuine policy fault
+raises through the retry too and is logged-and-dropped (R7).
+
+**Known gap — argument-gated policies (designed, not built).** An action whose
+POLICY depends on an argument value — `authorize_if expr(^arg(:tier) ==
+"public")` — is decided `false` under the argument-less probe and hidden, even
+though some input would authorize it. This differs from a genuine denial: a
+denial is `false` from facts already known (the actor, the record, a constant);
+this is `false` *only* because an argument was not supplied. The two should be
+distinguished — a genuine denial stays hidden, an argument-gated one becomes a
+**maybe-affordance** (advertised, flagged conditional, the endpoint gives the
+definitive answer per R6). It cannot be done soundly in this package: Ash
+resolves an absent argument to `nil` and returns a definite `false`, erasing the
+distinction, and recovering it means either guessing argument values or coupling
+to Ash's private policy internals. The proper fix is an upstream Ash change that
+surfaces an absent-argument decision as `:maybe`; see
+`documentation/maybe-affordances.md`.
+
 ### R7 — Errors are loud.
 An affordance is dropped silently for the expected "not permitted" outcome. Any
 **exception** raised while evaluating authorization (bad expression, nil deref,

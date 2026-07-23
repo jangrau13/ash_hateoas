@@ -102,6 +102,22 @@ for the conventional plural.
 
 ### Fixed
 
+- An action whose preparation dereferences a required argument no longer
+  vanishes from the advertised surface. The affordance probe calls `Ash.can?`
+  with no arguments, which runs the action's preparations while building the
+  query; a preparation that meets `nil` (a semantic search whose `prepare`
+  embeds the query — `"search_query: " <> nil`) raised, and the affordance was
+  dropped. The gate now retries against a query with preparations skipped: the
+  action is authorized without running argument-dependent business logic, so it
+  is advertised when it should be. A genuine policy fault still raises through
+  the retry and is logged-and-dropped (R7), and a forbidden action stays hidden.
+
+  Known limit, unchanged: an action whose POLICY (not preparation) depends on an
+  argument value — `authorize_if expr(^arg(:tier) == "public")` — is decided
+  `false` during the argument-less probe and stays hidden even though some input
+  would authorize it. Fixing that soundly needs Ash to distinguish an *absent*
+  argument from a `nil` one and surface the decision as `:maybe`; tracked as a
+  proposed upstream change (see `documentation/maybe-affordances.md`).
 - `.formatter.exs` listed only three of this package's DSL entries, so
   `mix format` rewrote the rest into calls — `method :tally, :post` became
   `method(:tally, :post)`. The exported `locals_without_parens` now covers every
