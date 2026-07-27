@@ -223,6 +223,7 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Compensating)
     resource(AshHateoas.Test.MultiRead)
     resource(AshHateoas.Test.EagerPrepare)
+    resource(AshHateoas.Test.ReadFailure)
     resource(AshHateoas.Test.AuthUser)
     resource(AshHateoas.Test.AuthToken)
   end

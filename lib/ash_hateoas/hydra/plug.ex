@@ -190,8 +190,12 @@ defmodule AshHateoas.Hydra.Plug do
 
         send_json(conn, 200, document)
 
-      :error ->
-        send_error(conn, 403, "Forbidden")
+      {:error, error} ->
+        # A read can fail for very different reasons — a policy denial, invalid
+        # arguments, or a raised exception (e.g. a backend the action depends on
+        # is down). Classify by the Ash error so the status is honest, instead of
+        # reporting every failure as Forbidden.
+        send_ash_error(conn, error)
     end
   end
 
@@ -650,12 +654,12 @@ defmodule AshHateoas.Hydra.Plug do
 
     query = Ash.Query.for_read(resource, action, arguments, actor: actor, tenant: tenant)
 
-    case Ash.read(query, read_opts) do
-      {:ok, result} -> {:ok, result}
-      _ -> :error
-    end
+    # The real Ash error is returned, not flattened to a bare `:error`, so the
+    # caller can classify it (a policy denial is a 403, invalid input a 400/422,
+    # anything else a 500) rather than mislabel every failure as Forbidden.
+    Ash.read(query, read_opts)
   rescue
-    _ -> :error
+    exception -> {:error, exception}
   end
 
   # Bind a named read's public arguments from the query string
@@ -819,6 +823,10 @@ defmodule AshHateoas.Hydra.Plug do
       # forbidden anywhere in the error tree.
       forbidden?(error) -> {403, "Forbidden"}
       class_of(error) == :invalid -> {400, "Bad Request"}
+      # A framework-class failure or a raw raised exception is the server's
+      # problem, not the caller's — a 500, not a 4xx. (A plain exception struct
+      # has no Ash `class`, so `class_of` returns `:unknown`.)
+      class_of(error) in [:framework, :unknown] -> {500, "Internal Server Error"}
       true -> {422, "Unprocessable Entity"}
     end
   end

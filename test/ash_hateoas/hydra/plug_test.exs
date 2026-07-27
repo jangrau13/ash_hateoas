@@ -12,7 +12,18 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Article, Document, HydraEndpoint, MultiRead, Order, Paged, Person}
+
+  alias AshHateoas.Test.{
+    Actor,
+    Article,
+    Document,
+    HydraEndpoint,
+    MultiRead,
+    Order,
+    Paged,
+    Person,
+    ReadFailure
+  }
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
@@ -259,6 +270,41 @@ defmodule AshHateoas.Hydra.PlugTest do
       coll = body(get("/domain/multi_read", @admin))
       assert coll["@type"] == "Collection"
       assert coll["hydra:totalItems"] == 3
+    end
+  end
+
+  describe "a failing collection read is classified, not blanket-403" do
+    test "a policy denial is a 403 Forbidden" do
+      conn = get("/domain/read_failure/denied", @admin)
+      assert conn.status == 403
+      assert body(conn)["@type"] == "Error"
+    end
+
+    test "a prepare that adds a field error is a 400 Bad Request, not 403" do
+      conn = get("/domain/read_failure/invalid", @admin)
+
+      # the read is authorized — the failure is invalid/unavailable input, so the
+      # status must NOT be 403 (the old blanket behaviour)
+      assert conn.status == 400
+      node = body(conn)
+      assert node["@type"] == "Error"
+      assert node["hydra:description"] =~ "unavailable"
+    end
+
+    test "a prepare that raises is a 500 Internal Server Error, not 403" do
+      conn = get("/domain/read_failure/boom", @admin)
+
+      assert conn.status == 500
+      assert body(conn)["@type"] == "Error"
+    end
+
+    test "the primary read still succeeds" do
+      ReadFailure
+      |> Ash.Changeset.for_create(:create, %{label: "ok"})
+      |> Ash.create!(authorize?: false)
+
+      coll = body(get("/domain/read_failure", @admin))
+      assert coll["@type"] == "Collection"
     end
   end
 
