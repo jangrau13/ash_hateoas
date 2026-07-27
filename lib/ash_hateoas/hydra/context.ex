@@ -85,8 +85,8 @@ defmodule AshHateoas.Hydra.Context do
   @doc """
   The relation-type IRI for an action name.
 
-  Mirrors the JSON:API adapter's `rel/1` so the two transports name the same
-  affordance identically when lifted out of context.
+  A stable, dereferenceable relation type for an affordance, so the relation is
+  unambiguous when a link is lifted out of its document.
 
       iex> AshHateoas.Hydra.Context.rel_iri(:approve)
       "https://ash-hateoas.org/rels/approve"

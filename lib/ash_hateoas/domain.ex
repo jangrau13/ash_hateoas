@@ -1,6 +1,6 @@
 defmodule AshHateoas.Domain do
   @moduledoc """
-  Domain-level defaults for affordances (R8).
+  Domain-level defaults for affordances.
 
       defmodule MyApp.Docs do
         use Ash.Domain, extensions: [AshHateoas.Domain]
@@ -11,8 +11,8 @@ defmodule AshHateoas.Domain do
       end
 
   A resource inherits this unless it declares its own `enabled?`. That is what
-  lets a deployment switch a whole domain off without touching every resource,
-  and REQ's "the posture is a declaration, not a hardcoded rule".
+  lets a deployment switch a whole domain off without touching every resource:
+  the posture is a declaration, not a hardcoded rule.
 
   The extension is optional: a domain without it simply has no default, and
   resources fall back to `true`.

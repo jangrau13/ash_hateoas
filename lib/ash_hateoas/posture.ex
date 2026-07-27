@@ -1,6 +1,6 @@
 defmodule AshHateoas.Posture do
   @moduledoc """
-  Resolves whether affordances are computed for a resource (R8).
+  Resolves whether affordances are computed for a resource.
 
   Affordances are a hypermedia contract: a client must not have to remember a
   flag to get a navigable response, and a client that forgets one must not

@@ -1,25 +1,26 @@
 # AshHateoas
 
 Authorization- and state-aware **HATEOAS affordances** for [Ash](https://ash-hq.org),
-rendered natively into JSON:API links.
+served natively as a **[Hydra](https://www.hydra-cg.com/) / JSON-LD** API.
 
-JSON:API gives you navigation — `self`, `related`, pagination. It says nothing
-about *affordances*: which actions a client may take next. This package closes
-that gap: one engine answers "what may this actor do with this record, in its
-current state?", and the renderer projects that answer into the transport's own
-idiom.
+A resource's actions, routes and state-machine transitions are already declared
+and introspectable. This package derives from them the one thing a REST client
+otherwise has to be told out-of-band: *which actions may this actor take next,
+on this record, in its current state?* — and publishes that answer as Hydra
+operations a generic client can discover and drive at runtime.
 
 | Backbone output | Rendered as |
 |---|---|
-| an action that may be taken next | a `links.<action>` object |
-| the affordance set for a state | the record's `links` |
-| field descriptor | link `meta.fields` |
+| an action that may be taken next | a `hydra:Operation` (`hydra:method`, `hydra:expects`) |
+| a named sub-action with its own URL | a link node (`ah:<action>` → `{ @id, hydra:operation }`) |
+| a field descriptor | a `hydra:SupportedProperty` (or `hydra:IriTemplateMapping`) |
+| the type's catalogue | `hydra:ApiDocumentation` → `supportedClass` |
+| a collection | a `hydra:Collection` (`member`, `totalItems`, `PartialCollectionView`) |
 
-The documents are described by a published
-[profile](documentation/profiles/affordances.md), so a client needs no
-knowledge of Ash — or of this package — to drive an API that uses it.
-[`hateoas_mcp`](https://github.com/jangrau/hateoas_mcp) is one such client: an
-MCP server that speaks to any service advertising the profile, over HTTP.
+Documents are plain JSON-LD keyed to the Hydra Core Vocabulary
+(`http://www.w3.org/ns/hydra/core#`), so a client that has never seen this code
+— or Ash — can enter at one URL and reach every type, act on every record, and
+follow the state machine from the affordances it is offered.
 
 ## Why Ash
 
@@ -33,11 +34,7 @@ Affordances are therefore *derived*, never authored.
 ```elixir
 def deps do
   [
-    {:ash_hateoas, "~> 0.1"},
-    # `ash_json_api` reaches for `AshJsonApi.OpenApi` when validating a write,
-    # and that module only exists when `open_api_spex` is present — without it
-    # a PATCH or POST through the router raises.
-    {:open_api_spex, "~> 3.18"}
+    {:ash_hateoas, "~> 0.1"}
   ]
 end
 ```
@@ -48,17 +45,39 @@ Or with [Igniter](https://hexdocs.pm/igniter):
 mix igniter.install ash_hateoas
 ```
 
-Then add the extension alongside your transport extension(s):
+Then add the extension to the resources that should expose affordances:
 
 ```elixir
 defmodule MyApp.Document do
   use Ash.Resource,
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    domain: MyApp.Docs,
+    extensions: [AshHateoas.Resource]
 end
 ```
 
-That is the whole per-resource setup. Every adapter renders from the same
-declaration.
+That is the whole per-resource setup. Every action is routed and advertised
+automatically; a resource declares a `hateoas` `type` (or lets one be inferred
+from its module name) and nothing else.
+
+## Serving
+
+Mount the Hydra plug to serve a domain as `application/ld+json`:
+
+```elixir
+defmodule MyApp.HydraRouter do
+  use Plug.Builder
+
+  plug AshHateoas.Hydra.Plug,
+    domains: [MyApp.Docs],
+    prefix: "/api",
+    doc_path: "/doc"
+end
+```
+
+It serves the `ApiDocumentation` entry point at `/`, the full documentation at
+`doc_path`, and reads/writes every routed resource — attaching each record's
+actor- and state-gated affordances as `hydra:operation`, and advertising the
+API documentation via a `Link` header on every response.
 
 ## Overrides
 
@@ -66,29 +85,19 @@ The DSL is override-only — it carries deviations, never per-action opt-ins:
 
 ```elixir
 hateoas do
-  enabled? true
+  type "document"          # optional; inferred from the module name otherwise
+  base "/documents"        # optional; derived from domain + type otherwise
   exclude :internal_reconcile
   override :approve, href: "/documents/:id/approve"
 end
 ```
 
-A compile-time verifier rejects an `exclude` or `override` naming an action that
-does not exist.
-
-## Adding a transport
-
-Don't add one here. The documents this package produces are described by
-[the affordances profile](documentation/profiles/affordances.md) — completely
-enough that a consumer can discover an API's types, act on its records, and
-follow its state machine knowing nothing about Ash.
-
-Build against those documents instead, as a separate package. Anything a
-transport needs that the profile does not publish is a gap in the profile, and
-belongs here rather than in the consumer.
+A compile-time verifier rejects an `exclude`, `override` or `unrouted` naming an
+action that does not exist.
 
 ## Status
 
-Under development. See `REQ.md` for the requirement set.
+Under development.
 
 ## License
 

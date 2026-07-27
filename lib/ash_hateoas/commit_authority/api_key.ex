@@ -1,6 +1,6 @@
 defmodule AshHateoas.CommitAuthority.ApiKey do
   @moduledoc """
-  An actor holding an API key does not commit (R10).
+  An actor holding an API key does not commit.
 
       config :ash_hateoas, commit_authority: AshHateoas.CommitAuthority.ApiKey
 

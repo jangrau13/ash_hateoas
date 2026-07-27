@@ -1,12 +1,12 @@
 defmodule AshHateoas.Descriptor do
   @moduledoc """
-  Builds an `AshHateoas.Affordance` from a surviving action — stage 4 (§3).
+  Builds an `AshHateoas.Affordance` from a surviving action — stage 4.
 
   Everything here is in-memory DSL reading: no I/O, no authorization. By the
   time a descriptor is built the gates have already decided the action belongs
   in the set.
 
-  ## Self-documenting (R4)
+  ## Self-documenting
 
   Ash already collects `description` on actions and arguments, and arguments
   carry `default`, `constraints` and `sensitive?`. Those are surfaced verbatim
@@ -22,7 +22,7 @@ defmodule AshHateoas.Descriptor do
   @doc """
   Build the affordance for `action`, exposed by `route` (which may be `nil`).
 
-  `overrides` is the author's per-action deviation map (R2); currently only
+  `overrides` is the author's per-action deviation map; currently only
   `:href` is honoured.
   """
   @spec build(struct(), struct() | nil, module(), keyword()) :: Affordance.t()
@@ -38,7 +38,7 @@ defmodule AshHateoas.Descriptor do
     }
   end
 
-  # Declared, not derived, and read the same for every actor (R10). The gates
+  # Declared, not derived, and read the same for every actor. The gates
   # have already decided the action belongs in the set; this only says who may
   # execute it once offered.
   defp not_delegable?(action, resource) do
@@ -47,9 +47,9 @@ defmodule AshHateoas.Descriptor do
   end
 
   # An author's `override :action, href: "..."` wins. Otherwise the route's
-  # declared path is the href. Callers needing it host-qualified (the JSON:API
-  # renderer) prefix it themselves; the backbone stays transport-agnostic and
-  # emits the declared path.
+  # declared path is the href. Callers needing it host-qualified (the Hydra
+  # plug, `AshHateoas.Hydra.Plug`) prefix it themselves; the backbone stays
+  # transport-agnostic and emits the declared path.
   defp href(route, _resource, overrides) do
     case Keyword.get(List.wrap(overrides), :href) do
       nil -> route_path(route)
@@ -112,7 +112,7 @@ defmodule AshHateoas.Descriptor do
     }
   end
 
-  # R4: never emit a sensitive argument's default. Wrapped as {:ok, value} |
+  # Never emit a sensitive argument's default. Wrapped as {:ok, value} |
   # :error because nil is itself a legitimate default and the two must differ.
   defp default_for(%{sensitive?: true}), do: :error
 
@@ -123,8 +123,8 @@ defmodule AshHateoas.Descriptor do
     end
   end
 
-  # R4 requires `constraints.enum` derived from `one_of`. Other constraints are
-  # passed through as a map so a client can validate up front (R6).
+  # `constraints.enum` is derived from `one_of`. Other constraints are
+  # passed through as a map so a client can validate up front.
   defp constraints_for(argument) do
     argument
     |> Map.get(:constraints, [])

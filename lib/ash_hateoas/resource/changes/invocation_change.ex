@@ -7,7 +7,7 @@ defmodule AshHateoas.Resource.Changes.InvocationChange do
   hypothetical". Such a changeset is never executed, so a change that rejects it
   is answering the wrong question. Worse, for anything this package installs, it
   is answering the question that decides whether the action is *advertised*: a
-  refusal there drops the affordance from the set R6 requires be published.
+  refusal there drops the affordance from the advertised set.
 
   It is also where non-termination hides. A change that computes anything from
   the backbone re-enters `Ash.can?/3`, which builds a changeset, which runs the

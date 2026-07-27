@@ -1,9 +1,9 @@
 defmodule AshHateoas.ConformanceTest do
   @moduledoc """
-  Conformance against REQ's numbered requirements, stated as directly as the
-  requirement itself. Where another test file covers a requirement in depth,
-  this one asserts the headline claim so a regression is legible as
-  "R1 broke", not "some link is missing".
+  Conformance against the package's core guarantees, each stated as directly as
+  the guarantee itself. Where another test file covers one in depth, this one
+  asserts the headline claim so a regression is legible as "affordances stopped
+  being automatic", not "some link is missing".
   """
 
   use ExUnit.Case, async: true
@@ -12,7 +12,7 @@ defmodule AshHateoas.ConformanceTest do
 
   @actor %Actor{id: "conformance", role: :admin}
 
-  describe "R1 — automatic, from what is already declared" do
+  describe "automatic, from what is already declared" do
     setup do
       derived =
         Derived
@@ -36,7 +36,7 @@ defmodule AshHateoas.ConformanceTest do
              "precondition: the action exists"
 
       refute MapSet.member?(advertised, :unrouted_touch),
-             "an authorized but UNROUTED action must not be advertised (R1)"
+             "an authorized but UNROUTED action must not be advertised"
     end
 
     test "a routed action of the same shape IS advertised", %{derived: derived} do
@@ -45,7 +45,7 @@ defmodule AshHateoas.ConformanceTest do
     end
   end
 
-  describe "R3 — resolved per request, from the client's own context" do
+  describe "resolved per request, from the client's own context" do
     test "two actors receive different sets for the same record" do
       doc =
         Document
@@ -59,7 +59,7 @@ defmodule AshHateoas.ConformanceTest do
     end
   end
 
-  describe "R4 — self-documenting" do
+  describe "self-documenting" do
     test "descriptions, defaults and constraints come from the DSL verbatim" do
       doc =
         Document
@@ -75,7 +75,7 @@ defmodule AshHateoas.ConformanceTest do
     end
   end
 
-  describe "R5 — the envelope shape is fixed" do
+  describe "the envelope shape is fixed" do
     test "every affordance carries the same keys regardless of resource" do
       doc =
         Document
@@ -98,7 +98,7 @@ defmodule AshHateoas.ConformanceTest do
     end
   end
 
-  describe "R8 — cost is bounded" do
+  describe "cost is bounded" do
     test "a collection's cost does not grow with page size" do
       # Type-level affordances are computed once per request, not per record,
       # so the M × N case cannot arise. Asserting the entry point rather than
@@ -116,7 +116,7 @@ defmodule AshHateoas.ConformanceTest do
     end
   end
 
-  describe "R9 — enter anywhere" do
+  describe "enter anywhere" do
     test "a client with no record in hand is told what it may create" do
       affordances = AshHateoas.affordances(Document, @actor, domain: Domain)
 

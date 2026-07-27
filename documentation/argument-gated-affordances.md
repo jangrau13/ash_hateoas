@@ -21,7 +21,7 @@ earlier framing ("maybe-affordance") got it wrong. An argument-gated action is
 **not** a special third kind of affordance. A client cannot act on a "maybe" any
 differently than on a normal affordance — in both cases it supplies the fields
 and makes the call, and the endpoint gives the real answer. The affordance model
-is *already* advisory (R6): every affordance is a proposal the endpoint
+is *already* advisory: every affordance is a proposal the endpoint
 re-checks, and the affordance's `fields` already tell the agent it must supply
 `tier`. So the correct output is an ordinary affordance — nothing flagged,
 no new state. What was wrong was only that the action was **hidden** instead of
@@ -125,7 +125,7 @@ not here. Concretely:
   ```elixir
   {:ash, github: "jangrau13/ash", branch: "arg-gated-strict-check", override: true}
   ```
-  `override: true` is required: `ash_json_api`/`ash_postgres` depend on
+  `override: true` is required: other Ash extensions depend on
   `{:ash, "~> 3.x}` and would otherwise pull the hex package. Then
   `mix deps.get`. This persists across fetches, unlike editing `deps/ash` in
   place (overwritten on the next `deps.get` — that is what a local prototype

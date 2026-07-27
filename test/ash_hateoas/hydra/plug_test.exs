@@ -4,7 +4,9 @@ defmodule AshHateoas.Hydra.PlugTest do
   with `Plug.Test`. No HTTP server, no Phoenix.
   """
 
-  use ExUnit.Case, async: true
+  # Not async: several tests read whole collections from a shared private ETS
+  # table, so a concurrently-writing test could perturb a count.
+  use ExUnit.Case, async: false
 
   import Plug.Test
   import Plug.Conn

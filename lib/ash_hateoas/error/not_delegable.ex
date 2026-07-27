@@ -1,17 +1,17 @@
 defmodule AshHateoas.Error.NotDelegable do
   @moduledoc """
   Raised when a credential that does not commit invokes a `not_delegable`
-  action (R10).
+  action.
 
-  `class: :forbidden` gives **403** through `ash_json_api`'s own
-  `class_to_status/1`. Not 2xx: the request was "publish this", that did not
-  happen, and every HTTP client branches on `status < 300` before anything reads
-  the body. Not 202, which promises the action is queued when nothing is.
+  `class: :forbidden` maps to **403** on the wire. Not 2xx: the request was
+  "publish this", that did not happen, and every HTTP client branches on
+  `status < 300` before anything reads the body. Not 202, which promises the
+  action is queued when nothing is.
 
   403 is the same code an unauthorized actor already receives, and that is the
   point — the projection is **additive**. A client reading only status codes
-  treats this as the refusal it is, with no knowledge of R10; a client reading
-  the body learns what the action would have done.
+  treats this as the refusal it is; a client reading the body learns what the
+  action would have done.
 
   ## Why the payload is structured
 
@@ -36,8 +36,7 @@ defmodule AshHateoas.Error.NotDelegable do
   @doc """
   The error's projection, shaped for a wire format.
 
-  Kept here rather than in the JSON:API impl so a transport built against the
-  profile (§5.2) can reuse it without depending on `ash_json_api`.
+  Kept here rather than in the Hydra plug so any transport can reuse it.
   """
   @spec to_meta(%__MODULE__{}) :: map()
   def to_meta(%__MODULE__{} = error) do
@@ -47,9 +46,9 @@ defmodule AshHateoas.Error.NotDelegable do
     }
   end
 
-  # Several entries where a transition declares several `to` states. R10
-  # requires they be presented as alternatives rather than one being chosen, so
-  # this is a list even when it has one element.
+  # Several entries where a transition declares several `to` states. They are
+  # presented as alternatives rather than one being chosen, so this is a list
+  # even when it has one element.
   defp delta(%{to: to, gained: gained, lost: lost}) do
     %{
       "to" => to_string(to),

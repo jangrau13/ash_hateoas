@@ -5,28 +5,28 @@ defmodule AshHateoas.Resource do
       defmodule MyApp.Document do
         use Ash.Resource,
           domain: MyApp.Docs,
-          extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+          extensions: [AshHateoas.Resource]
       end
 
   That is the whole per-resource setup. Every action is routed, and every routed
   action the actor may invoke — and that is legal from the record's current
-  state — is advertised automatically, in every transport, from this one
-  declaration.
+  state — is advertised automatically, as a `hydra:Operation`, from this one
+  declaration. `AshHateoas.Hydra.Plug` serves the result as JSON-LD.
 
-  ## Routes are derived, not written (R1)
+  ## Routes are derived, not written
 
-  A resource needs no `routes` block. The `base` comes from the domain's
-  `short_name` and the json_api `type`; each action is routed by its kind, with
-  primaries taking the REST verbs and everything else addressed by name under
-  `/:id/`. A declared route always wins, so hand-routing one action leaves the
-  rest derived.
+  A resource needs no `routes` block. The `type` is the resource's own `hateoas`
+  `type` (or, when undeclared, its module name underscored); the `base` comes
+  from the domain's `short_name` and that `type`. Each action is routed by its
+  kind, with primaries taking the REST verbs and everything else addressed by
+  name under `/:id/`.
 
   This means **adding this extension widens a resource's HTTP surface** to every
   action it declares. Under the older allow-list an unrouted action was simply
   invisible; now keeping one off the surface is something you say out loud.
   Policies remain the actual gate on what any actor may invoke.
 
-  ## The DSL is override-only (R2)
+  ## The DSL is override-only
 
   There are deliberately **no per-action "enable" entries**. Saying nothing
   yields the full surface; the block subtracts from it or corrects it:
@@ -49,7 +49,7 @@ defmodule AshHateoas.Resource do
   exist, so a renamed action fails the build rather than silently losing its
   deviation — which for `unrouted` would mean silently republishing it.
 
-  ## Actions a delegated credential may not execute (R10)
+  ## Actions a delegated credential may not execute
 
   A second, separate section declares actions that stay advertised but are
   refused unless the requesting credential is one that commits:
@@ -239,7 +239,7 @@ defmodule AshHateoas.Resource do
     name: :agentic_hateoas,
     describe: """
     Actions that may be advertised to a delegated credential but not executed
-    by one (R10).
+    by one.
 
     Separate from `hateoas` because that block is override-only: every entry in
     it subtracts from or corrects the derived surface, while this one declares a

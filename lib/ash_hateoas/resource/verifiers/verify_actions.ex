@@ -1,6 +1,6 @@
 defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   @moduledoc """
-  Compile-time checks for the `hateoas` and `agentic_hateoas` sections (R2, R10).
+  Compile-time checks for the `hateoas` and `agentic_hateoas` sections.
 
   Two things are verified:
 
@@ -79,9 +79,9 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   # the canonical collection is the one whose route does NOT end in its action
   # name — so navigation is deterministic, not order-dependent.
   #
-  # What still breaks R9 is having no resolvable canonical index: zero base-path
-  # indexes, or two of them (which would be an author hand-declaring a second
-  # `index` at the base). Then `Navigation` cannot name the collection and the
+  # What still breaks navigation is having no resolvable canonical index: zero
+  # base-path indexes, or two of them (which would be an author hand-declaring
+  # a second `index` at the base). Then `Navigation` cannot name the collection and the
   # type can drop out of the root document — reachable by URL, unreachable by
   # following links. THAT is what this warns about, and only that.
   #
@@ -125,8 +125,8 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
   defp base_path_index?(_route), do: true
 
-  # A generic action IS routed like any other — `ash_json_api`'s `:route` entity
-  # takes the method as data and applies no return-type check, so `action
+  # A generic action IS routed like any other — the `:route` kind takes the
+  # method as data and applies no return-type check, so `action
   # :tally, :boolean` routes fine at `/:id/tally`.
   #
   # What cannot be derived is the verb. Every other action kind announces its
@@ -138,12 +138,12 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   # So the warning marks an assumption, not a failure. Silence it by confirming
   # the verb either way: `method :tally, :post` is as good an answer as `:get`.
   #
-  # A hand-declared route counts as confirming it. `route :post, "/acquire",
-  # :acquire` states the verb as plainly as `method :acquire, :post` does, so
-  # nothing is being assumed. Warning anyway would tell an author who HAS said
-  # which verb to say it a second time, somewhere else — two places holding one
-  # fact, free to disagree. That is what R1 exists to avoid, and this case is
-  # unambiguous: the route says POST.
+  # A hand-declared route counts as confirming it. A route that states its verb
+  # states it as plainly as `method :acquire, :post` does, so nothing is being
+  # assumed. Warning anyway would tell an author who HAS said which verb to say
+  # it a second time, somewhere else — two places holding one fact, free to
+  # disagree. That is the redundancy to avoid, and this case is unambiguous: the
+  # route says POST.
   defp warn_on_assumed_methods(dsl_state, module) do
     confirmed =
       declared_methods(dsl_state) ++
@@ -202,13 +202,12 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
     |> Enum.map(& &1.action)
   end
 
-  # `ash_json_api` emits a record's `self` link from the `:get` route marked
-  # `primary?` — "the route that should be linked to by default when rendering
-  # links to this type of route". With none marked, the lookup returns nil and
-  # no `self` is emitted.
+  # The Hydra plug names a record with the `@id` taken from its `:get` route
+  # marked `primary?` — the canonical member URL for the type. With none marked,
+  # the lookup returns nil and the record gets no `@id`.
   #
   # The record is then reachable by URL but carries no link to that URL. A
-  # client told to follow links and construct nothing (R9) cannot name it: it
+  # client told to follow links and construct nothing cannot name it: it
   # appears in a collection as data that can be read but never referred to, and
   # every affordance on it points at a record the client has no way to address.
   #
@@ -217,7 +216,7 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   # Marking SEVERAL is the mirror failure, and it is the quieter one. Ash
   # rejects two actions of a type both `primary?`, but that is a check on
   # actions, not on routes — two `get` ROUTES both marked compile silently.
-  # `ash_json_api` then picks one by no rule the author controls, so a record's
+  # The plug then picks one by no rule the author controls, so a record's
   # canonical URL depends on route ordering and can change under an edit that
   # touched neither route.
   defp warn_on_unaddressable_records(dsl_state, module) do
@@ -239,16 +238,12 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       """
       #{inspect(module)} declares #{length(gets)} `get` route(s) but marks none `primary?`.
 
-      `ash_json_api` renders a record's `self` link from the primary `get`
-      route, so records of this type are serialized without one. A hypermedia
-      client cannot address them: it is told what it may do with a record but
-      has no URL to name it by.
+      A record's `@id` is taken from the primary `get` route, so records of this
+      type are serialized without one. A hypermedia client cannot address them:
+      it is told what it may do with a record but has no URL to name it by.
 
-      Mark the canonical one:
-
-          routes do
-            get :read, primary?: true
-          end
+      A resource with a primary read gets this marking derived automatically;
+      if you hand-declared `get` routes, mark exactly one `primary?`.
       """,
       []
     )
@@ -261,10 +256,10 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
       Routes: #{Enum.map_join(primaries, ", ", &"#{&1.route} (:#{&1.action})")}
 
-      `ash_json_api` renders a record's `self` link from the primary `get`
-      route. With several, it takes one by no rule an author controls — so the
-      canonical URL for a record is whichever happens to come first, and it can
-      change under an edit that touched neither route.
+      A record's `@id` is taken from the primary `get` route. With several, one
+      is taken by no rule an author controls — so the canonical URL for a record
+      is whichever happens to come first, and it can change under an edit that
+      touched neither route.
 
       Note Ash's own check does not cover this: it rejects two ACTIONS of a
       type marked `primary?`, which is a different thing from two ROUTES.
@@ -287,7 +282,7 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
 
   # RETURNS {:error, _} rather than raising. Spark degrades an error raised
   # inside a verifier into a stderr warning, which would let a bogus `exclude`
-  # compile successfully — exactly what R2 says must not happen. Returning it
+  # compile successfully — exactly what this check must not allow. Returning it
   # makes the build fail, and lets `Spark.Test.dsl_errors/1` observe it as data.
   defp verify_action_names(dsl_state, module) do
     action_names =

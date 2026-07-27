@@ -1,14 +1,13 @@
 defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
   @moduledoc """
   Derives `related` and `relationship` routes for public to-many relationships,
-  so a record can carry links to its related collections (R9, "walk the data
-  graph").
+  so a record can carry links to its related collections — walking the data
+  graph.
 
   Everything needed is already declared: the relationship is public, its
   destination has a type, and the source has a read action. So the routes are
-  derived rather than demanded of the author — the same reasoning as
-  `AshHateoas.Resource.Transformers.MarkPrimaryGet`, and R1's principle applied
-  to structure instead of actions.
+  derived rather than demanded of the author — the read-what-is-declared
+  principle applied to structure instead of actions.
 
   Routes are `AshHateoas.Route` structs appended to the same persisted
   `:ash_hateoas_routes` key `DeriveActionRoutes` writes.

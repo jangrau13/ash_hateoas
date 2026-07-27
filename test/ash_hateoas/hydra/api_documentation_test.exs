@@ -25,7 +25,10 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     doc = ApiDocumentation.build([AshHateoas.Test.Domain])
 
     document =
-      Enum.find(doc["hydra:supportedClass"], &(&1["@id"] == "https://ash-hateoas.org/vocab#Document"))
+      Enum.find(
+        doc["hydra:supportedClass"],
+        &(&1["@id"] == "https://ash-hateoas.org/vocab#Document")
+      )
 
     assert document, "expected a Document class in supportedClass"
     assert document["@type"] == "Class"

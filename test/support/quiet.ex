@@ -1,6 +1,6 @@
 defmodule AshHateoas.Test.Quiet do
   @moduledoc """
-  A resource that opts out of affordances entirely (R8).
+  A resource that opts out of affordances entirely.
 
   Routed and readable like any other, it simply never advertises what may be
   done next — the "turn a hot endpoint off without forking" case.

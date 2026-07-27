@@ -1,6 +1,6 @@
 defmodule AshHateoas.Test.Derived do
   @moduledoc """
-  A resource used by the R1 conformance tests.
+  A resource used by the "automatic, from what is declared" conformance tests.
 
   It exists to separate two sets that are easy to conflate:
 
@@ -8,15 +8,12 @@ defmodule AshHateoas.Test.Derived do
     * the subset that is actually ROUTED
 
   `:unrouted_touch` is a perfectly ordinary, authorized update action that is
-  declared `unrouted`, so it never reaches the HTTP surface. R1 says the
-  candidate set comes from the routes, so it must NOT be advertised even though
-  the actor may run it. `:touch` is the same action shape, left routed, as the
-  control.
+  declared `unrouted`, so it never reaches the HTTP surface. The candidate set
+  comes from the routes, so it must NOT be advertised even though the actor may
+  run it. `:touch` is the same action shape, left routed, as the control.
 
-  The `hateoas` block was once absent here — under the old allow-list default,
-  saying nothing was enough to keep an action off the surface. Now that every
-  action is routed by default, keeping one off is a declaration, and this is
-  what that declaration looks like.
+  Because every action is routed by default, keeping one off the surface is a
+  declaration, and this `hateoas` block is what that declaration looks like.
   """
 
   use Ash.Resource,

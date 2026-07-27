@@ -1,14 +1,15 @@
 defmodule AshHateoas.Navigation do
   @moduledoc """
-  Structural navigation — the other half of HATEOAS (R9).
+  Structural navigation — the other half of HATEOAS.
 
   Affordances answer *"what can I do with this?"*. Navigation answers *"where am
   I, what else exists, and where do I start?"*. A client must be able to
   hardcode **one** entry point and from there reach every type, every collection
   and every record, being told at each stop what it may do.
 
-  Like affordances, nothing here is new author config: it is R1's principle —
-  read what is already declared — extended from actions to structure.
+  Like affordances, nothing here is new author config: it is the same
+  principle — read what is already declared — extended from actions to
+  structure.
 
   | Navigation need | Derived from |
   |---|---|
@@ -21,8 +22,8 @@ defmodule AshHateoas.Navigation do
 
   Structural links MUST NOT reveal types or collections the actor may not
   access. An unreachable branch is omitted, not rendered-and-rejected — the same
-  posture as R6. A type is reachable when the actor may run *any* of its routed
-  actions; in practice that is usually its `:read`.
+  posture the authorization gate takes. A type is reachable when the actor may
+  run *any* of its routed actions; in practice that is usually its `:read`.
   """
 
   alias AshHateoas.Index
@@ -83,7 +84,7 @@ defmodule AshHateoas.Navigation do
 
   # A collection link is followable only if the actor may READ the collection —
   # the action a client performs when it follows the link. Testing "any routed
-  # action" is wrong and produces exactly the failure R9 forbids: a resource
+  # action" is wrong and produces exactly the failure to avoid: a resource
   # whose :create is public but whose :read is restricted would be advertised
   # and then 403 on arrival, which is rendering-and-rejecting.
   defp reachable?(resource, actor, domains, _opts) do
@@ -173,13 +174,13 @@ defmodule AshHateoas.Navigation do
 
   # Every link in a document MUST resolve against the same base.
   #
-  # Affordance hrefs are rendered with the domain's json_api `prefix`, so
+  # Affordance hrefs are rendered with the domain's mount `prefix`, so
   # navigation must use it too. Emitting `/orders` beside
   # `/api/orders/{id}/confirm` produces a document whose two link families need
   # different bases, with nothing on the wire saying which is which — a client
   # that follows `collection` lands on a 404, and the only way to know better is
-  # out-of-band knowledge of the mount point. That is the thing the profile
-  # exists to remove.
+  # out-of-band knowledge of the mount point. Serving one consistent base is
+  # what removes that need.
   #
   # An explicit `:prefix` still wins, for a host that forwards the router
   # somewhere the domain does not describe.

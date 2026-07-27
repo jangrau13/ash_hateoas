@@ -3,10 +3,9 @@
 ## Understanding AshHateoas
 
 AshHateoas computes **affordances** — the set of actions an actor may take on a
-record (or on a resource type) right now — and renders that one result into each
-transport's own idiom: JSON:API `links` today, described by a published profile
-so that other transports can be built against the documents rather than against
-this package.
+record (or on a resource type) right now — and serves them as a **Hydra /
+JSON-LD** API: each affordance becomes a `hydra:Operation` on the resource node,
+served as `application/ld+json` by `AshHateoas.Hydra.Plug`.
 
 The point is that affordances are **derived, never authored**. A resource
 already declares its actions, its policies and (where present) its state
@@ -14,10 +13,11 @@ machine. AshHateoas reads those and answers "what may be done next?" per
 request, from the requesting client's own actor and position.
 
 The **routes are derived too**: every action is routed unless declared
-`unrouted`, and the `base` comes from the domain's short name plus the json_api
-`type`. A resource needs no `routes` block at all. Note what that means when
-adding the extension to an existing resource — it widens that resource's HTTP
-surface to every action it declares, so audit the action list first.
+`unrouted`, and the `base` comes from the domain's short name plus the `type`
+(which is itself inferred from the module name when undeclared). A resource
+needs no `routes` block at all. Note what that means when adding the extension
+to an existing resource — it widens that resource's HTTP surface to every action
+it declares, so audit the action list first.
 
 Richardson Level 3 in one sentence: the client discovers every available state
 transition from what the server embeds in the response, and never constructs a
@@ -25,14 +25,23 @@ URL or relies on out-of-band knowledge of your operations.
 
 ## Setup
 
-Add the extension alongside your transport extension(s). There is nothing else
-to configure per resource.
+Add the extension to the resource. There is nothing else to configure per
+resource.
 
 ```elixir
 defmodule MyApp.Document do
   use Ash.Resource,
     domain: MyApp.Docs,
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
+end
+```
+
+Then mount the Hydra plug to serve the domain as `application/ld+json`:
+
+```elixir
+defmodule MyApp.HydraRouter do
+  use Plug.Builder
+  plug AshHateoas.Hydra.Plug, domains: [MyApp.Docs], prefix: "/api", doc_path: "/doc"
 end
 ```
 
@@ -149,16 +158,16 @@ of `exclude` and `unrouted`:
 |---|---|---|
 | `unrouted` | no — no route at all | — |
 | `exclude` | no — routed but unadvertised | yes |
-| `not_delegable` | **yes**, flagged `notDelegable` | only a committing credential |
+| `not_delegable` | **yes**, flagged `ah:notDelegable` | only a committing credential |
 
 Withholding it would leave the caller unable to tell "this does not exist" from
 "you may propose this but not perform it", and so unable to ask anyone for it.
 
-A non-committing credential invoking it gets **403**, carrying in
-`errors[].meta` a projection of what the action would have done — for a state
-machine, which state it would move to and which affordances that gains and
-loses. Nothing is executed to produce that: it is read from the transitions and
-the gate chain, so no change module runs and no side effect fires.
+A non-committing credential invoking it gets **403**, a `hydra:Error` carrying
+under `ah:projection` what the action would have done — for a state machine,
+which state it would move to and which affordances that gains and loses. Nothing
+is executed to produce that: it is read from the transitions and the gate chain,
+so no change module runs and no side effect fires.
 
 Three things to know before declaring it:
 
@@ -166,7 +175,8 @@ Three things to know before declaring it:
   scripting with their own API key is refused too. Write your own
   `AshHateoas.CommitAuthority` if you need a narrower rule.
 - **Enforcement is inside Ash, not in the transport.** A consumer calling
-  `Ash.update/2` directly is refused identically to one going through JSON:API.
+  `Ash.update/2` directly is refused identically to one going through the Hydra
+  plug.
   If you write your own change on such an action, build it on
   `AshHateoas.Resource.Changes.InvocationChange` — it implements `change/3` so
   that `Ash.can?/3`'s pre-flight changesets never reach your code. A change that
@@ -232,10 +242,10 @@ The whole cost is `Ash.can?/3`; every other stage is in-memory DSL reading.
 Attribute checks are negligible; relationship and expression checks
 (`relates_to_actor_via`, `exists(…)`) can each emit a query.
 
-**Collections never compute per-record affordances.** A collection response
-carries collection-level affordances (`create`, index reads) in its top-level `links`;
-the records inside carry navigation but no affordances. Cost is therefore
-independent of page size — there is no `M × N` case and no flag to remember.
+**Collections never compute per-record affordances.** A `hydra:Collection`
+carries collection-level operations (`create`, index reads) at the top level;
+the member nodes inside carry no operations. Cost is therefore independent of
+page size — there is no `M × N` case and no flag to remember.
 
 There is no cross-record caching. Caching per `(actor, action)` is only sound
 when a policy's outcome is record-independent, and Ash exposes no way to
@@ -243,21 +253,13 @@ determine that — a wrong guess returns a wrong authorization answer.
 
 ## Common mistakes
 
-- **Calling `AshJsonApi.Resource.Info.routes/1` without domains.** Routes are
-  declared at *both* domain and resource level; the arity-1 form returns only
-  resource-level routes, so the candidate set comes back half-empty. Always pass
-  domains.
-- **Expecting relationship links without the extension.** `ash_json_api`
-  renders `relationships.<name>.links` only from declared `related`/
-  `relationship` routes, and declares none by default — so a public
-  relationship arrives as a name with an empty `links` object. Carrying
-  `AshHateoas.Resource` derives them for to-many relationships. To-one is
-  skipped: ash_json_api 1.7.1 raises when serializing a to-one `relationship`
-  route, hand-declared or derived alike.
-- **Expecting affordances on a resource with no routes.** Without
-  `ash_json_api`, the candidate set falls back to the resource's actions and
-  affordances have no `href`. That is intended — the backbone is usable without
-  any transport installed.
+- **Expecting relationship links on a resource that declares none.** Public
+  to-many relationships derive `related`/`relationship` routes automatically;
+  a private relationship is left off the surface. To-one relationships are
+  skipped — served better as an inline node reference than as a collection route.
+- **Expecting affordances on a resource with no routes.** A resource with no
+  routes falls back to its actions directly and affordances have no `href`. That
+  is intended — the backbone is usable before route derivation has run.
 - **Reading `:domain` as an `Ash.can?/3` option.** It is consumed before option
   validation by `can?/3`, but `Ash.can/3` rejects it outright. Do not thread it
   through.
@@ -270,7 +272,7 @@ determine that — a wrong guess returns a wrong authorization answer.
 - **Reaching for `not_delegable` to hide an action.** It does the opposite: the
   action stays routed and stays advertised, and only its execution is gated. Use
   `unrouted` to keep it off the surface, or a policy to make it unauthorized.
-- **Reading `notDelegable` as "you will be refused".** The flag is a declared
+- **Reading `ah:notDelegable` as "you will be refused".** The flag is a declared
   property of the *action*, identical for every actor — a person sees it too. It
   says the action needs a committing credential, not that the reader lacks one.
 - **Expecting `not_delegable` to enforce anything with no commit authority

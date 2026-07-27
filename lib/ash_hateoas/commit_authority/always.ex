@@ -1,6 +1,6 @@
 defmodule AshHateoas.CommitAuthority.Always do
   @moduledoc """
-  Every actor commits — the default when none is configured (R10).
+  Every actor commits — the default when none is configured.
 
   With this in place `not_delegable` changes no endpoint behaviour: the flag is
   still declared, still rendered, and still readable by a consumer that wants to

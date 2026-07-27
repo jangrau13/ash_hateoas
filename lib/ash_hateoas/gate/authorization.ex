@@ -1,6 +1,6 @@
 defmodule AshHateoas.Gate.Authorization do
   @moduledoc """
-  Drops actions the actor may not invoke (R6, R7).
+  Drops actions the actor may not invoke.
 
   Calls `Ash.can?/3` exactly as Ash provides it — no option tuning. This is the
   **single source of truth** invariant: the same function the endpoint will use
@@ -16,7 +16,7 @@ defmodule AshHateoas.Gate.Authorization do
 
   Where a decision genuinely cannot be reached, `Ash.can?/3` defaults to
   `maybe_is: true` and answers `true`, so the affordance is advertised. The
-  consequence is accepted (R6): a client may occasionally be offered an action
+  consequence is accepted: a client may occasionally be offered an action
   it turns out not to be permitted, and receive a `403`. Affordances are
   advisory — the endpoint re-runs every policy on invocation, so an optimistic
   proposal degrades to a clean error, never an invalid write.
@@ -37,7 +37,7 @@ defmodule AshHateoas.Gate.Authorization do
   ROWS. If the retry answers, that answer stands and the action is advertised
   as it should be.
 
-  ## Errors are loud (R7)
+  ## Errors are loud
 
   If the preparation-free retry ALSO raises, the exception was a genuine
   fault — a policy check itself blew up — not a missing argument. That is
@@ -95,7 +95,7 @@ defmodule AshHateoas.Gate.Authorization do
 
         :error ->
           # A genuine raise — a policy check itself blew up — survives the
-          # preparation-free retry too. Keep the loud log and drop (R7): a real
+          # preparation-free retry too. Keep the loud log and drop: a real
           # bug must not be silently degraded into a missing affordance.
           Logger.error("""
           [ash_hateoas] Authorization check raised while computing affordances; \
@@ -138,8 +138,8 @@ defmodule AshHateoas.Gate.Authorization do
   end
 
   # Record-level uses {record, action}, which makes Ash inject `data: [record]`
-  # so record-dependent policies see the record. Collection-level has no record
-  # (R9), so the subject is the resource itself.
+  # so record-dependent policies see the record. Collection-level has no record,
+  # so the subject is the resource itself.
   defp subject(action, %Context{record: nil, resource: resource}), do: {resource, action}
   defp subject(action, %Context{record: record}), do: {record, action}
 

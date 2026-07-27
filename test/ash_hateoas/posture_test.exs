@@ -7,7 +7,7 @@ defmodule AshHateoas.PostureTest do
 
   @actor %Actor{id: "someone", role: :admin}
 
-  describe "precedence: resource > domain > on (R8)" do
+  describe "precedence: resource > domain > on" do
     test "a resource that says nothing is on" do
       assert Posture.enabled?(Article, Domain)
     end

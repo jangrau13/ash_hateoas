@@ -1,6 +1,6 @@
 defmodule AshHateoas.Projection do
   @moduledoc """
-  What the affordance set would be at another state (R10).
+  What the affordance set would be at another state.
 
   A refusal carries this so the party who must commit is approving a
   **direction** rather than a keystroke. A known failure mode of approval
@@ -31,7 +31,7 @@ defmodule AshHateoas.Projection do
   This re-runs the full gate chain, including `Ash.can?/3`, which may query per
   candidate. It is acceptable only because it happens on a **refusal** — once,
   for one action, for an actor already receiving an error. It MUST NOT be
-  computed while rendering affordances (R8).
+  computed while rendering affordances.
   """
 
   alias AshHateoas.Affordance
@@ -49,7 +49,7 @@ defmodule AshHateoas.Projection do
   Reads `ash_state_machine`'s transitions, which are in-memory DSL data. Returns
   `[]` when the package is absent, when the resource has no state machine, or
   when the action is not a transition — all of which mean "nothing to project",
-  and which R10 requires be distinguishable from "nothing downstream".
+  and which must be distinguishable from "nothing downstream".
   """
   @spec target_states(module(), struct(), atom()) :: [atom()]
   def target_states(resource, record, action_name) do
@@ -91,7 +91,7 @@ defmodule AshHateoas.Projection do
 
   One entry per target state. Where a transition declares several, the result
   has several entries and a consumer MUST present them as alternatives rather
-  than choosing one (R10).
+  than choosing one.
 
   Returns `[]` when there is nothing to project, which a consumer MUST render
   differently from a projection that is empty because nothing changes.

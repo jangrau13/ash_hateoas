@@ -1,6 +1,6 @@
 defmodule AshHateoas.Backbone do
   @moduledoc """
-  The transport-agnostic engine (§3).
+  The transport-agnostic engine.
 
   Pipeline:
 
@@ -8,12 +8,12 @@ defmodule AshHateoas.Backbone do
     2. **Gates** — an ordered chain; authorization, then state where present
     3. **Descriptors** — one `AshHateoas.Affordance` per survivor
 
-  Output is the R5 envelope: a map of action name → affordance, or an empty map
+  Output is the envelope: a map of action name → affordance, or an empty map
   when nothing survives. Only the *set* is dynamic; everything below each key is
   fixed.
 
   Both entry points feed every adapter. An adapter contains no affordance logic
-  of its own (§5).
+  of its own.
   """
 
   alias AshHateoas.{Candidates, Descriptor}
@@ -25,7 +25,7 @@ defmodule AshHateoas.Backbone do
   # transition is never paid for with an `Ash.can?/3` call.
   #
   # The state gate is present only when ash_state_machine is — no capability
-  # branching threaded through the backbone body (§3).
+  # branching threaded through the backbone body.
   @default_gates [AshHateoas.Gate.StateMachine, AshHateoas.Gate.Authorization]
 
   @doc """
@@ -45,7 +45,7 @@ defmodule AshHateoas.Backbone do
   @type envelope :: %{atom() => AshHateoas.Affordance.t()}
 
   @doc """
-  Affordances for a specific record (§3, R9).
+  Affordances for a specific record.
 
   The full chain applies, including the state gate where the resource has a
   state machine — an action must be authorized *and* legal from the record's
@@ -59,7 +59,7 @@ defmodule AshHateoas.Backbone do
   end
 
   @doc """
-  Affordances for a resource with no record in hand (R9).
+  Affordances for a resource with no record in hand.
 
   This is the collection-level entry point: `create` and index-style reads. No
   state gate applies — there is no record to have a state — but authorization
@@ -74,7 +74,7 @@ defmodule AshHateoas.Backbone do
   end
 
   defp compute(resource, record, actor, kind, opts) do
-    # R8: resource `enabled?` wins, then the domain's default, then on.
+    # Resource `enabled?` wins, then the domain's default, then on.
     if AshHateoas.Posture.enabled?(resource, opts[:domain]) do
       do_compute(resource, record, actor, kind, opts)
     else
@@ -134,7 +134,7 @@ defmodule AshHateoas.Backbone do
   end
 
   # Routes are declared at domain level, so the domain must be threaded through
-  # — a resource-only lookup is insufficient (§3).
+  # — a resource-only lookup is insufficient.
   defp domain!(resource, opts) do
     case opts[:domain] || Ash.Resource.Info.domain(resource) do
       nil ->

@@ -7,7 +7,7 @@ defmodule AshHateoas.Resource.Info do
     * `hateoas/1` — every entity in the section (exclusions and overrides)
     * `hateoas_enabled?/1` — the predicate option, returning a bare boolean
     * `hateoas_warn_on_missing_authorizers?/1`
-    * `agentic_hateoas/1` — every entity in the R10 section
+    * `agentic_hateoas/1` — every entity in the not-delegable section
 
   Note the InfoGenerator asymmetry: predicate options (ending in `?`) get one
   bare-value function and no bang variant, while non-predicate options get both
@@ -88,8 +88,8 @@ defmodule AshHateoas.Resource.Info do
   The package-owned routes derived for this resource.
 
   Route derivation persists `AshHateoas.Route` structs under an
-  `ash_hateoas`-owned key rather than into `ash_json_api`'s DSL, so the backbone
-  and navigation read them without `ash_json_api` present.
+  `ash_hateoas`-owned key, so the backbone and navigation read them and the
+  Hydra plug can serve them.
   """
   @spec routes(Ash.Resource.t() | map()) :: [AshHateoas.Route.t()]
   def routes(resource_or_dsl) do
@@ -129,7 +129,7 @@ defmodule AshHateoas.Resource.Info do
   end
 
   @doc """
-  Action names this resource excludes from advertisement (R2).
+  Action names this resource excludes from advertisement.
   """
   @spec exclusions(Ash.Resource.t() | map()) :: [atom()]
   def exclusions(resource_or_dsl) do
@@ -140,7 +140,7 @@ defmodule AshHateoas.Resource.Info do
   end
 
   @doc """
-  Per-action overrides as `%{action_name => [href: ...]}` (R2).
+  Per-action overrides as `%{action_name => [href: ...]}`.
 
   Shaped for `AshHateoas.affordances/3`'s `:overrides` option.
   """
@@ -155,7 +155,7 @@ defmodule AshHateoas.Resource.Info do
   end
 
   @doc """
-  Action names only a committing credential may execute (R10).
+  Action names only a committing credential may execute.
 
   Unlike `unrouted/1` and `exclusions/1`, this subtracts nothing: the actions
   stay routed and stay advertised. It is read twice — by the descriptor, to flag
@@ -170,7 +170,7 @@ defmodule AshHateoas.Resource.Info do
   end
 
   @doc """
-  Whether `action` may only be executed by a committing credential (R10).
+  Whether `action` may only be executed by a committing credential.
   """
   @spec not_delegable?(Ash.Resource.t() | map(), atom()) :: boolean()
   def not_delegable?(resource_or_dsl, action) do
@@ -180,8 +180,8 @@ defmodule AshHateoas.Resource.Info do
   @doc """
   Whether `resource` carries this extension at all.
 
-  The JSON:API transform is a no-op for resources that do not, so this is the
-  check that keeps affordances opt-in per resource.
+  The Hydra plug ignores resources that do not, so this is the check that keeps
+  affordances opt-in per resource.
   """
   @spec extension?(Ash.Resource.t()) :: boolean()
   def extension?(resource) when is_atom(resource) do

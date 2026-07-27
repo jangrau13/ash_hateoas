@@ -1,6 +1,6 @@
 defmodule AshHateoas.Gate do
   @moduledoc """
-  A filter in the affordance pipeline (§3).
+  A filter in the affordance pipeline.
 
   Gates are an **ordered, composable chain**, not hardcoded branches. Each gate
   receives the surviving candidate actions plus the request context, and returns
@@ -44,7 +44,7 @@ defmodule AshHateoas.Gate.Context do
   @moduledoc """
   Everything a gate needs to decide, threaded through the chain unchanged.
 
-  `record` is `nil` for collection-level affordances (R9) — there is no record
+  `record` is `nil` for collection-level affordances — there is no record
   in hand, so gates that reason about record state (such as the state machine
   gate) MUST treat `nil` as "not applicable" and pass candidates through.
   """

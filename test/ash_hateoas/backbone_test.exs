@@ -26,7 +26,7 @@ defmodule AshHateoas.BackboneTest do
 
   defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
-  describe "record-level affordances (R3, R6)" do
+  describe "record-level affordances" do
     test "advertises actions the actor is authorized for", %{doc: doc} do
       names = doc |> affordances(@admin) |> Map.keys() |> MapSet.new()
 
@@ -53,7 +53,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "collection-level affordances (R9)" do
+  describe "collection-level affordances" do
     test "offers create without a record in hand" do
       names = Document |> affordances_for_type(@admin) |> Map.keys() |> MapSet.new()
 
@@ -81,14 +81,14 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "record-dependent policies are resolved, not guessed (R6)" do
+  describe "record-dependent policies are resolved, not guessed" do
     # :archive is gated by `expr(owner_id == ^actor(:id))`. Because the record
     # is passed as the subject, `run_queries?` (default true) lets Ash resolve
     # the expression against real data rather than degrading to `:maybe`.
     #
-    # This is the case REQ R6 worried about, and it turns out to be precise:
-    # the owner is offered :archive and a stranger is not. The `maybe_is: true`
-    # default only matters where a decision genuinely cannot be reached.
+    # This is the case that could have been imprecise, and it turns out not to
+    # be: the owner is offered :archive and a stranger is not. The `maybe_is:
+    # true` default only matters where a decision genuinely cannot be reached.
 
     test "offers the action to the record's owner", %{doc: doc, editor: editor} do
       owner = %Actor{editor | role: :viewer}
@@ -115,7 +115,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "read policies that are filters (R6)" do
+  describe "read policies that are filters" do
     # A read policy of `expr(owner_id == ^actor(:id))` is a FILTER: the query
     # succeeds for anyone and simply returns fewer rows. Asking "may you read?"
     # in the abstract is therefore the wrong question — the gate passes `data:`
@@ -157,7 +157,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "candidate fallback when ash_json_api is absent (§5.3)" do
+  describe "candidate fallback when no routes are declared" do
     test "falls back to the resource's actions when no routes are declared" do
       record =
         Unrouted
@@ -167,7 +167,7 @@ defmodule AshHateoas.BackboneTest do
       affordances = affordances(record, @admin)
 
       assert map_size(affordances) > 0,
-             "a resource without AshJsonApi must still produce affordances"
+             "a resource with no derived routes must still produce affordances"
 
       assert Map.has_key?(affordances, :destroy)
     end
@@ -184,7 +184,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "descriptors (R4, R5)" do
+  describe "descriptors" do
     test "surface the action's description verbatim", %{doc: doc} do
       %Affordance{description: description} = affordances(doc, @admin)[:approve]
 
@@ -235,9 +235,10 @@ defmodule AshHateoas.BackboneTest do
     end
 
     test "carry Ash's allow_nil? name and polarity, not the wire's required", %{doc: doc} do
-      # Renderers invert this at the edge (JSON Schema and HAL-FORMS both say
-      # `required`). Pinning the polarity here means an accidental flip fails
-      # loudly rather than silently marking optional fields mandatory.
+      # The Hydra renderer inverts this at the edge (a hydra:SupportedProperty
+      # is described by `hydra:required`). Pinning the polarity here means an
+      # accidental flip fails loudly rather than silently marking optional
+      # fields mandatory.
       approve = affordances(doc, @admin)[:approve]
 
       assert find_field(approve, :note).allow_nil? == true,
@@ -245,7 +246,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "overrides and exclusions (R2)" do
+  describe "overrides and exclusions" do
     test "exclude drops an action from the set", %{doc: doc} do
       refute doc
              |> affordances(@admin, exclude: [:approve])
@@ -265,7 +266,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "gate chain (§3)" do
+  describe "gate chain" do
     test "a custom gate can reduce the set", %{doc: doc} do
       gates = [AshHateoas.Gate.Authorization, AshHateoas.Test.OnlyReadGate]
 
@@ -279,7 +280,7 @@ defmodule AshHateoas.BackboneTest do
     end
   end
 
-  describe "errors are loud (R7)" do
+  describe "errors are loud" do
     test "a raising authorization check is logged and the affordance dropped", %{doc: doc} do
       log =
         capture_log(fn ->

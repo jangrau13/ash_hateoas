@@ -39,7 +39,7 @@ defmodule AshHateoas.Test.Document do
     attribute(:owner_id, :string, public?: true)
 
     # A resource in ANOTHER API. No Ash relationship can express this — they
-    # resolve in-process, and AshJsonApi renders every link against the
+    # resolve in-process, and the Hydra plug renders every link against the
     # requesting host — so the URL is stored and the type marks it followable.
     attribute(:related_order, AshHateoas.Type.ResourceLink, public?: true)
 
@@ -175,8 +175,8 @@ end
 
 defmodule AshHateoas.Test.Unrouted do
   @moduledoc """
-  A resource with no AshJsonApi extension at all — exercises the fallback
-  candidate path (§5.3), where the set comes from actions directly.
+  A resource that does not carry AshHateoas.Resource at all — exercises the
+  fallback candidate path, where the set comes from actions directly.
   """
 
   use Ash.Resource,

@@ -1,15 +1,15 @@
 defmodule AshHateoas.Resource.Transformers.EnforceNotDelegable do
   @moduledoc """
-  Installs the R10 refusal on every action declared `not_delegable`.
+  Installs the refusal on every action declared `not_delegable`.
 
-  The author writes the declaration; the enforcement is derived from it. That is
-  R1 applied to R10 — a resource author never wires up a change, exactly as they
-  never write an affordance.
+  The author writes the declaration; the enforcement is derived from it — a
+  resource author never wires up a change, exactly as they never write an
+  affordance.
 
   Enforcing here rather than in a transport is what makes the rule
   transport-independent: `AshHateoas.Resource.Changes.EnforceNotDelegable` runs
   inside Ash, so a consumer calling `Ash.update/2` directly is refused
-  identically to one going through JSON:API (§5.2).
+  identically to one going through the Hydra plug.
 
   ## Only where a change can run
 
@@ -33,7 +33,7 @@ defmodule AshHateoas.Resource.Transformers.EnforceNotDelegable do
     change: {Changes.EnforceNotDelegable, []},
     on: nil,
     only_when_valid?: false,
-    description: "Refuses this action for a credential that does not commit (R10).",
+    description: "Refuses this action for a credential that does not commit.",
     always_atomic?: false,
     where: []
   }

@@ -23,8 +23,7 @@ defmodule AshHateoas.Hydra.Plug do
   | `GET <doc_path>` | the full `ApiDocumentation` (`supportedClass`…) |
   | `GET <collection>` | a `hydra:Collection` with `member` + `totalItems` |
   | `GET <member>` | the resource node with its gated `hydra:operation`s |
-
-  Writes (`POST`/`PATCH`/`DELETE`) arrive in a later phase.
+  | `POST`/`PATCH`/`DELETE`/generic | runs the action and renders the new state, `204`, or a `hydra:Error` |
 
   Every response carries `Content-Type: application/ld+json` and a `Link` header
   advertising the API documentation, so a generic client discovers the whole API
@@ -167,7 +166,7 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  # `?limit=&offset=` (or the JSON:API-style `?page[limit]=&page[offset]=`) are
+  # `?limit=&offset=` (or the bracketed `?page[limit]=&page[offset]=`) are
   # parsed into Ash offset-pagination options, applied only when the read action
   # supports pagination — otherwise the params are ignored and a full read runs.
   defp page_params(conn) do
@@ -226,13 +225,16 @@ defmodule AshHateoas.Hydra.Plug do
   end
 
   defp prev_href(_resource, _opts, _conn, _limit, offset) when offset <= 0, do: nil
+
   defp prev_href(resource, opts, conn, limit, offset),
     do: page_href(resource, opts, conn, limit, offset - (limit || 0))
 
   defp next_href(_resource, _opts, _conn, nil, _offset, _total), do: nil
 
   defp next_href(resource, opts, conn, limit, offset, total) do
-    if offset + limit < total, do: page_href(resource, opts, conn, limit, offset + limit), else: nil
+    if offset + limit < total,
+      do: page_href(resource, opts, conn, limit, offset + limit),
+      else: nil
   end
 
   defp last_href(_resource, _opts, _conn, nil, _total), do: nil
@@ -378,7 +380,12 @@ defmodule AshHateoas.Hydra.Plug do
         operations =
           record
           |> AshHateoas.affordances(actor, affordance_opts(resource, opts) ++ [tenant: tenant])
-          |> Renderer.render(render_opts(type, opts, node_id: member_href(resource, id, opts), path_params: %{"id" => id}))
+          |> Renderer.render(
+            render_opts(type, opts,
+              node_id: member_href(resource, id, opts),
+              path_params: %{"id" => id}
+            )
+          )
 
         nav = Navigation.record_links(record, opts[:domains], nav_opts(opts))
 
@@ -424,7 +431,9 @@ defmodule AshHateoas.Hydra.Plug do
 
     resource
     |> AshHateoas.Resource.Info.routes()
-    |> Enum.find_value(fn %Route{} = route -> match_route(route, resource, type, path, prefix) end)
+    |> Enum.find_value(fn %Route{} = route ->
+      match_route(route, resource, type, path, prefix)
+    end)
   end
 
   defp match_route(%Route{type: :index, route: route}, resource, type, path, prefix) do
@@ -452,7 +461,9 @@ defmodule AshHateoas.Hydra.Plug do
     |> Enum.find_value(:error, fn {type, resource} ->
       resource
       |> AshHateoas.Resource.Info.routes()
-      |> Enum.find_value(fn %Route{} = route -> match_write_route(method, route, type, path, prefix) end)
+      |> Enum.find_value(fn %Route{} = route ->
+        match_write_route(method, route, type, path, prefix)
+      end)
       |> case do
         nil -> nil
         {action, id} -> {resource, type, action, id}
@@ -484,7 +495,10 @@ defmodule AshHateoas.Hydra.Plug do
   defp route_method(%Route{type: :post}), do: "POST"
   defp route_method(%Route{type: :patch}), do: "PATCH"
   defp route_method(%Route{type: :delete}), do: "DELETE"
-  defp route_method(%Route{type: :route, method: method}), do: method |> to_string() |> String.upcase()
+
+  defp route_method(%Route{type: :route, method: method}),
+    do: method |> to_string() |> String.upcase()
+
   defp route_method(_route), do: nil
 
   # `/documents/:id` against `/documents/123` yields `"123"`; nil on no match.
@@ -610,7 +624,12 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp put_link_header(conn, opts) do
     doc_url = prefix(opts) <> opts[:doc_path]
-    Plug.Conn.put_resp_header(conn, "link", "<#{doc_url}>; rel=\"#{Context.api_documentation_rel()}\"")
+
+    Plug.Conn.put_resp_header(
+      conn,
+      "link",
+      "<#{doc_url}>; rel=\"#{Context.api_documentation_rel()}\""
+    )
   end
 
   defp send_json(conn, status, body) do
@@ -632,7 +651,12 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp send_ash_error(conn, error) do
     {status, title} = error_status(error)
-    send_json(conn, status, HydraError.render(status: status, title: title, detail: error_detail(error)))
+
+    send_json(
+      conn,
+      status,
+      HydraError.render(status: status, title: title, detail: error_detail(error))
+    )
   end
 
   defp error_status(error) do

@@ -4,8 +4,8 @@ defmodule AshHateoas.MixProject do
   @version "0.1.0"
   @source_url "https://github.com/jangrau13/ash_hateoas"
   @description """
-  Authorization- and state-aware HATEOAS affordances for Ash, rendered natively
-  into JSON:API links, described by a published profile.
+  Authorization- and state-aware HATEOAS affordances for Ash, served natively
+  as a Hydra / JSON-LD API.
   """
 
   def project do
@@ -34,7 +34,7 @@ defmodule AshHateoas.MixProject do
       name: :ash_hateoas,
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib documentation .formatter.exs mix.exs README.md LICENSE REQ.md usage-rules.md)
+      files: ~w(lib documentation .formatter.exs mix.exs README.md LICENSE usage-rules.md)
     ]
   end
 
@@ -46,7 +46,7 @@ defmodule AshHateoas.MixProject do
         "README.md",
         "CHANGELOG.md",
         "usage-rules.md",
-        "documentation/profiles/affordances.md"
+        "documentation/hydra-mapping.md"
       ]
     ]
   end

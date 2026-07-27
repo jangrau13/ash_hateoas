@@ -73,7 +73,7 @@ defmodule AshHateoas.ResourceTest do
     end
   end
 
-  describe "the DSL applies without caller options (R2)" do
+  describe "the DSL applies without caller options" do
     test "an excluded action is not advertised", %{article: article} do
       affordances = AshHateoas.affordances(article, @actor, domain: Domain)
 
@@ -140,7 +140,7 @@ defmodule AshHateoas.ResourceTest do
     test "the primary read's get route is marked primary, so a record knows its @id" do
       # The primary read derives a `get` at `/:id` marked `primary?` — the
       # canonical URL a client uses as the node @id. One `:get` route means
-      # "which is canonical" has a single answer, so it is derived (R1).
+      # "which is canonical" has a single answer, so it is derived.
       get_route =
         SoleGet
         |> AshHateoas.Resource.Info.routes()
@@ -164,7 +164,7 @@ defmodule AshHateoas.ResourceTest do
 
     test "a public to-many relationship gets related and relationship routes" do
       # The relationship is public, its destination is routed, and the source
-      # has a read action: nothing is left for the author to decide (R1).
+      # has a read action: nothing is left for the author to decide.
       types =
         Article
         |> routes()

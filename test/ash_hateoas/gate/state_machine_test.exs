@@ -90,7 +90,7 @@ defmodule AshHateoas.Gate.StateMachineTest do
     end
   end
 
-  describe "collection-level affordances (R9)" do
+  describe "collection-level affordances" do
     test "no state gate applies without a record" do
       affordances = AshHateoas.affordances(Order, @actor, domain: Domain)
 

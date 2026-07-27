@@ -2,13 +2,11 @@ defmodule AshHateoas.Route do
   @moduledoc """
   A package-owned, transport-neutral route.
 
-  Route derivation used to write into `ash_json_api`'s `[:json_api, :routes]`
-  DSL, and the backbone read those structs back to learn each affordance's
-  `href` and `method`. Owning the route model here is what lets the package
-  serve Hydra without `ash_json_api` present.
+  Route derivation persists these structs, and the backbone reads them to learn
+  each affordance's `href` and `method`. Owning the route model here is what
+  lets the package serve Hydra directly.
 
-  The field set mirrors what the backbone and navigation already read off the
-  old route struct, so the readers barely change:
+  The field set carries exactly what the backbone and navigation need:
 
     * `type` — the route kind: `:get`, `:index`, `:post`, `:patch`, `:delete`,
       `:route` (a generic action, method carried as data), or the relationship

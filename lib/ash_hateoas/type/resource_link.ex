@@ -6,7 +6,7 @@ defmodule AshHateoas.Type.ResourceLink do
 
   Ash relationships are in-process: they name a resource module and resolve
   through a shared data layer. There is no way to declare "this points at a
-  resource served by a different application", and `AshJsonApi` builds every
+  resource served by a different application", and the Hydra plug builds every
   link from the *incoming* request's host, so a document can only ever link
   within its own API.
 

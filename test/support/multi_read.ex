@@ -16,7 +16,7 @@ defmodule AshHateoas.Test.MultiRead do
 
   With several indexes now expected, the canonical collection is the primary
   read's, at the base path; `Navigation` prefers it over the named ones so the
-  type still resolves from the root document (R9).
+  type still resolves from the root document.
   """
 
   use Ash.Resource,

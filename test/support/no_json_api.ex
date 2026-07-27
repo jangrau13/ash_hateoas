@@ -1,11 +1,11 @@
 defmodule AshHateoas.Test.NoJsonApi do
   @moduledoc """
-  Carries `AshHateoas.Resource` without `AshJsonApi.Resource`.
+  Carries `AshHateoas.Resource` with no `hateoas` block and no declared type or
+  base — the fully-defaulted case.
 
-  There is no `[:json_api, :routes]` path to write into, so the route
-  transformer has nothing to do. It must no-op rather than raise: adding
-  AshHateoas to a resource that is not part of the HTTP surface should not stop
-  the build.
+  Route derivation must run cleanly here: the type is inferred from the module
+  name and the base from the domain's short name, with nothing declared by hand.
+  Adding the extension to a bare resource should never stop the build.
   """
 
   use Ash.Resource,

@@ -24,22 +24,23 @@ if Code.ensure_loaded?(Igniter) do
       Add the extension to the resources that should expose affordances:
 
           use Ash.Resource,
-            extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+            extensions: [AshHateoas.Resource]
 
-      For the JSON:API rendering, wire the transform into your router and
-      pipeline:
+      Then mount the Hydra plug to serve those resources as a Hydra / JSON-LD
+      API (`application/ld+json`):
 
-          defmodule MyAppWeb.JsonApiRouter do
-            use AshJsonApi.Router,
+          defmodule MyAppWeb.HydraRouter do
+            use Plug.Builder
+
+            plug AshHateoas.Hydra.Plug,
               domains: [MyApp.MyDomain],
-              before_dispatch: {AshHateoas.JsonApi.Transform, :before_dispatch, []}
+              prefix: "/api",
+              doc_path: "/doc"
           end
 
-          # then, ahead of the router in your pipeline:
-          plug AshHateoas.JsonApi.Transform
-
-      Both halves are required — without the before_dispatch capture the
-      transform cannot resolve route context and becomes a no-op.
+      Every route is derived from the resource's actions; a resource declares a
+      `hateoas` `type` (or lets one be inferred from its module name) and nothing
+      else.
       """)
     end
   end

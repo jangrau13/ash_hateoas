@@ -9,22 +9,21 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
 
   Routes are `AshHateoas.Route` structs persisted under the `ash_hateoas`-owned
   key `:ash_hateoas_routes`. Owning the route model is what lets the package
-  serve Hydra without `ash_json_api`.
+  serve Hydra directly.
 
-  ## The default this inverts
+  ## A deny-list, not an allow-list
 
-  Until now the package read routes and never wrote them, so an action reached
-  the HTTP surface only once an author routed it. That allow-list has one
-  property this deny-list gives up: under an allow-list, forgetting to think
-  about an action yields a 404, and under a deny-list it yields a live endpoint.
-  The failure is silent, and there is no diff showing it, because the omission
-  is in a file nobody edited.
+  Every action is routed by default, and `unrouted` opts one out. That deny-list
+  has one property an allow-list would not give up: under an allow-list,
+  forgetting to think about an action yields a 404, and under a deny-list it
+  yields a live endpoint. The failure is silent, and there is no diff showing
+  it, because the omission is in a file nobody edited.
 
   That cost is real and is accepted here deliberately. What buys it back:
 
     * `unrouted :name` is verified against the action list, so a renamed action
       fails the build rather than quietly becoming routed again — the same
-      contract `exclude`/`override` have (R2). This is the one check standing
+      contract `exclude`/`override` have. This is the one check standing
       between a rename and silent publication.
     * Policies remain the actual gate. An action being routed is not an action
       being permitted, and `Ash.can?/3` still decides what any actor may invoke.
@@ -169,8 +168,7 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   end
 
   # Non-primary routes carry an explicit sub-path; primaries carry the
-  # conventional member/collection paths, which this transformer now owns since
-  # there is no `ash_json_api` route entity to fill them in.
+  # conventional member/collection paths, which this transformer owns.
   defp route_specs(dsl_state, action) do
     cond do
       reactor_compensation?(action) -> []

@@ -36,8 +36,11 @@ defmodule AshHateoas.Hydra.RendererTest do
     end
 
     test "allow_nil? inverts to hydra:required at the edge" do
-      required = Renderer.supported_property(%Field{name: :title, type: "string", allow_nil?: false})
-      optional = Renderer.supported_property(%Field{name: :body, type: "string", allow_nil?: true})
+      required =
+        Renderer.supported_property(%Field{name: :title, type: "string", allow_nil?: false})
+
+      optional =
+        Renderer.supported_property(%Field{name: :body, type: "string", allow_nil?: true})
 
       assert required["hydra:required"] == true
       assert optional["hydra:required"] == false
@@ -45,8 +48,11 @@ defmodule AshHateoas.Hydra.RendererTest do
 
     test "a sensitive field's default never reaches the wire" do
       # :error is the descriptor's marker for "no default may be emitted".
-      sensitive = Renderer.supported_property(%Field{name: :signing_key, type: "string", default: :error})
-      plain = Renderer.supported_property(%Field{name: :notify, type: "boolean", default: {:ok, false}})
+      sensitive =
+        Renderer.supported_property(%Field{name: :signing_key, type: "string", default: :error})
+
+      plain =
+        Renderer.supported_property(%Field{name: :notify, type: "boolean", default: {:ok, false}})
 
       refute Map.has_key?(sensitive, "ah:default")
       assert plain["ah:default"] == false
@@ -88,7 +94,13 @@ defmodule AshHateoas.Hydra.RendererTest do
 
   describe "operation placement (href vs node @id)" do
     setup do
-      approve = %Affordance{name: :approve, href: "/documents/:id/approve", method: :patch, fields: []}
+      approve = %Affordance{
+        name: :approve,
+        href: "/documents/:id/approve",
+        method: :patch,
+        fields: []
+      }
+
       update = %Affordance{name: :update, href: "/documents/:id", method: :patch, fields: []}
       %{approve: approve, update: update}
     end
@@ -123,7 +135,9 @@ defmodule AshHateoas.Hydra.RendererTest do
     end
 
     test "the whole envelope survives Jason encoding", ctx do
-      out = Renderer.render(%{approve: ctx.approve, update: ctx.update}, node_id: "/documents/123")
+      out =
+        Renderer.render(%{approve: ctx.approve, update: ctx.update}, node_id: "/documents/123")
+
       assert {:ok, _} = Jason.encode(out)
     end
   end

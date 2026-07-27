@@ -1,6 +1,6 @@
 defmodule AshHateoas.Resource.Exclusion do
   @moduledoc """
-  An action that is routed but must not be advertised (R2).
+  An action that is routed but must not be advertised.
 
   The DSL is override-only: there are no per-action "enable" entries, because
   everything routed is advertised by default. An exclusion is the deviation.

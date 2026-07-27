@@ -2,8 +2,8 @@ defmodule AshHateoas.Test.AdminOnly do
   @moduledoc """
   A resource only an admin may read.
 
-  R9 requires structural navigation to be filtered per actor — "an unreachable
-  branch is omitted, not rendered-and-rejected". Every other test resource has a
+  Structural navigation is filtered per actor — an unreachable branch is
+  omitted, not rendered-and-rejected. Every other test resource has a
   permissive read, so without this one the root entry document is identical for
   every identified actor and the filtering claim is untested.
   """

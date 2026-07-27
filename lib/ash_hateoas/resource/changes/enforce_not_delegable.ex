@@ -1,6 +1,6 @@
 defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
   @moduledoc """
-  Refuses a `not_delegable` action for a credential that does not commit (R10).
+  Refuses a `not_delegable` action for a credential that does not commit.
 
   Installed automatically by
   `AshHateoas.Resource.Transformers.EnforceNotDelegable` on every action the
@@ -8,14 +8,13 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
 
   ## Why a change and not a plug
 
-  Enforcing in the transport would cover JSON:API and nothing else, and §5.2
-  says other transports build against the profile — so a consumer invoking
-  through `Ash.update/2` would have bypassed it. A change runs inside Ash, so
-  every caller is refused identically, whatever the transport.
+  Enforcing in the transport would cover the Hydra plug and nothing else — so a
+  consumer invoking through `Ash.update/2` would have bypassed it. A change runs
+  inside Ash, so every caller is refused identically, whatever the transport.
 
-  It also keeps R6 intact. `Ash.can?/3` still answers `true`, so the affordance
-  is still advertised and still carries its flag; advertisement and enforcement
-  do not diverge into two implementations of one rule.
+  It also keeps advertisement intact. `Ash.can?/3` still answers `true`, so the
+  affordance is still advertised and still carries its flag; advertisement and
+  enforcement do not diverge into two implementations of one rule.
 
   ## It rejects before anything runs
 
@@ -39,8 +38,8 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
   looks harmless.
 
   Two things depend on it. `Ash.can?/3` asks whether the action is *permitted*,
-  and it is — refusing there would drop the affordance from the set R6 requires
-  be advertised. And building the projection re-enters `Ash.can?/3`, so a change
+  and it is — refusing there would drop the affordance from the advertised set.
+  And building the projection re-enters `Ash.can?/3`, so a change
   that refused pre-flight changesets would loop, hanging rather than crashing.
 
   The cost of the base module's default: a `not_delegable` action cannot run

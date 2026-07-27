@@ -58,7 +58,7 @@ end
 
 defmodule AshHateoas.Test.SilentDomain do
   @moduledoc """
-  A domain that switches affordances off for everything it contains (R8).
+  A domain that switches affordances off for everything it contains.
   """
 
   use Ash.Domain, extensions: [AshHateoas.Domain], validate_config_inclusion?: false

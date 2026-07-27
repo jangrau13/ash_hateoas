@@ -1,6 +1,6 @@
 defmodule AshHateoas.CommitAuthority do
   @moduledoc """
-  Decides whether an actor's invocations take effect (R10).
+  Decides whether an actor's invocations take effect.
 
   Ash treats actors as opaque — a struct, a token, a map, whatever the host puts
   there — so this package MUST NOT inspect one. Inspecting would mean guessing
@@ -22,13 +22,13 @@ defmodule AshHateoas.CommitAuthority do
 
   Unconfigured, `AshHateoas.CommitAuthority.Always` answers `true` for every
   actor, so `not_delegable` is documentation and no endpoint behaviour changes.
-  That is the default deliberately: affordances are a contract and default on
-  (R8), but this changes what an endpoint *does*.
+  That is the default deliberately: affordances are a contract and default on,
+  but this changes what an endpoint *does*.
 
   ## Failure is closed
 
   `AshHateoas.Gate.Authorization` logs and drops an affordance when a policy
-  raises, justified because affordances are advisory (R7). This is an
+  raises, justified because affordances are advisory. This is an
   **enforcement** decision, so it inverts that posture: an exception means "does
   not commit", logged loudly. Failing open here is an unapproved write; failing
   closed is an unnecessary escalation.
@@ -84,7 +84,7 @@ defmodule AshHateoas.CommitAuthority do
     exception ->
       Logger.error("""
       [ash_hateoas] #{inspect(module())}.commits?/1 raised; treating the actor \
-      as non-committing (R10 fails closed).
+      as non-committing (fails closed).
 
         actor: #{inspect(actor)}
 

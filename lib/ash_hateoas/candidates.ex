@@ -1,6 +1,6 @@
 defmodule AshHateoas.Candidates do
   @moduledoc """
-  Builds the candidate action set — stage 1 of the backbone (§3).
+  Builds the candidate action set — stage 1 of the backbone.
 
   Candidates are the actions reachable via the resource's derived routes, minus
   any the author has excluded. Where a resource declares no routes at all the

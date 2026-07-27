@@ -29,6 +29,7 @@ defmodule AshHateoas.Hydra.ErrorTest do
     assert rendered["hydra:statusCode"] == 403
     # to_meta/1 output is merged under ah: keys
     assert rendered["ah:action"] == "publish"
+
     assert [%{"to" => "published", "gained" => ["unpublish"], "lost" => ["publish"]}] =
              rendered["ah:projection"]
 

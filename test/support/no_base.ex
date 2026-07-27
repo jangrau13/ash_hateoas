@@ -3,7 +3,7 @@ defmodule AshHateoas.Test.NoBase do
   A resource with no `routes` block at all — the zero-config case.
 
   Everything is derived: the base from the domain's `short_name` and the
-  json_api `type`, the routes from the actions. This is what the extension is
+  resource's `type`, the routes from the actions. This is what the extension is
   for, and this fixture is the proof it holds end to end.
 
   The derived base is `/test/no_base` — singular. Deliberately: ash#31 removed

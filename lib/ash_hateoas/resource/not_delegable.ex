@@ -1,6 +1,6 @@
 defmodule AshHateoas.Resource.NotDelegable do
   @moduledoc """
-  An action a delegated credential may be offered but must not execute (R10).
+  An action a delegated credential may be offered but must not execute.
 
   Distinct from every other entry in this package's DSL, which subtract from the
   advertised surface. This one subtracts nothing: the action stays routed, stays

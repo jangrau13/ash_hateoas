@@ -1,11 +1,11 @@
 defmodule AshHateoas.Test.Comment do
   @moduledoc """
-  A resource on the far side of a relationship, so R9's data-graph navigation
+  A resource on the far side of a relationship, so the data-graph navigation
   has something to walk to.
 
   `Document` has_many :comments; this belongs_to it. Without a pair like this
-  nothing in the suite exercises relationship links at all, and a claim that
-  `ash_json_api` emits them stays unverified.
+  nothing in the suite exercises relationship links at all, and the claim that
+  they are derived and rendered stays unverified.
   """
 
   use Ash.Resource,

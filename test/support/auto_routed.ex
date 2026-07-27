@@ -44,9 +44,9 @@ defmodule AshHateoas.Test.AutoRouted do
       require_atomic? false
     end
 
-    # A generic action returning a scalar. Routed like everything else, through
-    # `ash_json_api`'s `:route` entity — which, unlike the verb entities, applies
-    # no return-type check. Only the method needs declaring.
+    # A generic action returning a scalar. Routed like everything else, as a
+    # `:route` kind — which, unlike the verb kinds, applies no return-type
+    # check. Only the method needs declaring.
     action :tally, :boolean do
       description "A generic action returning a scalar."
       run fn _input, _ctx -> {:ok, true} end
