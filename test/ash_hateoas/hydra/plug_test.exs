@@ -118,6 +118,26 @@ defmodule AshHateoas.Hydra.PlugTest do
       refute Map.has_key?(viewer, "ah:approve")
     end
 
+    test "the node carries the granted set as an odrl:permission list", %{doc: doc} do
+      admin = body(get("/documents/#{doc.id}", @admin))
+      viewer = body(get("/documents/#{doc.id}", @viewer))
+
+      admin_actions = admin["odrl:permission"] |> Enum.map(& &1["odrl:action"]["@id"])
+      viewer_actions = viewer["odrl:permission"] |> Enum.map(& &1["odrl:action"]["@id"])
+
+      # both may read; only the admin gets the modifying permissions
+      assert "odrl:read" in admin_actions
+      assert "odrl:read" in viewer_actions
+      assert "odrl:modify" in admin_actions
+      refute "odrl:modify" in viewer_actions
+
+      # permissions target the node
+      assert Enum.all?(
+               admin["odrl:permission"],
+               &(&1["odrl:target"]["@id"] =~ "/documents/#{doc.id}")
+             )
+    end
+
     test "structural navigation is emitted as typed node references", %{doc: doc} do
       node = body(get("/documents/#{doc.id}", @admin))
 

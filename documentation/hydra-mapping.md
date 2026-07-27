@@ -23,11 +23,17 @@ node offers — knowing nothing about Ash or this package.
 | the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `hydra:supportedProperty` + `hydra:supportedOperation`) |
 | the entry point | a node typed `ah:EntryPoint` whose `hydra:collection` maps each reachable type to `{"@id", "@type": "Collection"}`; the `ApiDocumentation` carries `hydra:entrypoint` |
 | a record's structural links | `hydra:collection` → `{"@id", "@type": "Collection"}`, `hydra:view` → `{"@id", "@type": "Resource"}` (typed node references, never `{href, rel}`) |
+| the actor's granted set | an `odrl:permission` list on the node — one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `ah:commit`. See [semantic-affordances.md](semantic-affordances.md) |
 | an error / refusal | a `hydra:Error` (`hydra:statusCode`, `hydra:title`, `hydra:description`); RFC 7807 on request |
 
-Two non-core facts are carried under an `ah:` extension vocabulary declared in
-the emitted `@context`: `ah:multiStep` (a compound/Reactor-backed operation) and
-`ah:notDelegable` (an action only a committing credential may execute). The same
+Facts Hydra core has no term for are carried under an `ah:` extension
+vocabulary declared in the emitted `@context`: `ah:multiStep` (a
+compound/Reactor-backed operation), `ah:notDelegable` (an action only a
+committing credential may execute), `ah:commit` (the ODRL duty action a
+not-delegable permission is subject to), `ah:datatype` (a property's value
+datatype), and `ah:EntryPoint` (the API root node's type). All are emitted
+**prefixed**; the `@context` declares only the prefixes (`ah`, `xsd`, `owl`,
+`schema`, `odrl`), no per-term aliases. The same
 `ah:` vocabulary types the entry-point node (`ah:EntryPoint`, which Hydra core
 has no class for) and carries `ah:datatype` on a property.
 

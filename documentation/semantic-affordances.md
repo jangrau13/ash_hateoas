@@ -82,26 +82,39 @@ as `semantic_type` already behaves.
 done** — and expresses "may not" by *omitting* the affordance (fail-closed). That
 posture dictates the ODRL mapping:
 
-- A node's granted `hydra:operation`s become an `odrl:Permission` set — each a
-  permission whose `odrl:action` is the operation's action term
-  (`odrl:read`/`odrl:use` for a read, `odrl:modify` for a write, `odrl:delete`
-  for a destroy).
+- The node carries an **`odrl:permission` list** — the ODRL way to attach
+  permissions to a policy — with one `odrl:Permission` per granted affordance.
+  Each has an `odrl:action` (`odrl:read` for GET, `odrl:modify` for a write,
+  `odrl:delete` for a destroy, `odrl:use` for create/generic — all defined in the
+  ODRL Common Vocabulary) and an `odrl:target` referencing the node.
 - **Permission-only. No `odrl:Prohibition`.** A denied action is not in the
   envelope at all, so we have nothing to base a prohibition on — and emitting one
   would leak "what you cannot do," which the present-if-allowed design
   deliberately withholds. The honest ODRL projection of a fail-closed surface is
-  a permission list, not a permission/prohibition pair.
-- `not_delegable?` → an `odrl:Duty` (a duty the permission is subject to: the
-  action commits, so only a committing credential discharges it) — replacing the
-  private `ah:notDelegable` flag with the W3C term for exactly this.
+  a permission list, not a permission/prohibition pair. Two actors reading the
+  same record therefore receive *different* permission lists.
+- `not_delegable?` → the permission carries an **`odrl:duty`** whose action is
+  `ah:commit` (ODRL has no "commit" action, so it is our own term): the permission
+  is discharged only by a credential that commits. The `ah:notDelegable` flag is
+  *also* still emitted on the operation itself, for a Hydra-only client that does
+  not read ODRL.
+- **`odrl:assignee` is omitted unless the actor has a stable IRI.** The plug
+  resolves an opaque actor; when it exposes no dereferenceable identity there is
+  nothing honest to put there, so the permission states the action and target and
+  leaves the assignee implicit (the bearer of the request).
 
 ```json
 "odrl:permission": [
   {
     "@type": "odrl:Permission",
     "odrl:target": { "@id": "/orders/1" },
-    "odrl:action": { "@id": "odrl:modify" },
-    "odrl:assignee": { "@id": "<actor iri, when known>" }
+    "odrl:action": { "@id": "odrl:modify" }
+  },
+  {
+    "@type": "odrl:Permission",
+    "odrl:target": { "@id": "/orders/1" },
+    "odrl:action": { "@id": "odrl:use" },
+    "odrl:duty": [ { "@type": "odrl:Duty", "odrl:action": { "@id": "ah:commit" } } ]
   }
 ]
 ```
@@ -122,11 +135,15 @@ Uses more of the vocabulary already grounded, no new namespace:
 ## Sources (verified)
 
 - **ODRL 2.2 vocabulary (W3C Recommendation):**
-  `https://www.w3.org/ns/odrl/2/ODRL22.json`. Namespace
-  `http://www.w3.org/ns/odrl/2/`. Confirmed classes `Permission`, `Prohibition`,
-  `Duty`, `Constraint`; properties `assigner`, `assignee`, `constraint`, `duty`,
-  `action`, `target`; action terms include `use`, `read`, `modify`, `transfer`,
-  `distribute` (delete-like via `uninstall`).
+  `https://www.w3.org/ns/odrl/2/ODRL22.json` and `https://www.w3.org/TR/odrl-vocab/`.
+  Namespace `http://www.w3.org/ns/odrl/2/`. Confirmed classes `Permission`,
+  `Prohibition`, `Duty`, `Constraint`; properties `permission` (attaches a
+  Permission to a Policy), `action`, `target`, `assignee`, `assigner`,
+  `constraint`, `duty`. Action terms confirmed present: `use` (Core), and from
+  the Common Vocabulary `read` ("obtain data from the Asset"), `modify` ("change
+  existing content"), `delete` ("permanently remove all copies") — so the CRUD
+  mapping needs no invented terms. `ah:commit` is our own term (ODRL has no
+  create/commit action).
 - **schema.org Actions:** `https://schema.org/docs/actions.html`,
   `https://schema.org/potentialAction`, `https://schema.org/EntryPoint`.
   Confirmed `potentialAction` (domain `Thing`, range `Action`); `Action` →

@@ -67,10 +67,63 @@ defmodule AshHateoas.Hydra.Renderer do
         pairs -> Map.put(base, "hydra:operation", Enum.map(pairs, &operation(elem(&1, 0), opts)))
       end
 
-    Enum.reduce(linked, base, fn {affordance, href}, acc ->
-      Map.put(acc, "ah:#{affordance.name}", link_node(affordance, href, opts))
+    base
+    |> put_permissions(affordances, opts)
+    |> then(fn acc ->
+      Enum.reduce(linked, acc, fn {affordance, href}, acc ->
+        Map.put(acc, "ah:#{affordance.name}", link_node(affordance, href, opts))
+      end)
     end)
   end
+
+  # The granted affordance set, projected as an ODRL permission list — the W3C
+  # standard for "what this party may do to this asset". A fail-closed surface
+  # (denied actions are omitted, never carried) has no basis for an
+  # `odrl:Prohibition`, so this is permission-only: every present affordance is
+  # one `odrl:Permission`, and a `not_delegable?` action carries an `odrl:Duty`
+  # (the action commits, so a committing credential is required to discharge it).
+  defp put_permissions(node, affordances, _opts) when map_size(affordances) == 0, do: node
+
+  defp put_permissions(node, affordances, opts) do
+    target = Keyword.get(opts, :node_id)
+
+    permissions =
+      affordances
+      |> Map.values()
+      |> Enum.map(&permission(&1, target))
+
+    Map.put(node, "odrl:permission", permissions)
+  end
+
+  defp permission(%Affordance{} = affordance, target) do
+    %{
+      "@type" => "odrl:Permission",
+      "odrl:action" => %{"@id" => odrl_action(affordance.method)}
+    }
+    |> put_unless_nil("odrl:target", target && %{"@id" => target})
+    |> put_if(affordance.not_delegable?, "odrl:duty", [committing_duty()])
+  end
+
+  # An action flagged `not_delegable?` is subject to a duty: it commits, so only a
+  # credential that commits may discharge it. Expressed as an ODRL Duty rather
+  # than the private `ah:notDelegable` flag (which is still emitted on the
+  # operation for a Hydra-only client).
+  defp committing_duty do
+    %{
+      "@type" => "odrl:Duty",
+      "odrl:action" => %{"@id" => "ah:commit"}
+    }
+  end
+
+  # ODRL action terms (Common Vocabulary) for each HTTP method. `read`/`modify`/
+  # `delete` are defined actions; a create/generic `use`s the asset (ODRL has no
+  # dedicated create action).
+  defp odrl_action(:get), do: "odrl:read"
+  defp odrl_action(:post), do: "odrl:use"
+  defp odrl_action(:patch), do: "odrl:modify"
+  defp odrl_action(:put), do: "odrl:modify"
+  defp odrl_action(:delete), do: "odrl:delete"
+  defp odrl_action(_other), do: "odrl:use"
 
   @doc "Render one affordance as a `hydra:Operation` node."
   @spec operation(Affordance.t(), keyword()) :: map()
@@ -83,8 +136,8 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_expects(affordance, opts)
     |> put_returns(affordance, opts)
     |> put_potential_action(affordance, opts)
-    |> put_if(affordance.multi_step?, "multiStep", true)
-    |> put_if(affordance.not_delegable?, "notDelegable", true)
+    |> put_if(affordance.multi_step?, "ah:multiStep", true)
+    |> put_if(affordance.not_delegable?, "ah:notDelegable", true)
   end
 
   # The schema.org description of the operation as an *action* — so a client that

@@ -150,6 +150,60 @@ defmodule AshHateoas.Hydra.RendererTest do
     end
   end
 
+  describe "ODRL permissions (the granted set as a policy)" do
+    test "the granted affordances render as an odrl:permission list, keyed by action" do
+      out =
+        Renderer.render(
+          %{
+            read: %Affordance{name: :read, href: "/documents/1", method: :get, fields: []},
+            update: %Affordance{name: :update, href: "/documents/1", method: :patch, fields: []},
+            destroy: %Affordance{
+              name: :destroy,
+              href: "/documents/1",
+              method: :delete,
+              fields: []
+            }
+          },
+          node_id: "/documents/1"
+        )
+
+      perms = out["odrl:permission"]
+      assert is_list(perms)
+
+      actions = Enum.map(perms, & &1["odrl:action"]["@id"]) |> Enum.sort()
+      assert actions == ["odrl:delete", "odrl:modify", "odrl:read"]
+
+      # each permission targets the node it hangs on
+      assert Enum.all?(perms, &(&1["odrl:target"] == %{"@id" => "/documents/1"}))
+      assert Enum.all?(perms, &(&1["@type"] == "odrl:Permission"))
+    end
+
+    test "a not_delegable action carries an odrl:duty to commit" do
+      out =
+        Renderer.render(
+          %{
+            publish: %Affordance{
+              name: :publish,
+              href: "/documents/1/publish",
+              method: :patch,
+              fields: [],
+              not_delegable?: true
+            }
+          },
+          node_id: "/documents/1"
+        )
+
+      [perm] = out["odrl:permission"]
+      [duty] = perm["odrl:duty"]
+      assert duty["@type"] == "odrl:Duty"
+      assert duty["odrl:action"] == %{"@id" => "ah:commit"}
+    end
+
+    test "an empty envelope carries no odrl:permission" do
+      refute Map.has_key?(Renderer.render(%{}, node_id: "/x"), "odrl:permission")
+    end
+  end
+
   describe "IriTemplate for query reads" do
     test "a GET affordance with fields becomes an IriTemplate, not an expects Class" do
       affordance = %Affordance{

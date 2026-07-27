@@ -9,9 +9,12 @@ defmodule AshHateoas.Hydra.Context do
   generic.
 
   The emitted context references the canonical Hydra context and inline-extends
-  it with an `ah:` vocabulary for the two facts Hydra core has no term for —
-  `multiStep` and `notDelegable` — and for this API's own classes and
-  properties.
+  it with the prefixes this package's documents use: `ah:` (its own vocabulary,
+  for facts Hydra core has no term for — `ah:multiStep`, `ah:notDelegable`,
+  `ah:datatype`, `ah:EntryPoint`), plus `xsd:`/`owl:`/`schema:`/`odrl:`. Every
+  such term is emitted **prefixed** on the wire, so no per-term aliases are
+  declared — only the prefixes. Bare tokens are used solely for `@type` *values*
+  the Hydra context already resolves (`Operation`, `Collection`, …).
   """
 
   @namespace "http://www.w3.org/ns/hydra/core#"
@@ -47,8 +50,7 @@ defmodule AshHateoas.Hydra.Context do
         "xsd" => "http://www.w3.org/2001/XMLSchema#",
         "owl" => "http://www.w3.org/2002/07/owl#",
         "schema" => "https://schema.org/",
-        "multiStep" => "ah:multiStep",
-        "notDelegable" => "ah:notDelegable"
+        "odrl" => "http://www.w3.org/ns/odrl/2/"
       }
     ]
   end
