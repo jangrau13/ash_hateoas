@@ -57,8 +57,15 @@ served natively as a Hydra / JSON-LD API.
   build when it names a missing attribute.
 - **`mix ash_hateoas.gen.schema_org Person --domain MyApp.People`** generates a
   resource from a schema.org type fetched live: one attribute + `semantic_property`
-  per property, with a property whose range is another type mapped to
-  `AshHateoas.Type.ResourceLink` (a followable reference) rather than a scalar.
+  per property. A property whose range is another type is generated as:
+  - a real **`belongs_to`** when the domain already serves that type (or it is a
+    self-reference) — an internal, in-process relationship; or
+  - an **`AshHateoas.Type.ResourceLink`** attribute otherwise — an external,
+    followable URL.
+
+  The generator scans the domain to decide, prompts only on genuine ambiguity
+  (`--yes` defaults ambiguous to external), and `--internal Organization,Place`
+  forces named types internal.
 - A `AshHateoas.Type.ResourceLink` value renders as a JSON-LD reference node
   (`{"@id": url}`); internal vs external is the `@id`'s host, not a separate flag.
 
