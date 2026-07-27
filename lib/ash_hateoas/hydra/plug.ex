@@ -36,6 +36,7 @@ defmodule AshHateoas.Hydra.Plug do
   require Logger
 
   alias AshHateoas.Hydra.{ApiDocumentation, Collection, Context, Renderer}
+  alias AshHateoas.Hydra.Error, as: HydraError
   alias AshHateoas.{Index, Navigation, Route}
 
   @impl Plug
@@ -62,7 +63,7 @@ defmodule AshHateoas.Hydra.Plug do
       #{Exception.format(:error, exception, __STACKTRACE__)}
       """)
 
-      send_json(conn, 500, %{"@type" => "Error", "hydra:statusCode" => 500})
+      send_error(conn, 500, "Internal Server Error")
   end
 
   # ── Dispatch ────────────────────────────────────────────────────────────────
@@ -85,9 +86,19 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
+  defp dispatch(%{method: method} = conn, segments, actor, tenant, opts)
+       when method in ["POST", "PATCH", "DELETE"] do
+    case match_write(method, segments, opts) do
+      {resource, type, action, id} ->
+        serve_write(conn, resource, type, action, id, actor, tenant, opts)
+
+      :error ->
+        send_error(conn, 404, "Not Found")
+    end
+  end
+
   defp dispatch(conn, _segments, _actor, _tenant, _opts) do
-    # Writes are handled in a later phase; anything else is not found.
-    send_json(conn, 404, %{"@type" => "Error", "hydra:statusCode" => 404})
+    send_error(conn, 404, "Not Found")
   end
 
   # ── GET reads ─────────────────────────────────────────────────────────────
@@ -101,7 +112,7 @@ defmodule AshHateoas.Hydra.Plug do
         serve_collection(conn, resource, type, actor, opts)
 
       :error ->
-        send_json(conn, 404, %{"@type" => "Error", "hydra:statusCode" => 404})
+        send_error(conn, 404, "Not Found")
     end
   end
 
@@ -110,7 +121,7 @@ defmodule AshHateoas.Hydra.Plug do
 
     case load(resource, id, actor, tenant) do
       nil ->
-        send_json(conn, 404, %{"@type" => "Error", "hydra:statusCode" => 404})
+        send_error(conn, 404, "Not Found")
 
       record ->
         node = node(record, type, resource, id, actor, tenant, opts)
@@ -148,9 +159,124 @@ defmodule AshHateoas.Hydra.Plug do
         send_json(conn, 200, document)
 
       :error ->
-        send_json(conn, 403, %{"@type" => "Error", "hydra:statusCode" => 403})
+        send_error(conn, 403, "Forbidden")
     end
   end
+
+  # ── Writes ──────────────────────────────────────────────────────────────────
+
+  # A create has no id; an update/destroy/generic acts on an existing record.
+  defp serve_write(conn, resource, type, action, nil, actor, tenant, opts) do
+    input = read_body_params(conn)
+
+    safe(fn ->
+      resource
+      |> Ash.Changeset.for_create(action, input, actor: actor, tenant: tenant)
+      |> Ash.create(authorize?: true)
+    end)
+    |> respond_write(conn, resource, type, actor, tenant, opts, created: true)
+  end
+
+  defp serve_write(conn, resource, type, action, id, actor, tenant, opts) do
+    case load(resource, id, actor, tenant) do
+      nil ->
+        send_error(conn, 404, "Not Found")
+
+      record ->
+        # Pre-flight the same `Ash.can?/3` the affordance layer gates on. Ash's
+        # atomic update path erases the forbidden class into an opaque
+        # `UnknownError`, so a post-hoc class check cannot see it; asking up front
+        # gives an honest 403 and avoids running a write the actor may not do.
+        if can?(record, action, actor, tenant) do
+          run_write(conn, record, resource, type, action, actor, tenant, opts)
+        else
+          send_error(conn, 403, "Forbidden")
+        end
+    end
+  end
+
+  defp can?(record, action, actor, tenant) do
+    Ash.can?({record, action}, actor, tenant: tenant)
+  rescue
+    _ -> false
+  end
+
+  defp run_write(conn, record, resource, type, action, actor, tenant, opts) do
+    input = read_body_params(conn)
+    action_struct = Ash.Resource.Info.action(resource, action)
+
+    case action_struct.type do
+      :destroy ->
+        safe(fn ->
+          record
+          |> Ash.Changeset.for_destroy(action, input, actor: actor, tenant: tenant)
+          |> Ash.destroy(authorize?: true)
+        end)
+        |> respond_destroy(conn)
+
+      :update ->
+        safe(fn ->
+          record
+          |> Ash.Changeset.for_update(action, input, actor: actor, tenant: tenant)
+          |> Ash.update(authorize?: true)
+        end)
+        |> respond_write(conn, resource, type, actor, tenant, opts, [])
+
+      :action ->
+        safe(fn ->
+          resource
+          |> Ash.ActionInput.for_action(action, Map.put(input, :id, record_id(record)),
+            actor: actor,
+            tenant: tenant
+          )
+          |> Ash.run_action(authorize?: true)
+        end)
+        |> respond_generic(conn)
+    end
+  end
+
+  # An Ash write can either return `{:error, _}` or raise (an atomic update
+  # raises its policy error). Normalise both to a tagged tuple so response
+  # mapping is uniform. `:ok`/`{:ok, _}` pass through unchanged.
+  defp safe(fun) do
+    fun.()
+  rescue
+    error -> {:error, error}
+  end
+
+  # Renders the resulting record as a fresh node (a write returns the new state).
+  defp respond_write({:ok, record}, conn, resource, type, actor, tenant, opts, write_opts) do
+    id = record_id(record)
+    node = node(record, type, resource, id, actor, tenant, opts)
+    status = if Keyword.get(write_opts, :created, false), do: 201, else: 200
+    send_json(conn, status, Map.put(node, "@context", Context.context()))
+  end
+
+  defp respond_write({:error, error}, conn, _resource, _type, _actor, _tenant, _opts, _write_opts) do
+    send_ash_error(conn, error)
+  end
+
+  defp respond_destroy(:ok, conn), do: Plug.Conn.send_resp(conn, 204, "") |> Plug.Conn.halt()
+  defp respond_destroy({:ok, _record}, conn), do: respond_destroy(:ok, conn)
+  defp respond_destroy({:error, error}, conn), do: send_ash_error(conn, error)
+
+  # A generic action returns whatever it returns; wrap non-resource results so a
+  # client always receives a JSON-LD document.
+  defp respond_generic({:ok, result}, conn) do
+    body =
+      case result do
+        %{__struct__: _} = struct when is_struct(struct) ->
+          Map.new(Map.from_struct(struct), fn {k, v} -> {to_string(k), encodable(v)} end)
+
+        other ->
+          %{"@type" => "Result", "ah:value" => encodable(other)}
+      end
+
+    send_json(conn, 200, Map.put(body, "@context", Context.context()))
+  end
+
+  defp respond_generic(:ok, conn), do: send_json(conn, 200, %{"@type" => "Result"})
+  defp respond_generic({:error, error}, conn), do: send_ash_error(conn, error)
 
   # ── Node building ─────────────────────────────────────────────────────────
 
@@ -234,6 +360,53 @@ defmodule AshHateoas.Hydra.Plug do
   end
 
   defp match_route(_route, _resource, _type, _path, _prefix), do: nil
+
+  # Match a write request against the routes whose HTTP method matches, returning
+  # `{resource, type, action, id}` (id nil for a create). A `:route` (generic)
+  # carries its own method; the verb kinds imply theirs.
+  defp match_write(method, segments, opts) do
+    path = "/" <> Enum.join(segments, "/")
+    prefix = prefix(opts)
+
+    opts[:domains]
+    |> Index.build()
+    |> Enum.find_value(:error, fn {type, resource} ->
+      resource
+      |> AshHateoas.Resource.Info.routes()
+      |> Enum.find_value(fn %Route{} = route -> match_write_route(method, route, type, path, prefix) end)
+      |> case do
+        nil -> nil
+        {action, id} -> {resource, type, action, id}
+      end
+    end)
+  end
+
+  defp match_write_route(method, %Route{} = route, _type, path, prefix) do
+    if route_method(route) == method do
+      full = prefix <> (route.route || "")
+
+      cond do
+        # A create/collection POST — the path is the collection base, no :id.
+        not String.contains?(full, ":id") and full == path ->
+          {route.action, nil}
+
+        String.contains?(full, ":id") ->
+          case capture_id(full, path) do
+            nil -> nil
+            id -> {route.action, id}
+          end
+
+        true ->
+          nil
+      end
+    end
+  end
+
+  defp route_method(%Route{type: :post}), do: "POST"
+  defp route_method(%Route{type: :patch}), do: "PATCH"
+  defp route_method(%Route{type: :delete}), do: "DELETE"
+  defp route_method(%Route{type: :route, method: method}), do: method |> to_string() |> String.upcase()
+  defp route_method(_route), do: nil
 
   # `/documents/:id` against `/documents/123` yields `"123"`; nil on no match.
   defp capture_id(pattern, path) do
@@ -346,6 +519,74 @@ defmodule AshHateoas.Hydra.Plug do
     |> Plug.Conn.put_resp_content_type(Context.content_type(), nil)
     |> Plug.Conn.send_resp(status, Jason.encode!(body))
     |> Plug.Conn.halt()
+  end
+
+  defp send_error(conn, status, title) do
+    send_json(conn, status, HydraError.render(status: status, title: title))
+  end
+
+  # The R10 refusal carries a projection; any other Ash error maps to its class's
+  # HTTP status with a machine-readable Hydra Error body.
+  defp send_ash_error(conn, %AshHateoas.Error.NotDelegable{} = error) do
+    send_json(conn, 403, HydraError.not_delegable(error))
+  end
+
+  defp send_ash_error(conn, error) do
+    {status, title} = error_status(error)
+    send_json(conn, status, HydraError.render(status: status, title: title, detail: error_detail(error)))
+  end
+
+  defp error_status(error) do
+    cond do
+      # An atomic update wraps its authorization failure in `Ash.Error.Unknown`
+      # with `class: :unknown`, so the top-level class is not enough — look for a
+      # forbidden anywhere in the error tree.
+      forbidden?(error) -> {403, "Forbidden"}
+      class_of(error) == :invalid -> {400, "Bad Request"}
+      true -> {422, "Unprocessable Entity"}
+    end
+  end
+
+  defp class_of(%{class: class}), do: class
+  defp class_of(_error), do: :unknown
+
+  defp forbidden?(error) do
+    class_of(error) == :forbidden or
+      match?(%Ash.Error.Forbidden{}, error) or
+      Enum.any?(nested_errors(error), &forbidden?/1)
+  end
+
+  defp nested_errors(%{errors: errors}) when is_list(errors), do: errors
+  defp nested_errors(_error), do: []
+
+  defp error_detail(error) do
+    Exception.message(error)
+  rescue
+    _ -> nil
+  end
+
+  # The request body decoded into an action-input map. Reads the raw body since
+  # the endpoint carries no `Plug.Parsers` — a Hydra client sends JSON-LD.
+  defp read_body_params(conn) do
+    case Plug.Conn.read_body(conn) do
+      {:ok, body, _conn} when byte_size(body) > 0 ->
+        case Jason.decode(body) do
+          {:ok, map} when is_map(map) -> strip_ld_keywords(map)
+          _ -> %{}
+        end
+
+      _ ->
+        %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  # JSON-LD keywords (`@context`, `@id`, `@type`) are not action inputs.
+  defp strip_ld_keywords(map) do
+    map
+    |> Enum.reject(fn {key, _value} -> is_binary(key) and String.starts_with?(key, "@") end)
+    |> Map.new()
   end
 
   defp request_url(conn), do: conn.request_path

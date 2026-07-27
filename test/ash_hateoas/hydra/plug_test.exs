@@ -24,6 +24,13 @@ defmodule AshHateoas.Hydra.PlugTest do
     |> HydraEndpoint.call([])
   end
 
+  defp request(method, path, actor, payload) do
+    conn(method, path, Jason.encode!(payload))
+    |> put_req_header("content-type", "application/ld+json")
+    |> Ash.PlugHelpers.set_actor(actor)
+    |> HydraEndpoint.call([])
+  end
+
   defp body(conn), do: Jason.decode!(conn.resp_body)
 
   describe "content type and discovery" do
@@ -166,6 +173,69 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       assert Map.has_key?(node, "ah:ship")
       refute Map.has_key?(node, "ah:confirm")
+    end
+  end
+
+  describe "writes" do
+    test "POST to the collection creates a record and returns 201 with the node" do
+      conn = request(:post, "/documents", @admin, %{"title" => "New", "owner_id" => "admin-1"})
+
+      assert conn.status == 201
+      node = body(conn)
+      assert node["title"] == "New"
+      assert node["@id"] =~ "/documents/"
+    end
+
+    test "PATCH a member runs the update and returns the new state" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Old", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      conn = request(:patch, "/documents/#{doc.id}", @admin, %{"title" => "Renamed"})
+
+      assert conn.status == 200
+      assert body(conn)["title"] == "Renamed"
+    end
+
+    test "invoking a state transition over the wire advances the machine" do
+      order =
+        Order
+        |> Ash.Changeset.for_create(:create, %{reference: "R-2"})
+        |> Ash.create!(authorize?: false)
+
+      # confirm is a named sub-action at /orders/:id/confirm (PATCH)
+      conn = request(:patch, "/orders/#{order.id}/confirm", @admin, %{})
+      assert conn.status == 200
+
+      # the returned node now offers ship, not confirm
+      node = body(get("/orders/#{order.id}", @admin))
+      assert Map.has_key?(node, "ah:ship")
+      refute Map.has_key?(node, "ah:confirm")
+    end
+
+    test "DELETE a member destroys it and returns 204" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Doomed", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      conn = request(:delete, "/documents/#{doc.id}", @admin, %{})
+      assert conn.status == 204
+
+      # and it is gone
+      assert body(get("/documents/#{doc.id}", @admin))["@type"] == "Error"
+    end
+
+    test "an unauthorized write is refused, not performed" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Guarded", owner_id: "someone-else"})
+        |> Ash.create!(authorize?: false)
+
+      # @viewer is neither admin nor owner -> update policy denies
+      conn = request(:patch, "/documents/#{doc.id}", @viewer, %{"title" => "Hijacked"})
+      assert conn.status in [403, 404]
     end
   end
 end
