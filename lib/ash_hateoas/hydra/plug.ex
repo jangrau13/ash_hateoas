@@ -421,7 +421,22 @@ defmodule AshHateoas.Hydra.Plug do
         base
         |> Map.merge(operations)
         |> merge_navigation(nav)
+        |> merge_relationship_links(resource, id, opts)
     end
+  end
+
+  # A public to-many relationship derives a `:related` route
+  # (`/base/:id/<name>`); surface it on the node as a followable link to that
+  # related collection, keyed by the relationship name. The property is declared
+  # a `hydra:Link` in the ApiDocumentation, so a client knows the key is a link.
+  defp merge_relationship_links(node, resource, id, opts) do
+    resource
+    |> AshHateoas.Resource.Info.routes()
+    |> Enum.filter(&(&1.type == :related))
+    |> Enum.reduce(node, fn route, acc ->
+      url = href_prefix(opts) <> String.replace(route.route, ":id", to_string(id))
+      Map.put(acc, to_string(route.relationship), %{"@id" => url, "@type" => "Collection"})
+    end)
   end
 
   defp attributes(record, resource, opts) do

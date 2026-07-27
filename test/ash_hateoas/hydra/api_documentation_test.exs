@@ -90,6 +90,50 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     assert length(document_entries) == 1
   end
 
+  test "a to-many relationship is advertised as a hydra:Link supported property" do
+    doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+    article =
+      Enum.find(
+        doc["hydra:supportedClass"],
+        &(&1["@id"] == "https://ash-hateoas.org/vocab#Article")
+      )
+
+    link =
+      Enum.find(
+        article["hydra:supportedProperty"],
+        &(&1["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#article/comments")
+      )
+
+    assert link, "expected a comments link property"
+    # the property node is typed hydra:Link, so a client knows the key is a link
+    assert link["hydra:property"]["@type"] == "hydra:Link"
+    assert link["hydra:readable"] == true
+    assert link["hydra:writeable"] == false
+  end
+
+  test "operations advertise their possibleStatus from the gate chain" do
+    doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+    document =
+      Enum.find(
+        doc["hydra:supportedClass"],
+        &(&1["@id"] == "https://ash-hateoas.org/vocab#Document")
+      )
+
+    # Document has authorizers -> a PATCH can 403, can fail validation (422),
+    # and targets a member (404).
+    patch =
+      Enum.find(document["hydra:supportedOperation"], &(&1["hydra:method"] == "PATCH"))
+
+    codes = patch["hydra:possibleStatus"] |> Enum.map(& &1["hydra:statusCode"])
+    assert 403 in codes
+    assert 422 in codes
+    assert 404 in codes
+
+    assert Enum.all?(patch["hydra:possibleStatus"], &(&1["@type"] == "Status"))
+  end
+
   test "a supported property references the property and carries the datatype separately" do
     doc = ApiDocumentation.build([AshHateoas.Test.Domain])
 

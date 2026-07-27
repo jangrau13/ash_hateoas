@@ -100,33 +100,59 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   end
 
   @doc """
-  The `hydra:SupportedProperty` list from a resource's public attributes.
+  The `hydra:SupportedProperty` list from a resource's public attributes, plus a
+  `hydra:Link` property per to-many relationship the resource routes.
   """
   @spec supported_properties(module(), String.t()) :: [map()]
   def supported_properties(resource, type) do
     semantic = AshHateoas.Resource.Info.semantic_properties(resource)
 
-    resource
-    |> public_attributes()
-    |> Enum.map(fn attribute ->
-      # A mapped attribute advertises the well-known property IRI directly, so a
-      # client that knows the vocabulary reads the value as that property.
-      property_id =
-        Map.get(semantic, attribute.name) || Context.property_iri(type, attribute.name)
+    attribute_properties =
+      resource
+      |> public_attributes()
+      |> Enum.map(fn attribute ->
+        # A mapped attribute advertises the well-known property IRI directly, so a
+        # client that knows the vocabulary reads the value as that property.
+        property_id =
+          Map.get(semantic, attribute.name) || Context.property_iri(type, attribute.name)
 
+        %{
+          "@type" => "SupportedProperty",
+          # `hydra:property` ranges over rdf:Property — a reference to the
+          # property. The value's datatype is a fact about the property, carried
+          # alongside under an `ah:` term rather than by mistyping the reference.
+          "hydra:property" => %{"@id" => property_id},
+          "ah:datatype" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type)),
+          "hydra:title" => to_string(attribute.name),
+          "hydra:required" => not Map.get(attribute, :allow_nil?, true),
+          "hydra:readable" => true,
+          "hydra:writeable" => Map.get(attribute, :writable?, true)
+        }
+        |> put_unless_nil("hydra:description", Map.get(attribute, :description))
+      end)
+
+    attribute_properties ++ link_properties(resource, type)
+  end
+
+  # A to-many relationship (a routed `:related`) is advertised as a
+  # `hydra:Link` — its `hydra:property` is a node typed `hydra:Link`, so a client
+  # knows the key on a record is a followable link to a related collection, not a
+  # literal value.
+  defp link_properties(resource, type) do
+    resource
+    |> routes()
+    |> Enum.filter(&(&1.type == :related))
+    |> Enum.map(fn %Route{relationship: name} ->
       %{
         "@type" => "SupportedProperty",
-        # `hydra:property` ranges over rdf:Property — a reference to the property.
-        # The value's datatype is a fact about the property, carried alongside
-        # under an `ah:` term rather than by mistyping the reference.
-        "hydra:property" => %{"@id" => property_id},
-        "ah:datatype" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type)),
-        "hydra:title" => to_string(attribute.name),
-        "hydra:required" => not Map.get(attribute, :allow_nil?, true),
+        "hydra:property" => %{
+          "@id" => Context.property_iri(type, name),
+          "@type" => "hydra:Link"
+        },
+        "hydra:title" => to_string(name),
         "hydra:readable" => true,
-        "hydra:writeable" => Map.get(attribute, :writable?, true)
+        "hydra:writeable" => false
       }
-      |> put_unless_nil("hydra:description", Map.get(attribute, :description))
     end)
   end
 
@@ -150,8 +176,49 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       }
       |> put_unless_nil("hydra:title", action && Map.get(action, :description))
       |> put_shape(action, resource, type)
+      |> put_possible_status(route, action, resource)
     end)
   end
+
+  # The statuses an operation may return, derived from the gate chain — the
+  # catalogue counterpart to the node's live gating. A resource with authorizers
+  # can refuse with 403; a write can fail validation with 422; a member-targeted
+  # operation can 404. Actor-independent: it lists what *could* happen, not what
+  # will for a given request.
+  defp put_possible_status(op, route, action, resource) do
+    statuses =
+      []
+      |> maybe_status(authorized?(resource), 403, "Forbidden — the actor may not perform this.")
+      |> maybe_status(write?(action), 422, "Unprocessable — the input failed validation.")
+      |> maybe_status(member_route?(route), 404, "Not Found — no such record.")
+
+    case statuses do
+      [] -> op
+      list -> Map.put(op, "hydra:possibleStatus", Enum.reverse(list))
+    end
+  end
+
+  defp maybe_status(list, false, _code, _title), do: list
+
+  defp maybe_status(list, true, code, title) do
+    [%{"@type" => "Status", "hydra:statusCode" => code, "hydra:title" => title} | list]
+  end
+
+  defp authorized?(resource) do
+    Ash.Resource.Info.authorizers(resource) != []
+  rescue
+    _ -> false
+  end
+
+  defp write?(%{type: type}) when type in [:create, :update, :destroy, :action], do: true
+  defp write?(_action), do: false
+
+  # A route addressing a specific record (`:id` in its path) can 404; a
+  # collection-level route (create, index) cannot.
+  defp member_route?(%Route{route: route}) when is_binary(route),
+    do: String.contains?(route, ":id")
+
+  defp member_route?(_route), do: false
 
   # Reuse the renderer's `expects`/`returns` derivation so the documentation
   # catalogue and the live per-node operations describe input/output identically.

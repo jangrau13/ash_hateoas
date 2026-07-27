@@ -18,6 +18,8 @@ node offers — knowing nothing about Ash or this package.
 | a query/search read's fields | a `hydra:IriTemplate` (`hydra:template`, `hydra:mapping` of `hydra:IriTemplateMapping`) |
 | `field.allow_nil?` | `hydra:required` (inverted at the edge) |
 | a field / attribute | `hydra:property` → `{"@id": <property-iri>}` (a reference; `hydra:property` ranges over `rdf:Property`); the value's datatype rides alongside as `ah:datatype` — `xsd:*`, or `@id` for a `link` |
+| a public to-many relationship | on a node: a property keyed by the relationship name → `{"@id": …/:id/<name>, "@type": "Collection"}`; in `ApiDocumentation`: a `hydra:SupportedProperty` whose `hydra:property` is typed `hydra:Link` |
+| an operation's possible outcomes | `hydra:possibleStatus` in `ApiDocumentation` — `hydra:Status` nodes derived from the gate chain (403 if authorizers, 422 for a write, 404 for a member op) |
 | a collection | a `hydra:Collection` — `hydra:member`, `hydra:totalItems`, `hydra:view` |
 | pagination | a `hydra:PartialCollectionView` — `hydra:first` / `previous` / `next` / `last` |
 | the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `hydra:supportedProperty` + `hydra:supportedOperation`) |

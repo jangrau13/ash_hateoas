@@ -124,13 +124,19 @@ posture dictates the ODRL mapping:
 Uses more of the vocabulary already grounded, no new namespace:
 
 - **`hydra:Link` for relationships.** A public to-many relationship already
-  derives a route; surface it as a `hydra:Link`-typed property on the node whose
-  value references the related collection, so the relationship is followable as a
-  first-class link rather than only via navigation.
-- **`hydra:possibleStatus`.** Each operation can advertise the statuses it may
-  return, as `hydra:Status` nodes derived from the gate chain — a `403` where a
-  policy gates the action, a `422` where validations apply. Actor-independent
-  shape (the catalogue side), consistent with `expects`/`returns`.
+  derives a `:related` route (`/base/:id/<name>`). On a record node it is surfaced
+  as a property keyed by the relationship name whose value references the related
+  collection (`{"@id": …/:id/<name>, "@type": "Collection"}`), and in the
+  `ApiDocumentation` the class declares that property with `hydra:property`
+  typed **`hydra:Link`** — so a client knows the key is a followable link, not a
+  literal, and can walk the graph as first-class links rather than only via
+  navigation.
+- **`hydra:possibleStatus`.** Each operation in the `ApiDocumentation` advertises
+  the statuses it may return, as `hydra:Status` nodes (`hydra:statusCode` +
+  `hydra:title`) derived from the gate chain: `403` when the resource has
+  authorizers, `422` for a write (validation may fail), `404` for a
+  member-targeted operation. Actor-independent — the catalogue counterpart to the
+  node's live gating, consistent with `expects`/`returns`.
 
 ## Sources (verified)
 

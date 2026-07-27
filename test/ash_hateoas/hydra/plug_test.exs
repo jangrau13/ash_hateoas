@@ -12,7 +12,7 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Document, HydraEndpoint, Order, Paged, Person}
+  alias AshHateoas.Test.{Actor, Article, Document, HydraEndpoint, Order, Paged, Person}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
@@ -179,6 +179,20 @@ defmodule AshHateoas.Hydra.PlugTest do
         |> Ash.create!(authorize?: false)
 
       assert body(get("/documents/#{doc.id}", @admin))["title"] == "Plain"
+    end
+
+    test "a to-many relationship is a followable hydra:Link to its related collection" do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Hydra"})
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/articles/#{article.id}", @admin))
+
+      # the public has_many :comments surfaces as a link to the related collection
+      comments = node["comments"]
+      assert comments["@id"] =~ "/articles/#{article.id}/comments"
+      assert comments["@type"] == "Collection"
     end
   end
 
