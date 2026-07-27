@@ -44,7 +44,7 @@ defmodule AshHateoas.Test.MultiRead do
     # A non-primary read that returns MANY — the collection-read branch. Derives
     # an `:index` at `/by_label`.
     read :by_label do
-      argument :label, :string, allow_nil?: false
+      argument :label, :string, allow_nil?: false, public?: true
       filter expr(label == ^arg(:label))
     end
 

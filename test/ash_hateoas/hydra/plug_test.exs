@@ -12,7 +12,7 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Article, Document, HydraEndpoint, Order, Paged, Person}
+  alias AshHateoas.Test.{Actor, Article, Document, HydraEndpoint, MultiRead, Order, Paged, Person}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
@@ -226,6 +226,39 @@ defmodule AshHateoas.Hydra.PlugTest do
         refute Map.has_key?(member, "hydra:operation")
         refute Map.has_key?(member, "ah:approve")
       end
+    end
+  end
+
+  describe "a named collection read (GET /base/<action>)" do
+    setup do
+      for label <- ["alpha", "alpha", "beta"] do
+        MultiRead
+        |> Ash.Changeset.for_create(:create, %{label: label})
+        |> Ash.create!(authorize?: false)
+      end
+
+      :ok
+    end
+
+    test "a named index is not shadowed by the /:id member route — it runs its own action" do
+      # /domain/multi_read/by_label must reach the by_label read, NOT be captured
+      # as /domain/multi_read/:id with id="by_label" (which would 404). This is
+      # the regression: a literal path segment beats the :id wildcard.
+      coll = body(get("/domain/multi_read/by_label?label=alpha", @admin))
+
+      assert coll["@type"] == "Collection"
+      # by_label filters on the query argument -> only the two "alpha" rows
+      assert coll["hydra:totalItems"] == 2
+
+      for member <- coll["hydra:member"] do
+        assert member["label"] == "alpha"
+      end
+    end
+
+    test "the primary base index still runs the primary read (all rows)" do
+      coll = body(get("/domain/multi_read", @admin))
+      assert coll["@type"] == "Collection"
+      assert coll["hydra:totalItems"] == 3
     end
   end
 

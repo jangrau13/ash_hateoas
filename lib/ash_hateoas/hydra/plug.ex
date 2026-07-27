@@ -134,8 +134,8 @@ defmodule AshHateoas.Hydra.Plug do
       {:member, resource, type, id} ->
         serve_member(conn, resource, type, id, actor, opts)
 
-      {:collection, resource, type} ->
-        serve_collection(conn, resource, type, actor, opts)
+      {:collection, resource, type, action} ->
+        serve_collection(conn, resource, type, action, actor, opts)
 
       :error ->
         send_error(conn, 404, "Not Found")
@@ -156,11 +156,12 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  defp serve_collection(conn, resource, type, actor, opts) do
+  defp serve_collection(conn, resource, type, action, actor, opts) do
     tenant = Ash.PlugHelpers.get_tenant(conn)
     page = page_params(conn)
+    arguments = read_arguments(conn, resource, action)
 
-    case read(resource, actor, tenant, page) do
+    case read(resource, action, arguments, actor, tenant, page) do
       {:ok, result} ->
         {records, total, view_map} = paginate(result, resource, type, conn, opts)
 
@@ -512,13 +513,32 @@ defmodule AshHateoas.Hydra.Plug do
 
     resource
     |> AshHateoas.Resource.Info.routes()
+    # A named collection index (`/base/search`) is a LITERAL path; the primary
+    # member route (`/base/:id`) is a WILDCARD that would otherwise capture
+    # `search` as an id and shadow it. Literal beats wildcard, so every `:index`
+    # is tried before the `:get`/:id member route regardless of derivation order.
+    |> Enum.sort_by(&route_match_rank/1)
     |> Enum.find_value(fn %Route{} = route ->
       match_route(route, resource, type, path, prefix)
     end)
   end
 
-  defp match_route(%Route{type: :index, route: route}, resource, type, path, prefix) do
-    if prefix <> route == path, do: {:collection, resource, type}, else: nil
+  # Lower rank is tried first. Index (literal) before member (wildcard); anything
+  # else does not participate in GET read matching.
+  defp route_match_rank(%Route{type: :index}), do: 0
+  defp route_match_rank(%Route{type: :get, primary?: true}), do: 1
+  defp route_match_rank(_route), do: 2
+
+  # A named index (`/base/<action>`) carries its own action so the collection
+  # read runs THAT action, not the primary read.
+  defp match_route(
+         %Route{type: :index, route: route, action: action},
+         resource,
+         type,
+         path,
+         prefix
+       ) do
+    if prefix <> route == path, do: {:collection, resource, type, action}, else: nil
   end
 
   defp match_route(%Route{type: :get, primary?: true, route: route}, resource, type, path, prefix) do
@@ -613,19 +633,24 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> nil
   end
 
-  defp read(resource, actor, tenant, page) do
+  # Run the matched read action (the primary read for the base index, or a named
+  # collection read like `semantic_search` for `/base/<name>`), with any query
+  # params bound to its public arguments.
+  defp read(resource, action, arguments, actor, tenant, page) do
     read_opts = [actor: actor, tenant: tenant, authorize?: true]
 
-    # Paginate only when page params were supplied AND the primary read declares
+    # Paginate only when page params were supplied AND this action declares
     # pagination support — passing `page:` to an unpaginated action raises.
     read_opts =
-      if page != [] and paginatable?(resource) do
+      if page != [] and paginatable?(resource, action) do
         Keyword.put(read_opts, :page, page)
       else
         read_opts
       end
 
-    case Ash.read(resource, read_opts) do
+    query = Ash.Query.for_read(resource, action, arguments, actor: actor, tenant: tenant)
+
+    case Ash.read(query, read_opts) do
       {:ok, result} -> {:ok, result}
       _ -> :error
     end
@@ -633,8 +658,31 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> :error
   end
 
-  defp paginatable?(resource) do
-    case Ash.Resource.Info.primary_action(resource, :read) do
+  # Bind a named read's public arguments from the query string
+  # (`?query=solar&limit=5`). Only declared, public arguments are taken — an
+  # unknown param is ignored, and nothing is passed for the primary read (which
+  # has no arguments), so its behaviour is unchanged.
+  defp read_arguments(conn, resource, action_name) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    params = conn.query_params
+
+    case Ash.Resource.Info.action(resource, action_name) do
+      %{arguments: arguments} when is_list(arguments) ->
+        for %{name: name, public?: true} <- arguments,
+            value = params[to_string(name)],
+            not is_nil(value),
+            into: %{},
+            do: {name, value}
+
+      _ ->
+        %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  defp paginatable?(resource, action_name) do
+    case Ash.Resource.Info.action(resource, action_name) do
       %{pagination: pagination} when not is_nil(pagination) and pagination != false -> true
       _ -> false
     end
