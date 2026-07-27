@@ -368,7 +368,7 @@ defmodule AshHateoas.Hydra.Plug do
   defp node(record, type, resource, id, actor, tenant, opts, node_opts \\ []) do
     base =
       record
-      |> attributes(resource)
+      |> attributes(resource, opts)
       |> Map.merge(%{
         "@id" => member_href(resource, id, opts),
         "@type" => Context.node_type(type, AshHateoas.Resource.Info.semantic_type(resource))
@@ -397,12 +397,37 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  defp attributes(record, resource) do
+  defp attributes(record, resource, opts) do
     resource
     |> Ash.Resource.Info.public_attributes()
     |> Map.new(fn attribute ->
-      {to_string(attribute.name), encodable(Map.get(record, attribute.name))}
+      value = Map.get(record, attribute.name)
+      {to_string(attribute.name), attribute_value(attribute, value, opts)}
     end)
+  end
+
+  # A followable link (`AshHateoas.Type.ResourceLink`) is rendered as a JSON-LD
+  # reference node — `{"@id" => url}` — rather than a bare string, which is what
+  # marks the value followable (a node reference, not a literal).
+  #
+  # Internal vs external is NOT a separate flag: the `@id`'s host already carries
+  # it. A URL sharing this request's origin (or a relative one) is internal; a
+  # foreign host is external. Both server and client infer it from the IRI — the
+  # trust boundary is the origin, which the `@id` states.
+  defp attribute_value(%{type: type}, value, _opts) when is_binary(value) do
+    if link_type?(type) do
+      %{"@id" => value}
+    else
+      value
+    end
+  end
+
+  defp attribute_value(_attribute, value, _opts), do: encodable(value)
+
+  defp link_type?(type) do
+    Ash.Type.get_type(type) == AshHateoas.Type.ResourceLink
+  rescue
+    _ -> false
   end
 
   # Navigation links (`collection`, `up`) map onto Hydra link terms.

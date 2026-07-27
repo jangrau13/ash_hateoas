@@ -23,15 +23,21 @@ defmodule AshHateoas.Type.ResourceLink do
   attaches credentials to outbound requests, guessing is also how you build an
   SSRF vector.
 
-  Declaring the type moves that from inference to statement: the wire format
-  says `"type": "link"`, and a client follows only what the server marked.
+  Declaring the type moves that from inference to statement: the value is
+  rendered as a JSON-LD reference node (`{"@id": url}`), and a client follows
+  only what the server marked.
 
-  ## What a consumer must still do
+  ## Internal vs external is the `@id`'s host
 
-  Marking a value followable does not make it safe to follow. A URL stored in
-  application data is application data — a consumer MUST check the host against
-  its own allowlist before dereferencing, and MUST NOT attach a credential
-  belonging to one host to a request bound for another.
+  A link may point at a resource this same API serves, or at one on a foreign
+  host — but that needs no extra flag. The `@id` is a full IRI, and its origin
+  *is* the trust boundary: a value sharing the document's origin (or a relative
+  URL) is internal, and a foreign host is external. Both server and client read
+  that off the IRI directly.
+
+  A consumer MUST still check the host before dereferencing, and MUST NOT attach
+  a credential belonging to one host to a request bound for another — the flag
+  would not remove that obligation, so it is not emitted.
   """
 
   use Ash.Type.NewType, subtype_of: :string

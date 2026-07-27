@@ -111,6 +111,34 @@ defmodule AshHateoas.Hydra.PlugTest do
     end
   end
 
+  describe "resource links" do
+    test "a followable link renders as a JSON-LD reference node, not a bare string" do
+      # The value's host is the trust boundary — internal vs external is read off
+      # the @id itself, so no extra flag is emitted.
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{
+          title: "Linked",
+          owner_id: "admin-1",
+          related_order: "https://another-backend.example/orders/xyz"
+        })
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      assert node["related_order"] == %{"@id" => "https://another-backend.example/orders/xyz"}
+    end
+
+    test "an ordinary attribute stays a plain value" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Plain", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      assert body(get("/documents/#{doc.id}", @admin))["title"] == "Plain"
+    end
+  end
+
   describe "a collection (GET index)" do
     setup do
       for i <- 1..2 do

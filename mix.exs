@@ -72,9 +72,13 @@ defmodule AshHateoas.MixProject do
       # bypass no HTTP caller can satisfy. Optional: a consumer without
       # authentication never loads it, and the check degrades to a no-op.
       {:ash_authentication, "~> 4.0", optional: true},
-      # Igniter powers `mix igniter.install ash_hateoas`; optional so consumers
-      # who install by hand are not forced to take it.
+      # Igniter powers `mix igniter.install ash_hateoas` and the
+      # `mix ash_hateoas.gen.schema_org` generator; optional so consumers who
+      # install by hand are not forced to take it.
       {:igniter, "~> 0.8", optional: true},
+      # Req fetches the schema.org vocabulary for the schema_org generator.
+      # Optional and generator-only — the runtime library never calls it.
+      {:req, "~> 0.5", optional: true},
       # Ash.Policy.Authorizer needs a SAT solver to reason about policy
       # combinations. Consumers supply their own; the test suite needs one.
       {:simple_sat, "~> 0.1", only: [:dev, :test]},

@@ -44,10 +44,29 @@ served natively as a Hydra / JSON-LD API.
 - Reactor compensation actions and AshAuthentication's own actions are skipped
   automatically.
 
+### Well-known vocabularies (schema.org)
+
+- `semantic_type "Person"` on a resource advertises a well-known type alongside
+  its own class: each record node carries both (`"@type": ["…#Person",
+  "https://schema.org/Person"]`) and the `hydra:Class` declares an
+  `owl:equivalentClass`. A bare token resolves against schema.org; an absolute
+  IRI is used verbatim.
+- `semantic_property :additional_name, "additionalName"` maps an attribute to a
+  well-known property IRI — the node `@context` binds the flat key to it and the
+  `ApiDocumentation` advertises the property by that IRI. A verifier fails the
+  build when it names a missing attribute.
+- **`mix ash_hateoas.gen.schema_org Person --domain MyApp.People`** generates a
+  resource from a schema.org type fetched live: one attribute + `semantic_property`
+  per property, with a property whose range is another type mapped to
+  `AshHateoas.Type.ResourceLink` (a followable reference) rather than a scalar.
+- A `AshHateoas.Type.ResourceLink` value renders as a JSON-LD reference node
+  (`{"@id": url}`); internal vs external is the `@id`'s host, not a separate flag.
+
 ### DSL
 
-- A `hateoas` section carrying `type`, `base`, and the override-only entries
-  `exclude`, `override`, `unrouted`, `method`, plus `enabled?`.
+- A `hateoas` section carrying `type`, `base`, `semantic_type`, and the
+  override-only entries `exclude`, `override`, `unrouted`, `method`,
+  `semantic_property`, plus `enabled?`.
 - An `agentic_hateoas` section with `not_delegable :action` — an action that
   stays advertised (flagged `ah:notDelegable`) but is executed only by a
   credential a configured `commit_authority` deems committing. A refusal is a
