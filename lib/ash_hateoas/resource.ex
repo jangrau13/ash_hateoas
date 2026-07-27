@@ -65,7 +65,14 @@ defmodule AshHateoas.Resource do
   declaration is documentation only.
   """
 
-  alias AshHateoas.Resource.{Exclusion, Method, NotDelegable, Override, Unrouted}
+  alias AshHateoas.Resource.{
+    Exclusion,
+    Method,
+    NotDelegable,
+    Override,
+    SemanticProperty,
+    Unrouted
+  }
 
   @method %Spark.Dsl.Entity{
     name: :method,
@@ -149,6 +156,33 @@ defmodule AshHateoas.Resource do
     ]
   }
 
+  @semantic_property %Spark.Dsl.Entity{
+    name: :semantic_property,
+    target: SemanticProperty,
+    args: [:attribute, :iri],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    Map one of this resource's attributes to a well-known property IRI.
+    """,
+    examples: [~s(semantic_property :additional_name, "additionalName")],
+    schema: [
+      attribute: [
+        type: :atom,
+        required: true,
+        doc: "The attribute whose property IRI is being mapped."
+      ],
+      iri: [
+        type: :string,
+        required: true,
+        doc: """
+        The well-known property IRI. A bare token resolves against schema.org
+        (`"additionalName"` → `"https://schema.org/additionalName"`); an absolute
+        IRI is used verbatim.
+        """
+      ]
+    ]
+  }
+
   @hateoas %Spark.Dsl.Section{
     name: :hateoas,
     describe: """
@@ -165,7 +199,7 @@ defmodule AshHateoas.Resource do
       end
       """
     ],
-    entities: [@exclude, @override, @unrouted, @method],
+    entities: [@exclude, @override, @unrouted, @method, @semantic_property],
     schema: [
       type: [
         type: {:or, [:string, {:literal, nil}]},
@@ -189,6 +223,24 @@ defmodule AshHateoas.Resource do
 
         Optional. Derived from the domain's short name and `type` when omitted
         (`MyApp.Blog` + `"document"` → `"/blog/document"`).
+        """
+      ],
+      semantic_type: [
+        type: {:or, [:string, {:literal, nil}]},
+        default: nil,
+        doc: """
+        A well-known type IRI to advertise alongside this resource's own class,
+        so a generic client can recognise the resource semantically rather than
+        only by its API-local type.
+
+        A bare token is resolved against schema.org — `"Person"` becomes
+        `"https://schema.org/Person"`. An absolute IRI is used verbatim, so any
+        vocabulary works (`"http://xmlns.com/foaf/0.1/Person"`).
+
+        When set, each resource node carries both types
+        (`"@type": ["…/vocab#Person", "https://schema.org/Person"]`) and the
+        `hydra:Class` in the ApiDocumentation declares the well-known type as an
+        `owl:equivalentClass`.
         """
       ],
       enabled?: [

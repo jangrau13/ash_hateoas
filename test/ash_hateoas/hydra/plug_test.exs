@@ -12,7 +12,7 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Document, HydraEndpoint, Order, Paged}
+  alias AshHateoas.Test.{Actor, Document, HydraEndpoint, Order, Paged, Person}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
@@ -274,6 +274,68 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "an unpaginated resource emits no view" do
       coll = body(get("/documents", @admin))
       refute Map.has_key?(coll, "hydra:view")
+    end
+  end
+
+  describe "well-known (schema.org) types and properties" do
+    setup do
+      person =
+        Person
+        |> Ash.Changeset.for_create(:create, %{name: "Jane", additional_name: "Q"})
+        |> Ash.create!(authorize?: false)
+
+      %{person: person}
+    end
+
+    test "a record node carries both its own class and the schema.org type", %{person: person} do
+      node = body(get("/people/#{person.id}", @admin))
+
+      assert node["@type"] == [
+               "https://ash-hateoas.org/vocab#Person",
+               "https://schema.org/Person"
+             ]
+    end
+
+    test "a mapped attribute resolves to its schema.org property via @context", %{person: person} do
+      node = body(get("/people/#{person.id}", @admin))
+
+      # the flat key still carries the value...
+      assert node["additional_name"] == "Q"
+
+      # ...and the node @context binds that key to the schema.org property.
+      context_terms =
+        node["@context"]
+        |> Enum.filter(&is_map/1)
+        |> Enum.reduce(%{}, &Map.merge(&2, &1))
+
+      assert context_terms["additional_name"] == "https://schema.org/additionalName"
+    end
+
+    test "the ApiDocumentation advertises the equivalence" do
+      doc = body(get("/doc", @admin))
+
+      person_class =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Person")
+        )
+
+      assert person_class["owl:equivalentClass"] == %{"@id" => "https://schema.org/Person"}
+
+      # the mapped property advertises the schema.org IRI directly
+      property_ids =
+        person_class["hydra:supportedProperty"]
+        |> Enum.map(& &1["hydra:property"]["@id"])
+
+      assert "https://schema.org/additionalName" in property_ids
+    end
+
+    test "an absolute IRI is used verbatim, a bare token resolves against schema.org" do
+      assert AshHateoas.Resource.Info.semantic_type(Person) == "https://schema.org/Person"
+
+      assert AshHateoas.Resource.Info.semantic_properties(Person) == %{
+               additional_name: "https://schema.org/additionalName"
+             }
     end
   end
 end

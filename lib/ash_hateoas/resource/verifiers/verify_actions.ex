@@ -27,7 +27,8 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   def verify(dsl_state) do
     module = Verifier.get_persisted(dsl_state, :module)
 
-    with :ok <- verify_action_names(dsl_state, module) do
+    with :ok <- verify_action_names(dsl_state, module),
+         :ok <- verify_semantic_properties(dsl_state, module) do
       warn_on_missing_authorizers(dsl_state, module)
       warn_on_unaddressable_records(dsl_state, module)
       warn_on_assumed_methods(dsl_state, module)
@@ -35,6 +36,39 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       warn_on_inert_not_delegable(dsl_state, module)
       :ok
     end
+  end
+
+  # A `semantic_property` naming an attribute that does not exist fails the build
+  # rather than silently mapping nothing — the same contract action-naming
+  # entries have, so a renamed attribute is caught.
+  defp verify_semantic_properties(dsl_state, module) do
+    attribute_names =
+      dsl_state
+      |> Ash.Resource.Info.attributes()
+      |> MapSet.new(& &1.name)
+
+    dsl_state
+    |> AshHateoas.Resource.Info.semantic_properties()
+    |> Map.keys()
+    |> Enum.find(&(not MapSet.member?(attribute_names, &1)))
+    |> case do
+      nil ->
+        :ok
+
+      attribute ->
+        {:error,
+         Spark.Error.DslError.exception(
+           module: module,
+           path: [:hateoas, :semantic_property, attribute],
+           message: """
+           `semantic_property :#{attribute}` names an attribute that does not exist on #{inspect(module)}.
+
+           Known attributes: #{attribute_names |> Enum.sort() |> Enum.map_join(", ", &":#{&1}")}
+           """
+         )}
+    end
+  rescue
+    _ -> :ok
   end
 
   # `not_delegable` does nothing until a commit authority says some credential
@@ -298,7 +332,12 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
       {:agentic_hateoas, AshHateoas.Resource.Info.agentic_hateoas(dsl_state)}
     ]
     |> Enum.find_value(fn {section, entities} ->
-      case Enum.find(entities, &(not MapSet.member?(action_names, &1.action))) do
+      # Only entities that name an action are checked; some (e.g.
+      # `semantic_property`) reference an attribute instead.
+      entities
+      |> Enum.filter(&Map.has_key?(&1, :action))
+      |> Enum.find(&(not MapSet.member?(action_names, &1.action)))
+      |> case do
         nil -> nil
         entity -> {:error, unknown_action_error(entity, section, module, action_names)}
       end

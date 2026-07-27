@@ -6,6 +6,8 @@ spark_locals_without_parens = [
   not_delegable: 1,
   override: 1,
   override: 2,
+  semantic_property: 2,
+  semantic_type: 1,
   type: 1,
   unrouted: 1,
   warn_on_missing_authorizers?: 1

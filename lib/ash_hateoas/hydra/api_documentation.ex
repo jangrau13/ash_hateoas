@@ -59,6 +59,16 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:supportedOperation" => supported_operations(resource)
     }
     |> put_unless_nil("hydra:description", description(resource))
+    |> put_equivalent_class(AshHateoas.Resource.Info.semantic_type(resource))
+  end
+
+  # A declared well-known type (e.g. schema.org) is advertised as an
+  # `owl:equivalentClass`, so a client that knows that vocabulary can treat this
+  # class as the well-known one.
+  defp put_equivalent_class(class, nil), do: class
+
+  defp put_equivalent_class(class, semantic_type) do
+    Map.put(class, "owl:equivalentClass", %{"@id" => semantic_type})
   end
 
   @doc """
@@ -66,13 +76,20 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   """
   @spec supported_properties(module(), String.t()) :: [map()]
   def supported_properties(resource, type) do
+    semantic = AshHateoas.Resource.Info.semantic_properties(resource)
+
     resource
     |> public_attributes()
     |> Enum.map(fn attribute ->
+      # A mapped attribute advertises the well-known property IRI directly, so a
+      # client that knows the vocabulary reads the value as that property.
+      property_id =
+        Map.get(semantic, attribute.name) || Context.property_iri(type, attribute.name)
+
       %{
         "@type" => "SupportedProperty",
         "hydra:property" => %{
-          "@id" => Context.property_iri(type, attribute.name),
+          "@id" => property_id,
           "@type" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type))
         },
         "hydra:title" => to_string(attribute.name),

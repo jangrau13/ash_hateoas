@@ -205,6 +205,7 @@ defmodule AshHateoas.Test.Domain do
   resources do
     resource(AshHateoas.Test.Document)
     resource(AshHateoas.Test.Paged)
+    resource(AshHateoas.Test.Person)
     resource(AshHateoas.Test.Comment)
     resource(AshHateoas.Test.PublicNote)
     resource(AshHateoas.Test.Unrouted)

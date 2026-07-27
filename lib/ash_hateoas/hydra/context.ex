@@ -45,10 +45,30 @@ defmodule AshHateoas.Hydra.Context do
       %{
         "ah" => @vocab,
         "xsd" => "http://www.w3.org/2001/XMLSchema#",
+        "owl" => "http://www.w3.org/2002/07/owl#",
+        "schema" => "https://schema.org/",
         "multiStep" => "ah:multiStep",
         "notDelegable" => "ah:notDelegable"
       }
     ]
+  end
+
+  @doc """
+  The `@context` for a resource node, extended with its `semantic_property`
+  mappings.
+
+  Each mapped attribute's flat key is bound to its well-known property IRI, so a
+  client reading the node sees the value as that property (e.g.
+  `"additional_name"` resolving to `https://schema.org/additionalName`). With no
+  mappings this is the base `context/0`.
+  """
+  @spec context_for(%{atom() => String.t()}) :: [String.t() | map()]
+  def context_for(semantic_properties) when map_size(semantic_properties) == 0, do: context()
+
+  def context_for(semantic_properties) do
+    terms = Map.new(semantic_properties, fn {attribute, iri} -> {to_string(attribute), iri} end)
+
+    context() ++ [terms]
   end
 
   @doc """
@@ -70,6 +90,23 @@ defmodule AshHateoas.Hydra.Context do
   def class_iri(type) when is_binary(type) do
     @vocab <> Macro.camelize(type)
   end
+
+  @doc """
+  A node's `@type` value: the resource's own class IRI, plus any declared
+  well-known (e.g. schema.org) type.
+
+  With no semantic type it is a single class IRI string; with one it is a list
+  `[class_iri, semantic_type]`, so a JSON-LD client sees the node as being both.
+
+      iex> AshHateoas.Hydra.Context.node_type("document", nil)
+      "https://ash-hateoas.org/vocab#Document"
+
+      iex> AshHateoas.Hydra.Context.node_type("person", "https://schema.org/Person")
+      ["https://ash-hateoas.org/vocab#Person", "https://schema.org/Person"]
+  """
+  @spec node_type(String.t(), String.t() | nil) :: String.t() | [String.t()]
+  def node_type(type, nil), do: class_iri(type)
+  def node_type(type, semantic_type), do: [class_iri(type), semantic_type]
 
   @doc """
   The property IRI for a type + field name.

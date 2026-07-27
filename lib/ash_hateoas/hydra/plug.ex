@@ -124,7 +124,8 @@ defmodule AshHateoas.Hydra.Plug do
 
       record ->
         node = node(record, type, resource, id, actor, tenant, opts)
-        send_json(conn, 200, Map.put(node, "@context", Context.context()))
+        context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
+        send_json(conn, 200, Map.put(node, "@context", context))
     end
   end
 
@@ -329,8 +330,9 @@ defmodule AshHateoas.Hydra.Plug do
   defp respond_write({:ok, record}, conn, resource, type, actor, tenant, opts, write_opts) do
     id = record_id(record)
     node = node(record, type, resource, id, actor, tenant, opts)
+    context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
     status = if Keyword.get(write_opts, :created, false), do: 201, else: 200
-    send_json(conn, status, Map.put(node, "@context", Context.context()))
+    send_json(conn, status, Map.put(node, "@context", context))
   end
 
   defp respond_write({:error, error}, conn, _resource, _type, _actor, _tenant, _opts, _write_opts) do
@@ -369,7 +371,7 @@ defmodule AshHateoas.Hydra.Plug do
       |> attributes(resource)
       |> Map.merge(%{
         "@id" => member_href(resource, id, opts),
-        "@type" => Context.class_iri(type)
+        "@type" => Context.node_type(type, AshHateoas.Resource.Info.semantic_type(resource))
       })
 
     case Keyword.get(node_opts, :scope, :member) do

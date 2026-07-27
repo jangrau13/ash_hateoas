@@ -25,7 +25,14 @@ defmodule AshHateoas.Resource.Info do
     extension: AshHateoas.Resource,
     sections: [:hateoas, :agentic_hateoas]
 
-  alias AshHateoas.Resource.{Exclusion, Method, NotDelegable, Override, Unrouted}
+  alias AshHateoas.Resource.{
+    Exclusion,
+    Method,
+    NotDelegable,
+    Override,
+    SemanticProperty,
+    Unrouted
+  }
 
   @persisted_routes_key :ash_hateoas_routes
 
@@ -82,6 +89,52 @@ defmodule AshHateoas.Resource.Info do
       {:ok, base} -> base
       _ -> nil
     end
+  end
+
+  @doc """
+  A well-known type IRI to advertise alongside the resource's own class, or
+  `nil` when none is declared.
+
+  A bare token is resolved against schema.org (`"Person"` →
+  `"https://schema.org/Person"`); an absolute IRI (anything containing `"://"`)
+  is returned verbatim.
+  """
+  @spec semantic_type(Ash.Resource.t() | map()) :: String.t() | nil
+  def semantic_type(resource_or_dsl) do
+    case hateoas_semantic_type(resource_or_dsl) do
+      {:ok, declared} when is_binary(declared) -> resolve_semantic_type(declared)
+      _ -> nil
+    end
+  end
+
+  @schema_org "https://schema.org/"
+
+  defp resolve_semantic_type(value), do: resolve_iri(value)
+
+  # A bare token resolves against schema.org; an absolute IRI is used verbatim.
+  defp resolve_iri(value) do
+    if String.contains?(value, "://") do
+      value
+    else
+      @schema_org <> value
+    end
+  end
+
+  @doc """
+  A map of `attribute => well-known property IRI` from the resource's
+  `semantic_property` declarations, ready for a renderer to substitute for the
+  API-local property IRI.
+
+  Bare tokens are resolved against schema.org; absolute IRIs are used verbatim.
+  """
+  @spec semantic_properties(Ash.Resource.t() | map()) :: %{atom() => String.t()}
+  def semantic_properties(resource_or_dsl) do
+    resource_or_dsl
+    |> hateoas()
+    |> Enum.filter(&match?(%SemanticProperty{}, &1))
+    |> Map.new(fn %SemanticProperty{} = mapping ->
+      {mapping.attribute, resolve_iri(mapping.iri)}
+    end)
   end
 
   @doc """

@@ -53,7 +53,14 @@ defmodule AshHateoas.MixProject do
 
   defp deps do
     [
-      {:ash, "~> 3.29"},
+      # Patched Ash (jangrau13/ash @ arg-gated-strict-check): policy strict-check
+      # returns `:unknown` rather than `false` for an argument-gated filter when
+      # the argument is absent. The affordance layer probes `Ash.can?/3` with no
+      # arguments to decide what to advertise, so without this an action gated on
+      # an argument (`authorize_if expr(^arg(:tier) == "public")`) is wrongly
+      # dropped from the advertised surface. `override: true` because transitive
+      # deps still ask for hex `~> 3.x`.
+      {:ash, path: "../ash", override: true},
       {:spark, "~> 2.6"},
       {:jason, "~> 1.4"},
       # Required: the Hydra transport ships a Plug.
