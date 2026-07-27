@@ -10,7 +10,7 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Document, Endpoint, HydraEndpoint, Order}
+  alias AshHateoas.Test.{Actor, Document, Endpoint, HydraEndpoint, Order, Paged}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
@@ -236,6 +236,45 @@ defmodule AshHateoas.Hydra.PlugTest do
       # @viewer is neither admin nor owner -> update policy denies
       conn = request(:patch, "/documents/#{doc.id}", @viewer, %{"title" => "Hijacked"})
       assert conn.status in [403, 404]
+    end
+  end
+
+  describe "pagination" do
+    setup do
+      for i <- 1..5 do
+        Paged
+        |> Ash.Changeset.for_create(:create, %{label: "P#{i}"})
+        |> Ash.create!(authorize?: false)
+      end
+
+      :ok
+    end
+
+    test "a paged collection carries a PartialCollectionView with page links" do
+      coll = body(get("/paged?limit=2&offset=0", @admin))
+
+      assert coll["@type"] == "Collection"
+      assert length(coll["hydra:member"]) == 2
+      assert coll["hydra:totalItems"] >= 5
+
+      view = coll["hydra:view"]
+      assert view["@type"] == "PartialCollectionView"
+      assert view["hydra:first"] =~ "offset=0"
+      assert view["hydra:next"] =~ "offset=2"
+      # first page has no previous
+      refute Map.has_key?(view, "hydra:previous")
+    end
+
+    test "a middle page carries previous and next" do
+      view = body(get("/paged?limit=2&offset=2", @admin))["hydra:view"]
+
+      assert view["hydra:previous"] =~ "offset=0"
+      assert view["hydra:next"] =~ "offset=4"
+    end
+
+    test "an unpaginated resource emits no view" do
+      coll = body(get("/documents", @admin))
+      refute Map.has_key?(coll, "hydra:view")
     end
   end
 end

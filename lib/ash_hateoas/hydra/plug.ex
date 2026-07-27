@@ -131,9 +131,12 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp serve_collection(conn, resource, type, actor, opts) do
     tenant = Ash.PlugHelpers.get_tenant(conn)
+    page = page_params(conn)
 
-    case read(resource, actor, tenant) do
-      {:ok, records} ->
+    case read(resource, actor, tenant, page) do
+      {:ok, result} ->
+        {records, total, view_map} = paginate(result, resource, type, conn, opts)
+
         members =
           Enum.map(records, fn record ->
             id = record_id(record)
@@ -151,8 +154,9 @@ defmodule AshHateoas.Hydra.Plug do
         document =
           Collection.wrap(members,
             id: collection_href(resource, opts),
-            total_items: length(records),
-            operations: operations
+            total_items: total,
+            operations: operations,
+            view_map: view_map
           )
           |> Map.put("@context", Context.context())
 
@@ -161,6 +165,81 @@ defmodule AshHateoas.Hydra.Plug do
       :error ->
         send_error(conn, 403, "Forbidden")
     end
+  end
+
+  # `?limit=&offset=` (or the JSON:API-style `?page[limit]=&page[offset]=`) are
+  # parsed into Ash offset-pagination options, applied only when the read action
+  # supports pagination — otherwise the params are ignored and a full read runs.
+  defp page_params(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    params = conn.query_params
+
+    limit = params["limit"] || get_in(params, ["page", "limit"])
+    offset = params["offset"] || get_in(params, ["page", "offset"])
+
+    if is_nil(limit) and is_nil(offset) do
+      []
+    else
+      # `count: true` asks Ash for the total so `hydra:totalItems` and the
+      # first/last/next view links can be computed.
+      [count: true]
+      |> put_int(:limit, limit)
+      |> put_int(:offset, offset)
+    end
+  end
+
+  defp put_int(opts, _key, nil), do: opts
+
+  defp put_int(opts, key, value) do
+    case Integer.parse(to_string(value)) do
+      {int, _} -> Keyword.put(opts, key, int)
+      _ -> opts
+    end
+  end
+
+  # An offset page carries results + count; a plain list has neither. Build the
+  # PartialCollectionView links only for a real page.
+  defp paginate(%Ash.Page.Offset{} = page, resource, _type, conn, opts) do
+    total = page.count || length(page.results)
+    limit = page.limit
+    offset = page.offset || 0
+
+    view =
+      Collection.view(
+        id: page_href(resource, opts, conn, limit, offset),
+        first: page_href(resource, opts, conn, limit, 0),
+        previous: prev_href(resource, opts, conn, limit, offset),
+        next: next_href(resource, opts, conn, limit, offset, total),
+        last: last_href(resource, opts, conn, limit, total)
+      )
+
+    {page.results, total, view}
+  end
+
+  defp paginate(records, _resource, _type, _conn, _opts) when is_list(records) do
+    {records, length(records), nil}
+  end
+
+  defp page_href(resource, opts, _conn, limit, offset) do
+    base = collection_href(resource, opts)
+    "#{base}?limit=#{limit}&offset=#{max(offset, 0)}"
+  end
+
+  defp prev_href(_resource, _opts, _conn, _limit, offset) when offset <= 0, do: nil
+  defp prev_href(resource, opts, conn, limit, offset),
+    do: page_href(resource, opts, conn, limit, offset - (limit || 0))
+
+  defp next_href(_resource, _opts, _conn, nil, _offset, _total), do: nil
+
+  defp next_href(resource, opts, conn, limit, offset, total) do
+    if offset + limit < total, do: page_href(resource, opts, conn, limit, offset + limit), else: nil
+  end
+
+  defp last_href(_resource, _opts, _conn, nil, _total), do: nil
+
+  defp last_href(resource, opts, conn, limit, total) do
+    last_offset = max(div(total - 1, limit) * limit, 0)
+    page_href(resource, opts, conn, limit, last_offset)
   end
 
   # ── Writes ──────────────────────────────────────────────────────────────────
@@ -439,13 +518,33 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> nil
   end
 
-  defp read(resource, actor, tenant) do
-    case Ash.read(resource, actor: actor, tenant: tenant, authorize?: true) do
-      {:ok, records} -> {:ok, records}
+  defp read(resource, actor, tenant, page) do
+    read_opts = [actor: actor, tenant: tenant, authorize?: true]
+
+    # Paginate only when page params were supplied AND the primary read declares
+    # pagination support — passing `page:` to an unpaginated action raises.
+    read_opts =
+      if page != [] and paginatable?(resource) do
+        Keyword.put(read_opts, :page, page)
+      else
+        read_opts
+      end
+
+    case Ash.read(resource, read_opts) do
+      {:ok, result} -> {:ok, result}
       _ -> :error
     end
   rescue
     _ -> :error
+  end
+
+  defp paginatable?(resource) do
+    case Ash.Resource.Info.primary_action(resource, :read) do
+      %{pagination: pagination} when not is_nil(pagination) and pagination != false -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp record_id(record) do

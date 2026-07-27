@@ -18,6 +18,8 @@ defmodule AshHateoas.Hydra.Collection do
     * `:operations` — collection-level operations (e.g. `create`) to attach.
     * `:view` — a page-links keyword (`first`/`previous`/`next`/`last`) turned
       into a `PartialCollectionView`; omitted when empty.
+    * `:view_map` — an already-built `PartialCollectionView` map (or nil); wins
+      over `:view` when given.
   """
   @spec wrap([map()], keyword()) :: map()
   def wrap(members, opts \\ []) do
@@ -28,7 +30,7 @@ defmodule AshHateoas.Hydra.Collection do
     |> put_unless_nil("@id", Keyword.get(opts, :id))
     |> put_unless_nil("hydra:totalItems", Keyword.get(opts, :total_items))
     |> merge_operations(Keyword.get(opts, :operations, %{}))
-    |> put_view(view(Keyword.get(opts, :view, [])))
+    |> put_view(Keyword.get(opts, :view_map) || view(Keyword.get(opts, :view, [])))
   end
 
   @doc """
