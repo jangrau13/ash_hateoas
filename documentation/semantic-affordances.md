@@ -14,6 +14,47 @@ concepts a standard already covers.
 Every vocabulary below was verified against its live/normative source (listed
 under Sources), not from memory.
 
+## Choosing the vocabulary — not only schema.org
+
+schema.org is the **default**, not a hard-wiring. `semantic_type`,
+`semantic_property` and `semantic_action` each accept either form:
+
+- an **absolute IRI** (anything containing `"://"`) — used **verbatim**, so **any
+  ontology works with no configuration at all**:
+
+  ```elixir
+  hateoas do
+    semantic_type "http://www.ease-crc.org/ont/SOMA.owl#Grasping"
+    semantic_property :force, "http://www.ease-crc.org/ont/SOMA.owl#hasForceValue"
+    semantic_action  :pick,  "http://www.ease-crc.org/ont/SOMA.owl#Picking"
+  end
+  ```
+
+- a **bare token** — a convenience expanded against the *configured* semantic
+  vocabulary. That vocabulary defaults to schema.org, but a customer whose
+  resources are typed by a different ontology can make theirs the default:
+
+  ```elixir
+  config :ash_hateoas,
+    semantic_vocab: [
+      base: "http://www.ease-crc.org/ont/SOMA.owl#",
+      prefix: "soma"
+    ]
+  ```
+
+  Now a bare `semantic_type "Grasping"` resolves to
+  `http://www.ease-crc.org/ont/SOMA.owl#Grasping`, and the emitted `@context`
+  declares `"soma"` as its prefix so those IRIs compact. The built-in `schema`
+  prefix is **always** kept, so a resource can still write absolute schema.org
+  IRIs even when its default vocabulary is something else — vocabularies mix
+  freely per attribute/action.
+
+Only what a **bare** token means changes; absolute IRIs are never touched. See
+`AshHateoas.SemanticVocab`. (The method-inferred `schema:*Action` fallbacks for
+`potentialAction` remain schema.org — an un-annotated action's Action subtype is
+schema.org's CRUD verb; give it your ontology's verb with an explicit
+`semantic_action`.)
+
 ## The layers
 
 | Layer | Native term (kept) | Standard annotation (added) | Vocabulary |

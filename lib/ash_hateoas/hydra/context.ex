@@ -52,7 +52,17 @@ defmodule AshHateoas.Hydra.Context do
         "schema" => "https://schema.org/",
         "odrl" => "http://www.w3.org/ns/odrl/2/"
       }
+      |> put_semantic_vocab()
     ]
+  end
+
+  # Declare the configured semantic-vocabulary prefix (schema.org by default),
+  # so a customer's own ontology base compacts under their chosen prefix. The
+  # built-in `schema` binding above is always kept, so a resource may still write
+  # absolute schema.org IRIs even when the default vocab is something else.
+  defp put_semantic_vocab(terms) do
+    prefix = AshHateoas.SemanticVocab.prefix()
+    Map.put_new(terms, prefix, AshHateoas.SemanticVocab.base())
   end
 
   @doc """

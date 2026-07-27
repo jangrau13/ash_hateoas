@@ -96,9 +96,10 @@ defmodule AshHateoas.Resource.Info do
   A well-known type IRI to advertise alongside the resource's own class, or
   `nil` when none is declared.
 
-  A bare token is resolved against schema.org (`"Person"` →
-  `"https://schema.org/Person"`); an absolute IRI (anything containing `"://"`)
-  is returned verbatim.
+  A bare token is resolved against the configured semantic vocabulary — schema.org
+  by default (`"Person"` → `"https://schema.org/Person"`); an absolute IRI
+  (anything containing `"://"`) is returned verbatim. See
+  `AshHateoas.SemanticVocab`.
   """
   @spec semantic_type(Ash.Resource.t() | map()) :: String.t() | nil
   def semantic_type(resource_or_dsl) do
@@ -108,25 +109,19 @@ defmodule AshHateoas.Resource.Info do
     end
   end
 
-  @schema_org "https://schema.org/"
-
   defp resolve_semantic_type(value), do: resolve_iri(value)
 
-  # A bare token resolves against schema.org; an absolute IRI is used verbatim.
-  defp resolve_iri(value) do
-    if String.contains?(value, "://") do
-      value
-    else
-      @schema_org <> value
-    end
-  end
+  # A bare token resolves against the configured semantic vocabulary (schema.org
+  # by default); an absolute IRI is used verbatim. See `AshHateoas.SemanticVocab`.
+  defp resolve_iri(value), do: AshHateoas.SemanticVocab.resolve(value)
 
   @doc """
   A map of `attribute => well-known property IRI` from the resource's
   `semantic_property` declarations, ready for a renderer to substitute for the
   API-local property IRI.
 
-  Bare tokens are resolved against schema.org; absolute IRIs are used verbatim.
+  Bare tokens are resolved against the configured semantic vocabulary (schema.org
+  by default); absolute IRIs are used verbatim.
   """
   @spec semantic_properties(Ash.Resource.t() | map()) :: %{atom() => String.t()}
   def semantic_properties(resource_or_dsl) do
@@ -144,7 +139,8 @@ defmodule AshHateoas.Resource.Info do
   `schema:potentialAction` type.
 
   Only overrides are present; an action without one falls back to the subtype
-  inferred from its CRUD type. Bare tokens are resolved against schema.org;
+  inferred from its CRUD type. Bare tokens are resolved against the configured
+  semantic vocabulary (schema.org by default);
   absolute IRIs are used verbatim.
   """
   @spec semantic_actions(Ash.Resource.t() | map()) :: %{atom() => String.t()}
