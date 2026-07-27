@@ -22,6 +22,11 @@ defmodule AshHateoas.Test.Order do
     private? true
   end
 
+  hateoas do
+    type "order"
+    base "/orders"
+  end
+
   json_api do
     type "order"
 

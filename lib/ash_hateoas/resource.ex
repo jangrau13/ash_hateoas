@@ -167,6 +167,30 @@ defmodule AshHateoas.Resource do
     ],
     entities: [@exclude, @override, @unrouted, @method],
     schema: [
+      type: [
+        type: {:or, [:string, {:literal, nil}]},
+        default: nil,
+        doc: """
+        The resource's type — its vocabulary segment and the identifier a client
+        uses to name the type on the wire.
+
+        Optional. When not declared it is inferred from the resource's module
+        name: the last segment, underscored (`MyApp.Blog.Comment` → `"comment"`).
+        It is deliberately **not** pluralised — see `base` and the note under
+        `AshHateoas.Resource.Transformers.DeriveActionRoutes` on ash#31. Declare
+        it explicitly to override the inferred value.
+        """
+      ],
+      base: [
+        type: {:or, [:string, {:literal, nil}]},
+        default: nil,
+        doc: """
+        The base path for this resource's routes (`"/blog/document"`).
+
+        Optional. Derived from the domain's short name and `type` when omitted
+        (`MyApp.Blog` + `"document"` → `"/blog/document"`).
+        """
+      ],
       enabled?: [
         type: {:or, [:boolean, {:literal, nil}]},
         default: nil,
@@ -234,7 +258,6 @@ defmodule AshHateoas.Resource do
   use Spark.Dsl.Extension,
     sections: [@hateoas, @agentic_hateoas],
     transformers: [
-      AshHateoas.Resource.Transformers.MarkPrimaryGet,
       AshHateoas.Resource.Transformers.DeriveActionRoutes,
       AshHateoas.Resource.Transformers.DeriveRelationshipRoutes,
       AshHateoas.Resource.Transformers.EnforceNotDelegable

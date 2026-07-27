@@ -278,13 +278,9 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
   defp get_routes(dsl_state), do: routes_of_type(dsl_state, :get)
 
   defp routes_of_type(dsl_state, type) do
-    if Code.ensure_loaded?(AshJsonApi.Resource.Info) do
-      dsl_state
-      |> AshJsonApi.Resource.Info.routes([])
-      |> Enum.filter(&(&1.type == type))
-    else
-      []
-    end
+    dsl_state
+    |> AshHateoas.Resource.Info.routes()
+    |> Enum.filter(&(&1.type == type))
   rescue
     _ -> []
   end

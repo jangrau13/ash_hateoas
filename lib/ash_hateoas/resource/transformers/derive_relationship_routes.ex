@@ -1,75 +1,49 @@
 defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
   @moduledoc """
-  Derives `related` and `relationship` routes for public relationships, so a
-  record's `relationships` carry links (R9, "walk the data graph").
-
-  `ash_json_api` renders `relationships.<name>.links.related` and `.self` from
-  declared `related`/`relationship` routes. Declare none and the serialized
-  record still lists the relationship — but with an empty `links` object. The
-  relationship is public, loadable and routed on the other side; nothing says
-  where it lives. A client told to follow links and construct nothing reaches a
-  dead end at every edge of the graph.
+  Derives `related` and `relationship` routes for public to-many relationships,
+  so a record can carry links to its related collections (R9, "walk the data
+  graph").
 
   Everything needed is already declared: the relationship is public, its
-  destination has a JSON:API type, and the source has a read action. So the
-  routes are derived rather than demanded of the author — the same reasoning as
+  destination has a type, and the source has a read action. So the routes are
+  derived rather than demanded of the author — the same reasoning as
   `AshHateoas.Resource.Transformers.MarkPrimaryGet`, and R1's principle applied
   to structure instead of actions.
 
+  Routes are `AshHateoas.Route` structs appended to the same persisted
+  `:ash_hateoas_routes` key `DeriveActionRoutes` writes.
+
   ## What it will not do
 
-    * **A relationship the author already routed is left alone.** An explicit
-      `related :comments, :read` wins, including its `primary?` and any options.
     * **Private relationships are skipped.** Not public means not part of the
       API surface, and routing one would widen it.
-    * **A destination without a JSON:API type is skipped.** It cannot be
-      serialized as a resource object, so a link to it would not resolve.
+    * **A destination without a type is skipped.** It cannot be addressed as a
+      node, so a link to it would not resolve.
     * **A resource with no primary read action is skipped.** Both route types
-      need a read action to fetch the source record, and picking one when
-      several exist is the author's call.
-    * **`belongs_to` and `has_one` are skipped**, pending an upstream fix.
-      `ash_json_api` 1.7.1 raises `FunctionClauseError` in
-      `encode_primary_key/1` when serializing a to-one `relationship` route: it
-      is handed a list where it expects a record. The same crash occurs with a
-      hand-declared `relationship :document, :read`, so it is not caused by
-      deriving them — but emitting a route that raises would be worse than
-      emitting none. To-many relationships work, and are derived.
+      need a read action to fetch the source record.
+    * **`belongs_to` and `has_one` are skipped** for now — to-many relationships
+      are the well-defined case; a to-one link is better served as an inline
+      node reference on the record than as a separate collection route.
   """
 
   use Spark.Dsl.Transformer
 
+  alias AshHateoas.Route
   alias Spark.Dsl.Transformer
 
-  # Runs AFTER Ash's own transformers, unlike `MarkPrimaryGet`. Relationships
-  # are populated by a transformer (belongs_to generates its source attribute,
-  # among other things), so reading them before that runs finds nothing —
-  # which is a silent no-op rather than an error.
+  @persisted_routes_key :ash_hateoas_routes
+
+  # Runs after EVERY Ash transformer: relationships are not in the DSL state
+  # until Ash's own transformers have populated them, and reading earlier finds
+  # an empty list (a silent no-op rather than an error).
   #
-  # Still before `ash_json_api`'s, so the routes exist by the time it reads
-  # them.
-  # Runs after EVERY Ash transformer, unlike `MarkPrimaryGet`. Relationships
-  # are not in the DSL state until Ash's own transformers have populated them —
-  # reading earlier finds an empty list, which is a silent no-op rather than an
-  # error.
-  # Also after `DeriveActionRoutes`, which must see a route list containing only
-  # what the author wrote. The `related`/`relationship` routes derived here
-  # carry `action: :read`, and that transformer treats any route naming an
-  # action as the author having claimed it — so running first would make the
-  # primary read look hand-routed and suppress its `get`/`index` entirely.
+  # Also after `DeriveActionRoutes`, so the action routes it persists are read
+  # here and appended to rather than overwritten.
   @impl true
   def after?(AshHateoas.Resource.Transformers.DeriveActionRoutes), do: true
 
   def after?(module) do
     module |> Module.split() |> Enum.take(3) == ~w(Ash Resource Transformers)
-  rescue
-    _ -> false
-  end
-
-  # And before `ash_json_api`'s own, so the derived routes are in place when it
-  # prefixes and validates them.
-  @impl true
-  def before?(module) do
-    module |> Module.split() |> Enum.take(2) == ~w(AshJsonApi Resource)
   rescue
     _ -> false
   end
@@ -85,71 +59,75 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
 
   defp derive(dsl_state) do
     with read when not is_nil(read) <- primary_read(dsl_state),
+         base when not is_nil(base) <- base(dsl_state),
          [_ | _] = relationships <- routable(dsl_state) do
-      {:ok, Enum.reduce(relationships, dsl_state, &add_routes(&2, &1, read))}
+      existing = Transformer.get_persisted(dsl_state, @persisted_routes_key, [])
+      derived = Enum.flat_map(relationships, &routes_for(&1, read, base))
+      {:ok, Transformer.persist(dsl_state, @persisted_routes_key, existing ++ derived)}
     else
       _ -> {:ok, dsl_state}
     end
   rescue
-    # A resource without ash_json_api has no such DSL path.
     _ -> {:ok, dsl_state}
   end
 
   defp routable(dsl_state) do
-    routed = already_routed(dsl_state)
-
     dsl_state
     |> Ash.Resource.Info.relationships()
     |> Enum.filter(fn relationship ->
       relationship.public? and
-        relationship.name not in routed and
         to_many?(relationship) and
-        json_api_type?(relationship.destination)
+        has_type?(relationship.destination)
     end)
   end
 
-  # Both `related` and `relationship` route types carry the relationship name,
-  # so one lookup covers both — a relationship with either declared is treated
-  # as the author's, and left untouched.
-  defp already_routed(dsl_state) do
-    dsl_state
-    |> Transformer.get_entities([:json_api, :routes])
-    |> Enum.filter(&(&1.type in [:get_related, :relationship]))
-    |> Enum.map(& &1.relationship)
-  end
-
-  # See the moduledoc: a to-one `relationship` route raises in ash_json_api
-  # 1.7.1, hand-declared or derived alike. Deriving one would turn a missing
-  # link into a 500.
   defp to_many?(%{cardinality: :many}), do: true
   defp to_many?(_relationship), do: false
 
-  defp add_routes(dsl_state, relationship, read) do
-    Enum.reduce([:related, :relationship], dsl_state, fn type, dsl_state ->
-      case build_route(type, relationship.name, read) do
-        {:ok, route} ->
-          Transformer.add_entity(dsl_state, [:json_api, :routes], route)
-
-        _ ->
-          dsl_state
-      end
-    end)
+  defp routes_for(relationship, read, base) do
+    [
+      %Route{
+        type: :related,
+        relationship: relationship.name,
+        action: read,
+        route: "#{base}/:id/#{relationship.name}",
+        primary?: true
+      },
+      %Route{
+        type: :relationship,
+        relationship: relationship.name,
+        action: read,
+        route: "#{base}/:id/relationships/#{relationship.name}",
+        primary?: true
+      }
+    ]
   end
 
-  # `:route` is omitted, not passed as nil. Both entities make it optional and
-  # fill it in via their own `set_related_route/1` / `set_relationship_route/1`
-  # transform — `:id/<name>` and `:id/relationships/<name>`. Writing those paths
-  # here would duplicate a convention `ash_json_api` owns and may change; the
-  # base schema also declares `:route` required, so `nil` is rejected outright.
-  defp build_route(type, relationship, read) do
-    Transformer.build_entity(
-      AshJsonApi.Resource,
-      [:json_api, :routes],
-      type,
-      relationship: relationship,
-      action: read,
-      primary?: true
-    )
+  defp base(dsl_state) do
+    with nil <- AshHateoas.Resource.Info.base(dsl_state),
+         type when is_binary(type) <- AshHateoas.Resource.Info.type(dsl_state),
+         domain when is_binary(domain) <- domain_short_name(dsl_state) do
+      "/#{domain}/#{type}"
+    else
+      declared when is_binary(declared) -> declared
+      _ -> nil
+    end
+  end
+
+  defp domain_short_name(dsl_state) do
+    case Transformer.get_persisted(dsl_state, :domain) do
+      nil -> nil
+      domain -> module_short_name(domain)
+    end
+  end
+
+  defp module_short_name(domain) do
+    domain
+    |> Module.split()
+    |> List.last()
+    |> Macro.underscore()
+  rescue
+    _ -> nil
   end
 
   defp primary_read(dsl_state) do
@@ -161,13 +139,12 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
     _ -> nil
   end
 
-  # No `Code.ensure_loaded?` guard. During compilation the destination module is
-  # typically still being compiled, so it answers false and every relationship
-  # would be skipped — silently, since the result is an empty list rather than
-  # an error. `AshJsonApi.Resource.Info.type/1` reads the DSL and works anyway;
-  # the rescue covers a destination that genuinely has no json_api section.
-  defp json_api_type?(destination) do
-    not is_nil(AshJsonApi.Resource.Info.type(destination))
+  # During compilation the destination module is typically still compiling, so
+  # a `Code.ensure_loaded?` guard would answer false and skip every
+  # relationship silently. `AshHateoas.Resource.Info.type/1` reads the DSL (or
+  # infers from the module name) and works anyway.
+  defp has_type?(destination) do
+    not is_nil(AshHateoas.Resource.Info.type(destination))
   rescue
     _ -> false
   end

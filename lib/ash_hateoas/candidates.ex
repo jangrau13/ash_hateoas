@@ -2,33 +2,37 @@ defmodule AshHateoas.Candidates do
   @moduledoc """
   Builds the candidate action set — stage 1 of the backbone (§3).
 
-  Candidates are the actions reachable via the resource's declared JSON:API
-  routes, minus any the author has excluded. Where `ash_json_api` is absent the
-  set falls back to the resource's actions directly (§5.3), so the core works
-  without any transport installed.
+  Candidates are the actions reachable via the resource's derived routes, minus
+  any the author has excluded. Where a resource declares no routes at all the
+  set falls back to the resource's actions directly, so the backbone works even
+  before route derivation has run.
 
   Nothing here does authorization or state reasoning — those are gates.
   """
 
+  alias AshHateoas.Route
+
   @typedoc "An action paired with the route that exposes it, if any"
-  @type candidate :: {struct(), struct() | nil}
+  @type candidate :: {struct(), Route.t() | nil}
 
   @doc """
   Actions reachable for `resource`, as `{action, route}` pairs.
 
-  `route` is `nil` when there is no `ash_json_api` route for the action — either
-  because the dependency is absent, or because the action is not routed. An
-  affordance without a route still has a name and its fields, which is all a
-  caller reading the backbone directly needs; only the `href` is missing.
+  `route` is `nil` when there is no route for the action — either because
+  derivation has not run, or because the action is `unrouted`. An affordance
+  without a route still has a name and its fields, which is all a caller reading
+  the backbone directly needs; only the `href` is missing.
 
   `kind` selects which actions are eligible:
 
     * `:record` — actions that operate on an existing record
     * `:collection` — actions that operate on the type (creates and index reads)
+
+  `_domains` is accepted for call-site compatibility; routes are resource-level.
   """
   @spec for_resource(module(), [module()], :record | :collection) :: [candidate()]
-  def for_resource(resource, domains, kind) do
-    routes = routes(resource, domains)
+  def for_resource(resource, _domains, kind) do
+    routes = routes(resource)
 
     if routes == [] do
       resource
@@ -48,28 +52,15 @@ defmodule AshHateoas.Candidates do
     end
   end
 
-  @doc """
-  Whether `ash_json_api` route introspection is available.
-  """
-  @spec routes_available?() :: boolean()
-  def routes_available?, do: Code.ensure_loaded?(AshJsonApi.Resource.Info)
-
-  # Routes are declared at BOTH domain and resource level. The arity-1 form
-  # returns only resource-level routes, so the domains must be passed or the
-  # candidate set is silently half-empty.
-  defp routes(resource, domains) do
-    if routes_available?() do
-      AshJsonApi.Resource.Info.routes(resource, List.wrap(domains))
-    else
-      []
-    end
+  defp routes(resource) do
+    AshHateoas.Resource.Info.routes(resource)
   rescue
     _ -> []
   end
 
   # Route types that address a single existing record vs. the collection.
   # :index is a read over the type; :post creates into it. Relationship routes
-  # are navigation, not affordances, and AshJsonApi already emits those links.
+  # are navigation, not affordances.
   @record_route_types [:get, :patch, :delete, :route]
   @collection_route_types [:index, :post, :route]
 

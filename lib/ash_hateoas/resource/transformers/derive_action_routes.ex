@@ -4,7 +4,12 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
 
   A resource declaring `defaults [:read, :create, :update, :destroy]` and an
   `update :publish` gets the five REST routes and `/:id/publish` without writing
-  a `routes` block beyond its `base`. Only deviations are declared.
+  any routes by hand — it declares a `type` (or lets one be inferred from its
+  module name) and nothing else.
+
+  Routes are `AshHateoas.Route` structs persisted under the `ash_hateoas`-owned
+  key `:ash_hateoas_routes`. Owning the route model is what lets the package
+  serve Hydra without `ash_json_api`.
 
   ## The default this inverts
 
@@ -23,10 +28,6 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
       between a rename and silent publication.
     * Policies remain the actual gate. An action being routed is not an action
       being permitted, and `Ash.can?/3` still decides what any actor may invoke.
-
-  Authors with actions that must never be reachable — ones called by a `change`
-  module, ones trusting a pre-verified payload, bulk administrative ones —
-  must now say so. Saying nothing publishes them.
 
   ## What it derives
 
@@ -47,19 +48,17 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
 
   ## What it will not do
 
-    * **An action the author already routed is left alone.** A declared route
-      wins entirely, including its path and options. A partial `routes` block is
-      a partial declaration, not an opt-out for the rest of the resource.
     * **An `unrouted` action gets nothing.**
-    * **A resource with no `json_api` section is skipped**, having no routes
-      path to write into.
     * **Embedded resources are skipped** — no routes, no identity, nothing to
       address.
   """
 
   use Spark.Dsl.Transformer
 
+  alias AshHateoas.Route
   alias Spark.Dsl.Transformer
+
+  @persisted_routes_key :ash_hateoas_routes
 
   # Relationships and primary-action flags are populated by Ash's own
   # transformers, so reading before they run finds an incomplete picture —
@@ -67,15 +66,6 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   @impl true
   def after?(module) do
     module |> Module.split() |> Enum.take(3) == ~w(Ash Resource Transformers)
-  rescue
-    _ -> false
-  end
-
-  # Before `ash_json_api`'s own, so derived routes are in place by the time it
-  # prefixes and validates them.
-  @impl true
-  def before?(module) do
-    module |> Module.split() |> Enum.take(2) == ~w(AshJsonApi Resource)
   rescue
     _ -> false
   end
@@ -92,42 +82,19 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   defp derive(dsl_state) do
     skip = skipped(dsl_state)
 
-    dsl_state
-    |> Ash.Resource.Info.actions()
-    |> Enum.reject(&(&1.name in skip))
-    |> Enum.reduce(dsl_state, &add_routes(&2, &1, dsl_state))
-    |> derive_base()
-    |> persist_authored_generics(dsl_state)
-    |> then(&{:ok, &1})
+    routes =
+      dsl_state
+      |> Ash.Resource.Info.actions()
+      |> Enum.reject(&(&1.name in skip))
+      |> Enum.flat_map(&build_routes(dsl_state, &1))
+
+    {:ok, Transformer.persist(dsl_state, @persisted_routes_key, routes)}
   rescue
-    # A resource without ash_json_api has no such DSL path.
     _ -> {:ok, dsl_state}
   end
 
-  # Which generic actions the AUTHOR routed by hand, recorded before this
-  # transformer adds its own.
-  #
-  # `AshHateoas.Resource.Verifiers.VerifyActions` needs the distinction and
-  # cannot recover it: verifiers run after transformers, and a derived generic
-  # route is the same `:route` entity, carrying the same `:method` field, as a
-  # hand-written one. By then "the author stated POST" and "we assumed POST"
-  # look identical — and the verifier warns about exactly that difference.
-  defp persist_authored_generics(dsl_state, original_dsl) do
-    authored =
-      original_dsl
-      |> Transformer.get_entities([:json_api, :routes])
-      |> Enum.filter(&Map.has_key?(&1, :method))
-      |> Enum.map(& &1.action)
-      |> Enum.reject(&is_nil/1)
-
-    Transformer.persist(dsl_state, :ash_hateoas_authored_generic_routes, authored)
-  rescue
-    _ -> dsl_state
-  end
-
-  # `base` is the last thing an author would otherwise have to write, and both
-  # halves of it are already declared: the domain's `short_name` and the
-  # json_api `type`. `MyApp.Blog.Comment` with `type "comment"` becomes
+  # The base path, from two declared facts: the domain's short name and the
+  # resource's `type`. `MyApp.Blog.Comment` with `type "comment"` becomes
   # `/blog/comment`.
   #
   # The type is used verbatim — NOT pluralised. ash#31 removed exactly this
@@ -138,24 +105,14 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # wrong base makes every URL for that resource wrong. URLs are public API and
   # cost more to correct than a table name.
   #
-  # So the singular is deliberate, and `base` stays available for an author who
-  # wants the conventional plural. Deriving `/blog/comment` from two declared
-  # facts is reading declarations; deriving `/blog/comments` would be inventing
-  # one, which is the line this package does not cross.
-  defp derive_base(dsl_state) do
-    with nil <- Transformer.get_option(dsl_state, [:json_api, :routes], :base),
-         segment when is_binary(segment) <- base_segment(dsl_state) do
-      Transformer.set_option(dsl_state, [:json_api, :routes], :base, segment)
-    else
-      _ -> dsl_state
-    end
-  end
-
-  defp base_segment(dsl_state) do
-    with type when is_binary(type) <- Transformer.get_option(dsl_state, [:json_api], :type),
-         domain when not is_nil(domain) <- domain_short_name(dsl_state) do
+  # An author who wants the conventional plural declares `base` by hand.
+  defp base(dsl_state) do
+    with nil <- AshHateoas.Resource.Info.base(dsl_state),
+         type when is_binary(type) <- AshHateoas.Resource.Info.type(dsl_state),
+         domain when is_binary(domain) <- domain_short_name(dsl_state) do
       "/#{domain}/#{type}"
     else
+      declared when is_binary(declared) -> declared
       _ -> nil
     end
   end
@@ -163,25 +120,16 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # A resource may have no domain at compile time (`domain: nil` with
   # `validate_domain_inclusion?: false` is a real pattern, and several fixtures
   # use it). Without one there is no namespace to derive, so the base is left
-  # alone rather than half-derived.
+  # nil rather than half-derived.
   #
   # The name is taken from the MODULE, never by reading the domain's DSL.
   #
   # `Ash.Domain.Info.short_name/1` would be the obvious call and it deadlocks
   # the compiler: it reads a Spark option, which forces the domain module to
   # finish compiling, while the domain is itself blocked waiting on the
-  # resources it lists. Every resource in a normal app fails with
-  # "deadlocked waiting on module MyApp.Domain". The `rescue` here does not
-  # save it either — the compiler raises a CompileError that is fatal by then.
-  #
-  # This cost real debugging time and did not show up in this package's own
-  # tests, because the fixtures use `domain: nil`. It only appears when a
-  # domain actually lists its resources, which is every real application.
-  #
-  # So: derive from the module name, which needs nothing compiled. That is the
-  # same value `short_name` returns unless a domain declares one explicitly in
-  # its `execution` block — rare, and not worth deadlocking every other app to
-  # honour here. An author who does declare one can still set `base` by hand.
+  # resources it lists. So the name comes from the module, which needs nothing
+  # compiled — the same value `short_name` returns unless a domain declares one
+  # explicitly, which is rare and not worth deadlocking every other app for.
   defp domain_short_name(dsl_state) do
     case Transformer.get_persisted(dsl_state, :domain) do
       nil -> nil
@@ -200,46 +148,29 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
     _ -> nil
   end
 
-  # Both halves of "leave it alone": what the author routed by hand, and what
-  # they declared `unrouted`.
   defp skipped(dsl_state) do
-    already_routed(dsl_state) ++ AshHateoas.Resource.Info.unrouted(dsl_state)
+    AshHateoas.Resource.Info.unrouted(dsl_state)
   end
 
-  # Relationship routes are excluded deliberately. They carry `action: :read`
-  # — the read used to fetch the source record — but they are a claim on an
-  # edge, not on the resource's own REST surface. Counting them would make any
-  # resource with a public relationship look as though its primary read were
-  # hand-routed, and silently lose its `get` and `index`.
-  #
-  # `DeriveRelationshipRoutes` declares itself `after?` this transformer for the
-  # same reason. This filter is what makes that ordering a belt-and-braces
-  # detail rather than the only thing holding it up.
-  @relationship_types [:get_related, :relationship]
+  defp build_routes(dsl_state, action) do
+    base = base(dsl_state)
 
-  defp already_routed(dsl_state) do
     dsl_state
-    |> Transformer.get_entities([:json_api, :routes])
-    |> Enum.reject(&(&1.type in @relationship_types))
-    |> Enum.map(& &1.action)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp add_routes(dsl_state, action, original_dsl) do
-    original_dsl
     |> route_specs(action)
-    |> Enum.reduce(dsl_state, fn {type, opts}, acc ->
-      case build_route(type, action.name, opts) do
-        {:ok, route} -> Transformer.add_entity(acc, [:json_api, :routes], route)
-        _ -> acc
-      end
+    |> Enum.map(fn {type, opts} ->
+      %Route{
+        type: type,
+        action: action.name,
+        method: opts[:method],
+        route: prepend(base, opts[:route]),
+        primary?: Keyword.get(opts, :primary?, false)
+      }
     end)
   end
 
-  # `:route` is omitted for the primaries, not passed explicitly: each route
-  # entity fills in its own conventional path (`/:id`, `/`) via its own
-  # transform, and writing those here would duplicate a convention
-  # `ash_json_api` owns and may change.
+  # Non-primary routes carry an explicit sub-path; primaries carry the
+  # conventional member/collection paths, which this transformer now owns since
+  # there is no `ash_json_api` route entity to fill them in.
   defp route_specs(dsl_state, action) do
     cond do
       reactor_compensation?(action) -> []
@@ -260,39 +191,22 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # wearing a member's URL.
   #
   # `get?` is the exact signal, and Ash defines it for this: "expresses that
-  # this action innately only returns a single result... used by extensions to
-  # validate and/or modify behavior". A read that is NOT `get?` returns many, so
-  # it belongs at the collection as an `:index` at `/<name>` — where its public
-  # arguments arrive as query params (`?query=solar`), which is also what makes
-  # it advertise as a COLLECTION affordance rather than one buried under a
-  # record. A `get?` read keeps `/:id/<name>`.
+  # this action innately only returns a single result". A read that is NOT
+  # `get?` returns many, so it belongs at the collection as an `:index` at
+  # `/<name>` — where its public arguments arrive as query params, which is also
+  # what makes it advertise as a COLLECTION affordance. A `get?` read keeps
+  # `/:id/<name>`.
   #
-  # Multiple `:index` routes are now expected — the primary read's `/` and one
-  # per named collection read. `AshHateoas.Navigation` treats the base-path
-  # index as the canonical collection, so the others do not shadow it.
+  # `AshHateoas.Navigation` treats the base-path index as the canonical
+  # collection, so the named ones do not shadow it.
   defp collection_read?(%{type: :read} = action), do: not Map.get(action, :get?, false)
   defp collection_read?(_action), do: false
 
   # An action AshAuthentication generated, rather than one the author wrote.
-  # Two reasons, and they differ by action:
-  #
-  #   * `:get_by_subject` is guarded by a bypass on
-  #     `AshAuthentication.Checks.AshAuthenticationInteraction`, which matches
-  #     only when `private.ash_authentication?` is set on the context — and that
-  #     "will only ever be set in code that is called internally by
-  #     ash_authentication". An HTTP request never carries it, so the route
-  #     would fall through to the remaining policies and deny. An endpoint that
-  #     always 403s is an affordance no client can use.
-  #
-  #   * sign-in and registration ARE meant to be public, but AshAuthentication
-  #     serves them through its own router, which handles the strategy phases,
-  #     token issuance and failure semantics. A JSON:API route to the same
-  #     action is a second path to the same capability that skips all of it.
-  #
-  # The list is read from AshAuthentication's own introspection, never guessed
-  # from action names: `Strategy.actions/1` per configured strategy and add-on,
-  # plus the configured subject-resolver name. An author who renames
-  # `:sign_in_with_password` still gets it skipped.
+  # `:get_by_subject` is guarded by a bypass that only matches in-process calls,
+  # so an HTTP route would always deny; sign-in and registration are served by
+  # AshAuthentication's own router. The list is read from AshAuthentication's
+  # introspection, never guessed from action names.
   defp authentication_action?(dsl_state, action) do
     action.name in authentication_actions(dsl_state)
   end
@@ -304,21 +218,13 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
       []
     end
   rescue
-    # A resource without the AshAuthentication extension has no such DSL path.
     _ -> []
   end
 
-  # `Strategy.actions/1` returns PHASE names (`:register`, `:sign_in`), not the
-  # resource action names (`:register_with_password`) — the phase is the step in
-  # the auth flow, the action is what it calls. The action names live on the
-  # strategy struct as `*_action_name` fields, and which fields exist differs
-  # per strategy: password has `register_action_name`, `sign_in_action_name`
-  # and `sign_in_with_token_action_name`; OAuth2 has its own set.
-  #
-  # So every `*_action_name` field is collected rather than any being named
-  # here. A strategy this package has never heard of still gets its actions
-  # skipped, and an author who renames one is still covered — the name is read,
-  # not assumed.
+  # `Strategy.actions/1` returns PHASE names, not resource action names — the
+  # action names live on the strategy struct as `*_action_name` fields, and
+  # which exist differs per strategy. So every `*_action_name` field is
+  # collected rather than any being named here.
   @action_name_suffix "_action_name"
 
   defp strategy_actions(dsl_state) do
@@ -338,94 +244,51 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   end
 
   defp subject_action(dsl_state) do
-    case AshAuthentication.Info.authentication_get_by_subject_action_name(dsl_state) do
-      {:ok, name} -> [name]
-      _ -> []
-    end
+    # `authentication_get_by_subject_action_name/1` is typed to return
+    # `{:ok, name}`, so only that clause is matched. The `rescue` still guards
+    # the runtime case where the function is unavailable (no AshAuthentication)
+    # or raises — which the type checker does not model.
+    {:ok, name} = AshAuthentication.Info.authentication_get_by_subject_action_name(dsl_state)
+    [name]
   rescue
     _ -> []
   end
 
-  # A Reactor compensation action — the `undo_action` of a `create` or `update`
-  # step. Ash requires exactly this shape and enforces it at compile time:
-  # `Ash.Reactor.Builders.Create.verify_action_takes_changeset/3` matches
-  # `%{arguments: [%{name: :changeset}]}` and errors on anything else. Reactor
-  # hands the undo the changeset that made the row, not the record.
-  #
-  # So no HTTP caller can construct a request for one: an `Ash.Changeset` is a
-  # struct with functions and internal state, not something expressible in a
-  # JSON body. A derived route here would be an affordance that raises when a
-  # client follows it, which is worse than no affordance — the same reasoning
-  # that skips to-one relationship routes in `DeriveRelationshipRoutes`.
-  #
-  # This is read, not declared: the shape IS the fact, so an author does not
-  # restate it with `unrouted`. The pattern is deliberately as narrow as Ash's
-  # own — a single argument, named `changeset`. A destroy taking other
-  # arguments is an ordinary endpoint and stays routed.
+  # A Reactor compensation action — the `undo_action` of a `create`/`update`
+  # step. Ash requires it to take a single `changeset` argument, which no HTTP
+  # caller can construct, so a derived route would raise when followed. The
+  # shape IS the fact, so an author does not restate it with `unrouted`.
   defp reactor_compensation?(%{arguments: [%{name: :changeset}]}), do: true
   defp reactor_compensation?(_action), do: false
 
-  # Generic actions route through `ash_json_api`'s `:route` entity rather than a
-  # verb entity. Two things follow from that, both of which make this the right
-  # target rather than a workaround:
-  #
-  #   * `:route` takes the method as data, so one entity covers every verb.
-  #   * it is exempt from the return-type check the verb entities apply. `get`,
-  #     `index` and `post` require a generic action to return the resource
-  #     struct, because they serialize the result as a resource object; `:route`
-  #     has its own controller and renders whatever the action returns, wrapped
-  #     via `wrap_in_result?` when it is not a resource.
-  #
-  # So `action :tally, :boolean` is routable, and `returns` needs no inspection.
-  #
-  # The method is the one fact not declared anywhere — a generic action is an
-  # escape hatch and says nothing about whether it mutates. POST is the default
-  # because it understates nothing: a client may not cache it or retry it
-  # blindly. An author who knows better says so with `method :tally, :get`.
+  # Generic actions carry their method as data (there is no verb entity), and
+  # the method is the one fact not declared anywhere — a generic action says
+  # nothing about whether it mutates. POST is the default because it understates
+  # nothing. An author who knows better says so with `method :tally, :get`.
   defp generic_specs(dsl_state, action) do
     method = AshHateoas.Resource.Info.method(dsl_state, action.name) || :post
 
-    [
-      {:route,
-       [
-         method: method,
-         route: "/:id/#{action.name}",
-         wrap_in_result?: true
-       ]}
-    ]
+    [{:route, [method: method, route: "/:id/#{action.name}"]}]
   end
 
   defp generic?(%{type: :action}), do: true
   defp generic?(_action), do: false
 
-  # The primary read is the one action yielding two routes: the member and the
-  # collection are both canonically it. `primary?: true` on the `get` is what
-  # makes records carry a `self` link — see `MarkPrimaryGet`, whose job this
-  # subsumes for derived routes.
-  defp primary_specs(:read), do: [{:get, [primary?: true]}, {:index, []}]
-  defp primary_specs(:create), do: [{:post, []}]
-  defp primary_specs(:update), do: [{:patch, []}]
-  defp primary_specs(:destroy), do: [{:delete, []}]
+  # The primary read is the one action yielding two routes: the member `/:id`
+  # and the collection `/`. `primary?: true` on the `get` marks the canonical
+  # record URL a client uses as a node `@id`.
+  defp primary_specs(:read),
+    do: [{:get, [route: "/:id", primary?: true]}, {:index, [route: "/"]}]
+
+  defp primary_specs(:create), do: [{:post, [route: "/"]}]
+  defp primary_specs(:update), do: [{:patch, [route: "/:id"]}]
+  defp primary_specs(:destroy), do: [{:delete, [route: "/:id"]}]
   defp primary_specs(_other), do: []
 
-  # A generic action is neither a read nor a write as far as Ash is concerned,
-  # but it has to be reachable by *some* verb. POST is the honest default: it is
-  # not safe and not idempotent, which is what "arbitrary action" means over
-  # HTTP.
   # This handles the `get?: true` read — one scoped to a single record, which
   # `collection_read?` has already separated out. Such a read belongs at
   # `/:id/<name>` as a `:get`, NOT an `:index`: `index` means "the collection",
-  # and `AshHateoas.Navigation.root/2` reads a type's index route to find its
-  # collection URL. A member read wearing an `:index` made that lookup return a
-  # member path, and the type vanished from the root document — reachable by
-  # URL but not by following links from the entry point, which is the whole of
-  # R9.
-  #
-  # A non-primary read that is NOT `get?` never reaches here — it is a
-  # collection read and routes as an `:index` at `/<name>`. That the two now
-  # split on `get?` is what lets a resource carry several collection reads
-  # (`search`, `recent`, `by_region`) and have each advertise as its own
-  # collection affordance, without any of them shadowing the canonical one.
+  # and navigation reads a type's index route to find its collection URL.
   defp non_primary_type(:read), do: :get
   defp non_primary_type(:create), do: :post
   defp non_primary_type(:update), do: :patch
@@ -436,12 +299,11 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # than a struct access — reading `.primary?` on one raises.
   defp primary?(_dsl_state, action), do: Map.get(action, :primary?, false)
 
-  defp build_route(type, action, opts) do
-    Transformer.build_entity(
-      AshJsonApi.Resource,
-      [:json_api, :routes],
-      type,
-      Keyword.merge([action: action], opts)
-    )
-  end
+  # Every route path is base-qualified here, at derivation time, so readers do
+  # not have to re-join. A resource with no derivable base keeps the bare path,
+  # which is still followable when the whole API is mounted at the root.
+  defp prepend(nil, path), do: path
+  defp prepend(_base, nil), do: nil
+  defp prepend(base, "/"), do: base
+  defp prepend(base, path), do: base <> path
 end

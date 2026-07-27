@@ -14,10 +14,15 @@ defmodule AshHateoas.Test.Document do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource]
+    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
 
   ets do
     private? true
+  end
+
+  hateoas do
+    type "document"
+    base "/documents"
   end
 
   json_api do

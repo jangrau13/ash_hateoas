@@ -27,6 +27,77 @@ defmodule AshHateoas.Resource.Info do
 
   alias AshHateoas.Resource.{Exclusion, Method, NotDelegable, Override, Unrouted}
 
+  @persisted_routes_key :ash_hateoas_routes
+
+  @doc """
+  The resource's declared or inferred type.
+
+  Reads the `hateoas` `type` option; when it is not declared, infers it from the
+  module name — the last segment, underscored (`MyApp.Blog.Comment` →
+  `"comment"`), mirroring `Ash.Domain.default_short_name/0`. Deliberately not
+  pluralised.
+
+  Works both post-compile (given a module) and at transform time (given the DSL
+  state), since the module is persisted under `:module` and inference reads it
+  either way. Returns `nil` only when no module can be resolved.
+  """
+  @spec type(Ash.Resource.t() | map()) :: String.t() | nil
+  def type(resource_or_dsl) do
+    case hateoas_type(resource_or_dsl) do
+      {:ok, declared} when is_binary(declared) -> declared
+      _ -> infer_type(resource_or_dsl)
+    end
+  end
+
+  defp infer_type(resource) when is_atom(resource) and not is_nil(resource) do
+    module_type(resource)
+  end
+
+  # DSL-state form (a map, at transform time): the module is persisted under
+  # `:module`, so inference works before the module has finished compiling.
+  defp infer_type(dsl_map) do
+    case Spark.Dsl.Extension.get_persisted(dsl_map, :module) do
+      module when is_atom(module) and not is_nil(module) -> module_type(module)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp module_type(module) do
+    module
+    |> Module.split()
+    |> List.last()
+    |> Macro.underscore()
+  rescue
+    _ -> nil
+  end
+
+  @doc """
+  The resource's declared base path, or `nil` when it is left to be derived.
+  """
+  @spec base(Ash.Resource.t() | map()) :: String.t() | nil
+  def base(resource_or_dsl) do
+    case hateoas_base(resource_or_dsl) do
+      {:ok, base} -> base
+      _ -> nil
+    end
+  end
+
+  @doc """
+  The package-owned routes derived for this resource.
+
+  Route derivation persists `AshHateoas.Route` structs under an
+  `ash_hateoas`-owned key rather than into `ash_json_api`'s DSL, so the backbone
+  and navigation read them without `ash_json_api` present.
+  """
+  @spec routes(Ash.Resource.t() | map()) :: [AshHateoas.Route.t()]
+  def routes(resource_or_dsl) do
+    Spark.Dsl.Extension.get_persisted(resource_or_dsl, @persisted_routes_key, [])
+  rescue
+    _ -> []
+  end
+
   @doc """
   The HTTP method declared for a generic action, or `nil` if none is.
 

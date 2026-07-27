@@ -25,7 +25,7 @@ defmodule AshHateoas.Navigation do
   actions; in practice that is usually its `:read`.
   """
 
-  alias AshHateoas.JsonApi.Index
+  alias AshHateoas.Index
 
   @doc """
   The root entry document: every type the actor can reach, with its collection
@@ -165,12 +165,8 @@ defmodule AshHateoas.Navigation do
 
   defp canonical_index?(_route), do: true
 
-  defp routes(resource, domains) do
-    if Code.ensure_loaded?(AshJsonApi.Resource.Info) do
-      AshJsonApi.Resource.Info.routes(resource, List.wrap(domains))
-    else
-      []
-    end
+  defp routes(resource, _domains) do
+    AshHateoas.Resource.Info.routes(resource)
   rescue
     _ -> []
   end
