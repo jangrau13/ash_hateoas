@@ -2,7 +2,7 @@ defmodule AshHateoas.ResourceTest do
   use ExUnit.Case, async: true
 
   alias AshHateoas.Resource.Info
-  alias AshHateoas.Test.{Actor, Article, Document, Domain}
+  alias AshHateoas.Test.{Actor, Article, Document, Domain, Unrouted}
 
   @actor %Actor{id: "someone", role: :admin}
 
@@ -15,10 +15,12 @@ defmodule AshHateoas.ResourceTest do
     %{article: article}
   end
 
+  defp routes(resource), do: AshHateoas.Resource.Info.routes(resource)
+
   describe "Info readers" do
     test "extension?/1 distinguishes resources carrying the extension" do
       assert Info.extension?(Article)
-      refute Info.extension?(Document), "Document does not carry AshHateoas.Resource"
+      refute Info.extension?(Unrouted), "Unrouted does not carry AshHateoas.Resource"
     end
 
     test "extension?/1 is false for anything that is not a resource" do
@@ -47,23 +49,27 @@ defmodule AshHateoas.ResourceTest do
       refute Info.not_delegable?(Article, :update)
     end
 
-    # The R10 section subtracts nothing: `publish` is declared not_delegable and
-    # must still be routed and still advertised. Only its execution is gated.
     test "not_delegable does not withhold the action from the surface" do
       refute :publish in Info.unrouted(Article)
       refute :publish in Info.exclusions(Article)
     end
 
     test "an undeclared enabled? reads as nil, not true" do
-      # The generated reader returns the raw declaration. `nil` is what makes
-      # domain inheritance possible — see AshHateoas.Posture. The *effective*
-      # default lives there, not in the schema.
       assert Info.hateoas_enabled?(Article) == nil
       assert AshHateoas.Posture.enabled?(Article, Domain) == true
     end
 
     test "readers accept a record as well as a module", %{article: article} do
       assert Info.exclusions(article) == [:internal_reconcile]
+    end
+
+    test "type/1 reads the declared type" do
+      assert Info.type(Article) == "article"
+    end
+
+    test "type/1 infers from the module name when undeclared" do
+      # Compensating declares no `type`; the last module segment underscored.
+      assert Info.type(AshHateoas.Test.Compensating) == "compensating"
     end
   end
 
@@ -76,9 +82,7 @@ defmodule AshHateoas.ResourceTest do
     end
 
     test "an excluded action is still routed" do
-      routes = AshJsonApi.Resource.Info.routes(Article, [Domain])
-
-      assert Enum.any?(routes, &(&1.action == :internal_reconcile)),
+      assert Enum.any?(routes(Article), &(&1.action == :internal_reconcile)),
              "exclude hides the affordance; it must not remove the route"
     end
 
@@ -112,21 +116,16 @@ defmodule AshHateoas.ResourceTest do
         domain: nil,
         validate_domain_inclusion?: false,
         data_layer: Ash.DataLayer.Ets,
-        extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+        extensions: [AshHateoas.Resource]
 
       ets do
         private?(true)
       end
 
-      json_api do
+      hateoas do
         type("sole_get")
-
-        routes do
-          base("/sole_gets")
-          # Deliberately NOT primary? — the case the transformer repairs.
-          get(:read)
-          index(:read)
-        end
+        base("/sole_gets")
+        warn_on_missing_authorizers?(false)
       end
 
       attributes do
@@ -136,76 +135,61 @@ defmodule AshHateoas.ResourceTest do
       actions do
         defaults([:read])
       end
-
-      hateoas do
-        warn_on_missing_authorizers?(false)
-      end
     end
 
-    test "a sole get route is marked primary, so ash_json_api emits self" do
-      # `ash_json_api` renders `self` from the `:get` route marked `primary?`,
-      # and the option defaults to false. Without this a plain `get :read`
-      # yields records carrying no link to themselves: readable, but with no
-      # URL a link-following client could name them by.
-      #
-      # One `:get` route means "which is canonical" has a single answer, so it
-      # is derived rather than demanded of the author (R1).
+    test "the primary read's get route is marked primary, so a record knows its @id" do
+      # The primary read derives a `get` at `/:id` marked `primary?` — the
+      # canonical URL a client uses as the node @id. One `:get` route means
+      # "which is canonical" has a single answer, so it is derived (R1).
       get_route =
         SoleGet
-        |> AshJsonApi.Resource.Info.routes([])
+        |> AshHateoas.Resource.Info.routes()
         |> Enum.find(&(&1.type == :get))
 
-      assert get_route.primary?,
-             "the sole get route was left non-primary, so records have no self link"
+      assert get_route.primary?
     end
 
     test "other route types are untouched" do
       index =
         SoleGet
-        |> AshJsonApi.Resource.Info.routes([])
+        |> AshHateoas.Resource.Info.routes()
         |> Enum.find(&(&1.type == :index))
 
-      refute index.primary?, "only the get route carries the record's self link"
+      refute index.primary?, "only the get route carries the record's canonical URL"
     end
   end
 
   describe "walking the data graph" do
     alias AshHateoas.Test.Comment
 
-    test "a public relationship gets related and relationship routes" do
-      # `ash_json_api` renders `relationships.<name>.links` from declared
-      # `related`/`relationship` routes, and declares none by default — so a
-      # public relationship serializes as a name with an empty `links` object.
+    test "a public to-many relationship gets related and relationship routes" do
       # The relationship is public, its destination is routed, and the source
       # has a read action: nothing is left for the author to decide (R1).
       types =
         Article
-        |> AshJsonApi.Resource.Info.routes([Domain])
+        |> routes()
         |> Enum.filter(&(&1.relationship == :comments))
         |> Enum.map(& &1.type)
         |> Enum.sort()
 
-      assert types == [:get_related, :relationship]
+      assert types == [:related, :relationship]
     end
 
     test "a to-one relationship is left alone" do
-      # ash_json_api 1.7.1 raises in `encode_primary_key/1` when serializing a
-      # to-one `relationship` route — hand-declared or derived alike. Emitting
-      # a route that 500s is worse than emitting none.
       refute Comment
-             |> AshJsonApi.Resource.Info.routes([Domain])
+             |> routes()
              |> Enum.any?(&(&1.relationship == :document))
     end
 
-    test "the derived route paths are ash_json_api's own convention" do
-      routes =
+    test "the derived relationship route paths follow the convention" do
+      relationship_routes =
         Article
-        |> AshJsonApi.Resource.Info.routes([Domain])
+        |> routes()
         |> Enum.filter(&(&1.relationship == :comments))
         |> Map.new(&{&1.type, &1.route})
 
-      assert routes[:get_related] =~ "/comments"
-      assert routes[:relationship] =~ "/relationships/comments"
+      assert relationship_routes[:related] =~ "/comments"
+      assert relationship_routes[:relationship] =~ "/relationships/comments"
     end
 
     test "a private relationship is not routed" do
@@ -215,19 +199,16 @@ defmodule AshHateoas.ResourceTest do
           domain: nil,
           validate_domain_inclusion?: false,
           data_layer: Ash.DataLayer.Ets,
-          extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+          extensions: [AshHateoas.Resource]
 
         ets do
           private?(true)
         end
 
-        json_api do
+        hateoas do
           type("hidden")
-
-          routes do
-            base("/hiddens")
-            get(:read)
-          end
+          base("/hiddens")
+          warn_on_missing_authorizers?(false)
         end
 
         attributes do
@@ -243,14 +224,10 @@ defmodule AshHateoas.ResourceTest do
         actions do
           defaults([:read])
         end
-
-        hateoas do
-          warn_on_missing_authorizers?(false)
-        end
       end
 
       refute Hidden
-             |> AshJsonApi.Resource.Info.routes([])
+             |> AshHateoas.Resource.Info.routes()
              |> Enum.any?(&(&1.relationship == :document)),
              "a private relationship is not part of the API surface"
     end
@@ -258,12 +235,12 @@ defmodule AshHateoas.ResourceTest do
 
   describe "resources without the extension" do
     test "still produce affordances when called directly" do
-      doc =
-        Document
-        |> Ash.Changeset.for_create(:create, %{title: "T", owner_id: "o"})
+      note =
+        AshHateoas.Test.Unrouted
+        |> Ash.Changeset.for_create(:create, %{label: "T"})
         |> Ash.create!(authorize?: false)
 
-      affordances = AshHateoas.affordances(doc, @actor, domain: Domain)
+      affordances = AshHateoas.affordances(note, @actor, domain: Domain)
 
       assert map_size(affordances) > 0,
              "the backbone is usable without the extension; the extension adds declaration"

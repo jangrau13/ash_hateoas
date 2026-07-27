@@ -19,13 +19,13 @@ defmodule AshHateoas.Test.AuthUser do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshAuthentication, AshHateoas.Resource]
+    extensions: [AshAuthentication, AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
+  hateoas do
     type "auth_user"
   end
 

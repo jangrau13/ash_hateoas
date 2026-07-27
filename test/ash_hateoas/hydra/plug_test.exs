@@ -10,13 +10,10 @@ defmodule AshHateoas.Hydra.PlugTest do
   import Plug.Conn
 
   alias AshHateoas.Hydra.Context
-  alias AshHateoas.Test.{Actor, Document, Endpoint, HydraEndpoint, Order, Paged}
+  alias AshHateoas.Test.{Actor, Document, HydraEndpoint, Order, Paged}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
-
-  # Endpoint alias is imported for symmetry with the JSON:API suite; unused here.
-  _ = Endpoint
 
   defp get(path, actor) do
     conn(:get, path)

@@ -13,21 +13,15 @@ defmodule AshHateoas.Test.Secret do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
+  hateoas do
     type "secret"
-
-    routes do
-      base "/secrets"
-      get :read
-      index :read
-      post :create
-    end
+    base "/secrets"
   end
 
   attributes do

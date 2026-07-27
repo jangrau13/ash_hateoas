@@ -16,22 +16,15 @@ defmodule AshHateoas.Test.AutoRouted do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
-    type "auto_routed"
-
-    routes do
-      base "/auto_routeds"
-      # Nothing else. Every route on this resource is derived.
-    end
-  end
-
   hateoas do
+    type "auto_routed"
+    base "/auto_routeds"
     # Confirms the assumed verb rather than changing it. Declaring it is what
     # silences the warning: the point is that a human chose POST, not that the
     # deriver guessed it. The warning itself is exercised on its own fixture.

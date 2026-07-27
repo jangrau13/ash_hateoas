@@ -9,21 +9,10 @@ defmodule AshHateoas.Test.Quiet do
   use Ash.Resource,
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
-  end
-
-  json_api do
-    type "quiet"
-
-    routes do
-      base "/quiets"
-      get :read, primary?: true
-      index :read
-      post :create
-    end
   end
 
   hateoas do

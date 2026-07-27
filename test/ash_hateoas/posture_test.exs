@@ -63,7 +63,7 @@ defmodule AshHateoas.PostureTest do
     end
 
     test "a switched-off resource is still routed and readable" do
-      routes = AshJsonApi.Resource.Info.routes(Quiet, [Domain])
+      routes = AshHateoas.Resource.Info.routes(Quiet)
 
       assert Enum.any?(routes, &(&1.type == :get)),
              "turning affordances off must not turn the endpoint off"

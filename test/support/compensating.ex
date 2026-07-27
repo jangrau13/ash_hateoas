@@ -17,13 +17,13 @@ defmodule AshHateoas.Test.Compensating do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
+  hateoas do
     type "compensating"
   end
 

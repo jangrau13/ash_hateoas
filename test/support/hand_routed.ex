@@ -1,33 +1,26 @@
 defmodule AshHateoas.Test.HandRouted do
   @moduledoc """
-  A resource that routes one action itself and leaves the rest to derivation.
+  A resource with two same-shaped update actions, both routed by derivation.
 
-  Pins the precedence rule: an author's declaration wins, and derivation fills
-  in only what was left unsaid. `:publish` is routed at a path no convention
-  would produce, so a derived route replacing it would be visible rather than
-  coincidentally identical. `:archive` is the control — same shape, undeclared,
-  so it must be derived.
-
-  A partial `routes` block is a partial declaration, not an opt-out.
+  Under the Hydra transport every route is derived — there is no hand-routing —
+  so `:publish` and `:archive` both derive to `/:id/<name>`. Kept as a
+  multi-update resource; the old "declared route wins" precedence it once pinned
+  no longer exists.
   """
 
   use Ash.Resource,
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
+  hateoas do
     type "hand_routed"
-
-    routes do
-      base "/hand_routeds"
-      patch :publish, route: "/:id/ship-it"
-    end
+    base "/hand_routeds"
   end
 
   attributes do

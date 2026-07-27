@@ -14,7 +14,7 @@ defmodule AshHateoas.Test.Document do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
@@ -23,22 +23,6 @@ defmodule AshHateoas.Test.Document do
   hateoas do
     type "document"
     base "/documents"
-  end
-
-  json_api do
-    type "document"
-
-    routes do
-      base("/documents")
-
-      get(:read)
-      index(:read)
-      post(:create)
-      patch(:update)
-      delete(:destroy)
-      patch(:approve, route: "/:id/approve")
-      patch(:archive, route: "/:id/archive")
-    end
   end
 
   relationships do
@@ -168,24 +152,15 @@ defmodule AshHateoas.Test.PublicNote do
   use Ash.Resource,
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
-    extensions: [AshJsonApi.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private?(true)
   end
 
-  json_api do
+  hateoas do
     type("public_note")
-
-    routes do
-      base("/public_notes")
-      # primary? true makes ash_json_api emit a per-record "self" link, so the
-      # merge has something pre-existing to preserve.
-      get(:read, primary?: true)
-      index(:read)
-      post(:create)
-      delete(:destroy)
-    end
+    base("/public_notes")
   end
 
   attributes do
@@ -225,11 +200,7 @@ end
 defmodule AshHateoas.Test.Domain do
   @moduledoc "Test domain wiring the resources together."
 
-  use Ash.Domain, extensions: [AshJsonApi.Domain]
-
-  json_api do
-    prefix("/api")
-  end
+  use Ash.Domain, extensions: [AshHateoas.Domain]
 
   resources do
     resource(AshHateoas.Test.Document)

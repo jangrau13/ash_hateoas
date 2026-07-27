@@ -23,20 +23,10 @@ defmodule AshHateoas.Test.Derived do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
-  end
-
-  json_api do
-    type "derived"
-
-    routes do
-      base "/deriveds"
-      # Every route here is derived. :unrouted_touch and :admin_only are kept
-      # off the surface by the `hateoas` block below, not by omission.
-    end
   end
 
   hateoas do

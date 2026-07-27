@@ -12,20 +12,15 @@ defmodule AshHateoas.Test.AdminOnly do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
+  hateoas do
     type "admin_only"
-
-    routes do
-      base "/admin_onlys"
-      get :read, primary?: true
-      index :read
-    end
+    base "/admin_onlys"
   end
 
   attributes do

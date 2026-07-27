@@ -12,7 +12,7 @@ defmodule AshHateoas.Test.Comment do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   # `belongs_to :document` is the to-one case, deliberately left underived —
   # see the transformer's moduledoc for the upstream bug it avoids.
@@ -21,14 +21,9 @@ defmodule AshHateoas.Test.Comment do
     private?(true)
   end
 
-  json_api do
-    type("comment")
-
-    routes do
-      base("/comments")
-      # Everything else is derived: the primaries by DeriveActionRoutes, the
-      # relationship links by DeriveRelationshipRoutes.
-    end
+  hateoas do
+    type "comment"
+    base "/comments"
   end
 
   attributes do

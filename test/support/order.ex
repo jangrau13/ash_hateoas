@@ -16,7 +16,7 @@ defmodule AshHateoas.Test.Order do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshStateMachine, AshHateoas.Resource]
+    extensions: [AshStateMachine, AshHateoas.Resource]
 
   ets do
     private? true
@@ -25,21 +25,6 @@ defmodule AshHateoas.Test.Order do
   hateoas do
     type "order"
     base "/orders"
-  end
-
-  json_api do
-    type "order"
-
-    routes do
-      base "/orders"
-      get :read, primary?: true
-      index :read
-      post :create
-      patch :confirm, route: "/:id/confirm"
-      patch :ship, route: "/:id/ship"
-      patch :deliver, route: "/:id/deliver"
-      patch :cancel, route: "/:id/cancel"
-    end
   end
 
   attributes do

@@ -15,18 +15,10 @@ defmodule AshHateoas.Test.GenericGet do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
-  end
-
-  json_api do
-    type "generic_get"
-
-    routes do
-      base "/generic_gets"
-    end
   end
 
   hateoas do

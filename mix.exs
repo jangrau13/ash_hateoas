@@ -56,11 +56,9 @@ defmodule AshHateoas.MixProject do
       {:ash, "~> 3.29"},
       {:spark, "~> 2.6"},
       {:jason, "~> 1.4"},
-      # Required: every rendering path this package ships is a Plug.
+      # Required: the Hydra transport ships a Plug.
       {:plug, "~> 1.16"},
-      # Optional renderings. `optional: true` still fetches/compiles them here,
-      # it only tells Hex not to force them on consumers.
-      {:ash_json_api, "~> 1.7", optional: true},
+      # Optional capabilities the backbone reads when present.
       {:ash_state_machine, "~> 0.2", optional: true},
       # Route derivation skips the actions AshAuthentication generates — they
       # are served by its own router, and the subject resolver is guarded by a
@@ -73,11 +71,6 @@ defmodule AshHateoas.MixProject do
       # Ash.Policy.Authorizer needs a SAT solver to reason about policy
       # combinations. Consumers supply their own; the test suite needs one.
       {:simple_sat, "~> 0.1", only: [:dev, :test]},
-      # `ash_json_api` reaches for `AshJsonApi.OpenApi` when validating a write,
-      # and that module only compiles when `open_api_spex` is present — so a
-      # PATCH or POST through the router raises without it. The test suite
-      # needs it directly, and so does a consumer, in their own deps.
-      {:open_api_spex, "~> 3.18", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: [:dev], runtime: false}
     ]
   end

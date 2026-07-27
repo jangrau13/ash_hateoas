@@ -8,26 +8,15 @@ defmodule AshHateoas.Test.Article do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshJsonApi.Resource, AshHateoas.Resource]
+    extensions: [AshHateoas.Resource]
 
   ets do
     private? true
   end
 
-  json_api do
-    type "article"
-
-    routes do
-      base "/articles"
-      # The primaries are derived. Only the two custom paths are declared —
-      # `/reconcile` is not what `:internal_reconcile` would derive to, so it
-      # has to be said.
-      patch :internal_reconcile, route: "/:id/reconcile"
-      patch :publish, route: "/:id/publish"
-    end
-  end
-
   hateoas do
+    type "article"
+    base "/articles"
     # Routed for internal callers, but never advertised.
     exclude :internal_reconcile
     override :publish, href: "/custom/publish/:id"
