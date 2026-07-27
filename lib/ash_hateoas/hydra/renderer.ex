@@ -3,9 +3,16 @@ defmodule AshHateoas.Hydra.Renderer do
   Projects the affordance envelope onto a resource node's Hydra operations.
 
   Each affordance becomes a `hydra:Operation` (`@type: "Operation"`,
-  `hydra:method`, and — for a write — a `hydra:expects` describing the input as
-  a `hydra:Class` with one `hydra:SupportedProperty` per field). A collection
-  read with query arguments becomes a `hydra:IriTemplate`.
+  `hydra:method`, and — for a write — a `hydra:expects` describing the input as a
+  `hydra:Class` with one `hydra:SupportedProperty` per field, plus a
+  `hydra:returns` naming the resulting class). A collection read with query
+  arguments becomes a `hydra:IriTemplate`.
+
+  Terms are emitted with the `hydra:` prefix. The referenced `@context` maps both
+  `hydra:method` and a bare `method` to the same core-vocabulary IRI, so the two
+  are equivalent after JSON-LD expansion; the prefixed form is kept because it is
+  unambiguous to a raw-JSON reader that does not expand the context (see
+  `documentation/hydra-conformance-notes.md`).
 
   ## Where an operation attaches
 
@@ -74,9 +81,56 @@ defmodule AshHateoas.Hydra.Renderer do
     }
     |> put_unless_nil("hydra:title", affordance.description)
     |> put_expects(affordance, opts)
+    |> put_returns(affordance, opts)
+    |> put_potential_action(affordance, opts)
     |> put_if(affordance.multi_step?, "multiStep", true)
     |> put_if(affordance.not_delegable?, "notDelegable", true)
   end
+
+  # The schema.org description of the operation as an *action* — so a client that
+  # speaks schema.org (a search engine, an assistant) understands the verb even
+  # when it does not speak Hydra. The Action subtype is inferred from the HTTP
+  # method, or overridden per action via `semantic_action`. Its `target` is a
+  # schema.org `EntryPoint` (an action's endpoint descriptor — distinct from this
+  # API's own `ah:EntryPoint` root node).
+  defp put_potential_action(op, %Affordance{} = affordance, opts) do
+    url = href(affordance, opts)
+    method = affordance.method |> to_string() |> String.upcase()
+
+    action = %{
+      "@type" => action_type(affordance, opts),
+      "schema:target" => target(url, method)
+    }
+
+    Map.put(op, "schema:potentialAction", action)
+  end
+
+  defp target(url, method) do
+    %{
+      "@type" => "schema:EntryPoint",
+      "schema:contentType" => "application/ld+json",
+      "schema:httpMethod" => method
+    }
+    |> put_unless_nil("schema:urlTemplate", url)
+  end
+
+  # An explicit `semantic_action` override wins; otherwise the subtype is inferred
+  # from the HTTP method (never guessed from the action name). Bare tokens have
+  # already been resolved to full schema.org IRIs by the info reader; the inferred
+  # subtypes are bare tokens the `schema:` prefix in the @context resolves.
+  defp action_type(%Affordance{name: name, method: method}, opts) do
+    case Keyword.get(opts, :semantic_actions, %{})[name] do
+      iri when is_binary(iri) -> iri
+      _ -> method_action_type(method)
+    end
+  end
+
+  defp method_action_type(:get), do: "schema:ReadAction"
+  defp method_action_type(:post), do: "schema:CreateAction"
+  defp method_action_type(:patch), do: "schema:UpdateAction"
+  defp method_action_type(:put), do: "schema:UpdateAction"
+  defp method_action_type(:delete), do: "schema:DeleteAction"
+  defp method_action_type(_other), do: "schema:Action"
 
   # A named sub-action: a link node carrying the distinct URL and the operation.
   defp link_node(%Affordance{} = affordance, href, opts) do
@@ -97,12 +151,31 @@ defmodule AshHateoas.Hydra.Renderer do
   defp put_expects(op, %Affordance{} = affordance, opts) do
     type = Keyword.get(opts, :type)
 
-    expected = %{
-      "@type" => "Class",
-      "hydra:supportedProperty" => Enum.map(affordance.fields, &supported_property(&1, type))
-    }
+    # `hydra:expects` ranges over a Class. The input class is given its own `@id`
+    # (`<class>/<action>Input`) so it is a referenceable node rather than an
+    # anonymous blank node a client cannot point back at.
+    expected =
+      %{
+        "@type" => "Class",
+        "hydra:supportedProperty" => Enum.map(affordance.fields, &supported_property(&1, type))
+      }
+      |> put_unless_nil("@id", input_class_iri(type, affordance.name))
 
     Map.put(op, "hydra:expects", expected)
+  end
+
+  # `hydra:returns` ranges over a Class. A read/create/update returns the
+  # resource's own class; a destroy returns nothing (`owl:Nothing`). Without a
+  # known type we cannot name the class, so we omit it rather than guess.
+  defp put_returns(op, %Affordance{method: :delete}, _opts) do
+    Map.put(op, "hydra:returns", %{"@id" => "owl:Nothing"})
+  end
+
+  defp put_returns(op, %Affordance{} = _affordance, opts) do
+    case Keyword.get(opts, :type) do
+      nil -> op
+      type -> Map.put(op, "hydra:returns", %{"@id" => Context.class_iri(type)})
+    end
   end
 
   @doc "Render one field as a `hydra:SupportedProperty`."
@@ -110,7 +183,7 @@ defmodule AshHateoas.Hydra.Renderer do
   def supported_property(%Field{} = field, type \\ nil) do
     %{
       "@type" => "SupportedProperty",
-      "hydra:property" => property_node(field, type),
+      "hydra:property" => property_ref(field, type),
       # Ash says allow_nil?; the wire says required. The inversion lives here.
       "hydra:required" => not field.allow_nil?,
       "hydra:readable" => false,
@@ -118,6 +191,11 @@ defmodule AshHateoas.Hydra.Renderer do
     }
     |> put_unless_nil("hydra:title", to_string_or_nil(field.name))
     |> put_unless_nil("hydra:description", field.description)
+    # `hydra:property` ranges over rdf:Property, so its value is the property
+    # reference itself — the value's datatype is a fact about the property, not
+    # about this reference, so it rides alongside under an `ah:` term instead of
+    # mistyping the reference.
+    |> put_unless_nil("ah:datatype", TypeMapper.to_datatype(field.type))
     |> put_default(field.default)
     |> put_constraints(field.constraints)
   end
@@ -143,21 +221,26 @@ defmodule AshHateoas.Hydra.Renderer do
     %{
       "@type" => "IriTemplateMapping",
       "hydra:variable" => to_string(field.name),
-      "hydra:property" => property_node(field, type),
+      "hydra:property" => property_ref(field, type),
       "hydra:required" => not field.allow_nil?
     }
+    |> put_unless_nil("ah:datatype", TypeMapper.to_datatype(field.type))
   end
 
-  # A property node carries its datatype so a client knows how to read the value.
-  # Without a resource type we still emit the datatype under a bare name.
-  defp property_node(%Field{} = field, type) do
-    id = if type, do: Context.property_iri(type, field.name), else: to_string(field.name)
-
-    %{
-      "@id" => id,
-      "@type" => TypeMapper.to_datatype(field.type)
-    }
+  # `hydra:property` ranges over `rdf:Property`, so its value is a reference to
+  # the property — `{"@id": iri}` — not the value's datatype. Without a resource
+  # type we fall back to the bare field name as the identifier.
+  defp property_ref(%Field{} = field, type) do
+    iri = if type, do: Context.property_iri(type, field.name), else: to_string(field.name)
+    %{"@id" => iri}
   end
+
+  # The `@id` for a write operation's input `hydra:Class`. Named per action so two
+  # writes on the same resource (create vs a custom action) are distinct classes.
+  defp input_class_iri(nil, _action_name), do: nil
+
+  defp input_class_iri(type, action_name),
+    do: Context.class_iri(type) <> "/" <> to_string(action_name) <> "Input"
 
   defp template_suffix([]), do: ""
   defp template_suffix(variables), do: "{?" <> Enum.join(variables, ",") <> "}"

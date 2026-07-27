@@ -26,12 +26,20 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert op["hydra:method"] == "PATCH"
       assert op["hydra:title"] == "Approve this document."
 
+      # a write returns the resource's own class
+      assert op["hydra:returns"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
+
       expects = op["hydra:expects"]
       assert expects["@type"] == "Class"
+      # the expected input class is referenceable (has its own @id), not a blank node
+      assert expects["@id"] == "https://ash-hateoas.org/vocab#Document/approveInput"
+
       [prop] = expects["hydra:supportedProperty"]
       assert prop["@type"] == "SupportedProperty"
-      assert prop["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#document/notify"
-      assert prop["hydra:property"]["@type"] == "xsd:boolean"
+      # hydra:property ranges over rdf:Property -> a reference, {"@id": iri}
+      assert prop["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/notify"}
+      # the value's datatype rides alongside, not on the property reference
+      assert prop["ah:datatype"] == "xsd:boolean"
       assert prop["hydra:writeable"] == true
     end
 
@@ -56,6 +64,77 @@ defmodule AshHateoas.Hydra.RendererTest do
 
       refute Map.has_key?(sensitive, "ah:default")
       assert plain["ah:default"] == false
+    end
+
+    test "an operation carries a schema:potentialAction typed by its HTTP method" do
+      approve = %Affordance{
+        name: :approve,
+        href: "/documents/:id/approve",
+        method: :patch,
+        fields: []
+      }
+
+      op = Renderer.operation(approve, type: "document", path_params: %{"id" => "7"})
+      action = op["schema:potentialAction"]
+
+      # a PATCH infers UpdateAction; the target is a schema.org EntryPoint
+      assert action["@type"] == "schema:UpdateAction"
+      target = action["schema:target"]
+      assert target["@type"] == "schema:EntryPoint"
+      assert target["schema:httpMethod"] == "PATCH"
+      assert target["schema:urlTemplate"] == "/documents/7/approve"
+      assert target["schema:contentType"] == "application/ld+json"
+    end
+
+    test "each HTTP method maps to its schema.org Action subtype" do
+      for {method, type} <- [
+            {:get, "schema:ReadAction"},
+            {:post, "schema:CreateAction"},
+            {:patch, "schema:UpdateAction"},
+            {:delete, "schema:DeleteAction"}
+          ] do
+        op = Renderer.operation(%Affordance{name: :x, href: "/x", method: method, fields: []})
+        assert op["schema:potentialAction"]["@type"] == type
+      end
+    end
+
+    test "a semantic_action override wins over the method-inferred subtype" do
+      confirm = %Affordance{
+        name: :confirm,
+        href: "/orders/:id/confirm",
+        method: :patch,
+        fields: []
+      }
+
+      op =
+        Renderer.operation(confirm,
+          type: "order",
+          semantic_actions: %{confirm: "https://schema.org/ConfirmAction"}
+        )
+
+      # the override is used verbatim, not the inferred UpdateAction
+      assert op["schema:potentialAction"]["@type"] == "https://schema.org/ConfirmAction"
+    end
+
+    test "a destroy returns owl:Nothing" do
+      destroy = %Affordance{name: :destroy, href: "/documents/:id", method: :delete, fields: []}
+      op = Renderer.operation(destroy, type: "document")
+
+      assert op["hydra:returns"] == %{"@id" => "owl:Nothing"}
+    end
+
+    test "without a resource type, expects has no @id and returns is omitted" do
+      affordance = %Affordance{
+        name: :approve,
+        href: "/x",
+        method: :patch,
+        fields: [%Field{name: :notify, type: "boolean", allow_nil?: true}]
+      }
+
+      op = Renderer.operation(affordance)
+
+      refute Map.has_key?(op, "hydra:returns")
+      refute Map.has_key?(op["hydra:expects"], "@id")
     end
 
     test "an enum constraint is carried and JSON-encodable" do

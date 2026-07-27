@@ -11,21 +11,35 @@ node offers — knowing nothing about Ash or this package.
 
 | Backbone output | Hydra / JSON-LD |
 |---|---|
-| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, and (for a write) `hydra:expects` |
+| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class, or `owl:Nothing` for a destroy) — plus a `schema:potentialAction` (see below) |
+| an operation as a *verb* | `schema:potentialAction` — a schema.org `Action` (subtype inferred from the HTTP method: GET→`ReadAction`, POST→`CreateAction`, PATCH→`UpdateAction`, DELETE→`DeleteAction`; overridable per action with `semantic_action`) whose `schema:target` is a `schema:EntryPoint` (`urlTemplate`, `httpMethod`, `contentType`). See [semantic-affordances.md](semantic-affordances.md) |
 | the affordance set on a record | the node's `hydra:operation` array (same-URL ops) + one `ah:<action>` link node per named sub-action |
-| a write action's fields | `hydra:expects` → a `hydra:Class` with one `hydra:SupportedProperty` per field |
+| a write action's fields | `hydra:expects` → a `hydra:Class` (with its own `@id`) carrying one `hydra:SupportedProperty` per field |
 | a query/search read's fields | a `hydra:IriTemplate` (`hydra:template`, `hydra:mapping` of `hydra:IriTemplateMapping`) |
 | `field.allow_nil?` | `hydra:required` (inverted at the edge) |
-| `field.type` | the property node's datatype IRI — `xsd:*`, or `@id` for a `link` |
+| a field / attribute | `hydra:property` → `{"@id": <property-iri>}` (a reference; `hydra:property` ranges over `rdf:Property`); the value's datatype rides alongside as `ah:datatype` — `xsd:*`, or `@id` for a `link` |
 | a collection | a `hydra:Collection` — `hydra:member`, `hydra:totalItems`, `hydra:view` |
 | pagination | a `hydra:PartialCollectionView` — `hydra:first` / `previous` / `next` / `last` |
-| the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `supportedProperty` + `supportedOperation`) |
-| the entry point | `hydra:entrypoint` + a reachable-type collection map |
+| the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `hydra:supportedProperty` + `hydra:supportedOperation`) |
+| the entry point | a node typed `ah:EntryPoint` whose `hydra:collection` maps each reachable type to `{"@id", "@type": "Collection"}`; the `ApiDocumentation` carries `hydra:entrypoint` |
+| a record's structural links | `hydra:collection` → `{"@id", "@type": "Collection"}`, `hydra:view` → `{"@id", "@type": "Resource"}` (typed node references, never `{href, rel}`) |
 | an error / refusal | a `hydra:Error` (`hydra:statusCode`, `hydra:title`, `hydra:description`); RFC 7807 on request |
 
 Two non-core facts are carried under an `ah:` extension vocabulary declared in
 the emitted `@context`: `ah:multiStep` (a compound/Reactor-backed operation) and
-`ah:notDelegable` (an action only a committing credential may execute).
+`ah:notDelegable` (an action only a committing credential may execute). The same
+`ah:` vocabulary types the entry-point node (`ah:EntryPoint`, which Hydra core
+has no class for) and carries `ah:datatype` on a property.
+
+### On term spelling (`hydra:` prefix vs bare)
+
+Every Hydra term is emitted **with the `hydra:` prefix**. Under the referenced
+`@context` a bare `method` and `hydra:method` expand to the *same* core IRI, so
+the choice is cosmetic to a JSON-LD-aware client — but unambiguous to a
+raw-JSON reader that keys on the literal string. `@type` **values**
+(`"Operation"`, `"Collection"`, `"Class"`, …) are bare tokens the context
+resolves. The reasoning, and what is genuinely non-conformant vs cosmetic, is
+recorded in [`hydra-conformance-notes.md`](hydra-conformance-notes.md).
 
 ## Where an operation attaches
 

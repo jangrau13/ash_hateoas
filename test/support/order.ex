@@ -25,6 +25,9 @@ defmodule AshHateoas.Test.Order do
   hateoas do
     type "order"
     base "/orders"
+    # Sharpen the state transitions beyond their inferred UpdateAction.
+    semantic_action :confirm, "ConfirmAction"
+    semantic_action :ship, "ShipAction"
   end
 
   attributes do

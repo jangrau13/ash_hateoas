@@ -48,12 +48,20 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "lists reachable types with their collection links" do
       doc = body(get("/", @admin))
 
-      assert doc["@type"] == "EntryPoint"
+      # EntryPoint is not a Hydra Core class, so it is typed with this package's
+      # own ah: vocabulary term (which the emitted @context resolves).
+      assert doc["@type"] == "ah:EntryPoint"
       collections = doc["hydra:collection"]
       assert is_map(collections)
       # document and order are both routed and readable
       assert Map.has_key?(collections, "document")
-      assert get_in(collections, ["document", "href"]) =~ "/documents"
+
+      # each collection link is a typed node reference, not {href, rel}
+      document = collections["document"]
+      assert document["@id"] =~ "/documents"
+      assert document["@type"] == "Collection"
+      refute Map.has_key?(document, "href")
+      refute Map.has_key?(document, "rel")
     end
   end
 
@@ -108,6 +116,21 @@ defmodule AshHateoas.Hydra.PlugTest do
       # admin may approve; a viewer may not
       assert Map.has_key?(admin, "ah:approve")
       refute Map.has_key?(viewer, "ah:approve")
+    end
+
+    test "structural navigation is emitted as typed node references", %{doc: doc} do
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      # collection/up links are {"@id", "@type"} node refs, never {href, rel}
+      collection = node["hydra:collection"]
+      assert collection["@id"] =~ "/documents"
+      assert collection["@type"] == "Collection"
+      refute Map.has_key?(collection, "href")
+      refute Map.has_key?(collection, "rel")
+
+      view = node["hydra:view"]
+      assert view["@type"] == "Resource"
+      refute Map.has_key?(view, "rel")
     end
   end
 
@@ -200,6 +223,20 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       assert Map.has_key?(node, "ah:ship")
       refute Map.has_key?(node, "ah:confirm")
+    end
+
+    test "a transition carries its schema.org potentialAction (semantic_action override)",
+         %{order: order} do
+      node = body(get("/orders/#{order.id}", @admin))
+
+      # confirm is a named sub-action -> link node; its operation carries the
+      # schema:potentialAction, sharpened to ConfirmAction by semantic_action.
+      [op] = node["ah:confirm"]["hydra:operation"]
+      action = op["schema:potentialAction"]
+
+      assert action["@type"] == "https://schema.org/ConfirmAction"
+      assert action["schema:target"]["schema:httpMethod"] == "PATCH"
+      assert action["schema:target"]["schema:urlTemplate"] =~ "/orders/#{order.id}/confirm"
     end
   end
 
@@ -364,6 +401,63 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert AshHateoas.Resource.Info.semantic_properties(Person) == %{
                additional_name: "https://schema.org/additionalName"
              }
+    end
+  end
+
+  describe "base_url makes rendered hrefs absolute" do
+    @base "https://api.example.com"
+
+    # Mount the plug with a base_url, bypassing HydraEndpoint (which has none).
+    defp get_based(path, actor) do
+      opts = AshHateoas.Hydra.Plug.init(domains: [AshHateoas.Test.Domain], base_url: @base)
+
+      conn(:get, path)
+      |> Ash.PlugHelpers.set_actor(actor)
+      |> AshHateoas.Hydra.Plug.call(opts)
+    end
+
+    setup do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Based", owner_id: "admin-1"},
+          actor: @admin
+        )
+        |> Ash.create!()
+
+      %{doc: doc}
+    end
+
+    test "a member node's @id is absolute", %{doc: doc} do
+      node = body(get_based("/documents/#{doc.id}", @admin))
+
+      assert node["@id"] == "#{@base}/documents/#{doc.id}"
+    end
+
+    test "the entry point's collection links are absolute" do
+      entry = body(get_based("/", @admin))
+
+      # collection links are typed node references — the URL lives in @id.
+      assert get_in(entry, ["hydra:collection", "document", "@id"]) ==
+               "#{@base}/documents"
+    end
+
+    test "the Link header advertises an absolute ApiDocumentation URL" do
+      conn = get_based("/", @admin)
+
+      [link] = get_resp_header(conn, "link")
+      assert link =~ "<#{@base}/doc>"
+    end
+
+    test "a named sub-action's href is absolute", %{doc: doc} do
+      node = body(get_based("/documents/#{doc.id}", @admin))
+
+      # Document has an `approve` sub-action at /documents/:id/approve.
+      assert get_in(node, ["ah:approve", "@id"]) == "#{@base}/documents/#{doc.id}/approve"
+    end
+
+    test "routing still matches the plain path — base_url is render-only", %{doc: doc} do
+      # The request path carries no host; matching must still find the member.
+      assert get_based("/documents/#{doc.id}", @admin).status == 200
     end
   end
 end

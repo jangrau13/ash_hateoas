@@ -11,9 +11,25 @@ defmodule AshHateoas.Hydra.Plug do
         use Plug.Builder
         plug AshHateoas.Hydra.Plug,
           domains: [MyApp.Docs],
+          base_url: "https://api.example.com",
           prefix: "/api",
           doc_path: "/doc"
       end
+
+  ## Options
+
+    * `:domains` (or `:domain`) — the Ash domain(s) to serve.
+    * `:doc_path` — where the `ApiDocumentation` is served (default `"/doc"`).
+    * `:prefix` — a mount path prepended to every route and used for matching
+      (`"/api"`), for when the plug is forwarded under a sub-path.
+    * `:base_url` — an absolute public origin (`"https://api.example.com"`)
+      prepended to every **rendered** href (`@id`, links, navigation, the `Link`
+      header) so the URLs a client receives are dereferenceable as-is rather than
+      relative. It is used only for rendering — route matching is unaffected — so
+      the plug still matches the plain request path whatever `base_url` says. Set
+      it to the origin this service is reached at (behind a proxy, the external
+      one), and cross-service links and generic clients can follow every `@id`
+      without knowing the mount point out of band.
 
   ## What it serves
 
@@ -68,11 +84,22 @@ defmodule AshHateoas.Hydra.Plug do
   # ── Dispatch ────────────────────────────────────────────────────────────────
 
   # The root entry document: every reachable type and its collection link.
+  #
+  # `EntryPoint` is not a Hydra Core class, so it is typed with this package's own
+  # `ah:` vocabulary term rather than a bare token the Hydra context would leave
+  # unresolved. Each collection link is a `{"@id", "@type": "Collection"}` node
+  # reference — the canonical Hydra shape for pointing at a typed resource.
   defp dispatch(%{method: "GET"} = conn, [], actor, _tenant, opts) do
-    document =
-      Context.context()
-      |> then(&%{"@context" => &1, "@type" => "EntryPoint"})
-      |> Map.put("hydra:collection", Navigation.root(opts[:domains], actor, nav_opts(opts)))
+    collections =
+      opts[:domains]
+      |> Navigation.root(actor, nav_opts(opts))
+      |> Map.new(fn {type, link} -> {type, nav_ref(link)} end)
+
+    document = %{
+      "@context" => Context.context(),
+      "@type" => "ah:EntryPoint",
+      "hydra:collection" => collections
+    }
 
     send_json(conn, 200, document)
   end
@@ -149,7 +176,7 @@ defmodule AshHateoas.Hydra.Plug do
         operations =
           resource
           |> AshHateoas.affordances(actor, affordance_opts(resource, opts))
-          |> Renderer.render(render_opts(type, opts))
+          |> Renderer.render(render_opts(type, resource, opts))
 
         document =
           Collection.wrap(members,
@@ -383,7 +410,7 @@ defmodule AshHateoas.Hydra.Plug do
           record
           |> AshHateoas.affordances(actor, affordance_opts(resource, opts) ++ [tenant: tenant])
           |> Renderer.render(
-            render_opts(type, opts,
+            render_opts(type, resource, opts,
               node_id: member_href(resource, id, opts),
               path_params: %{"id" => id}
             )
@@ -430,14 +457,26 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> false
   end
 
-  # Navigation links (`collection`, `up`) map onto Hydra link terms.
+  # Navigation links (`collection`, `up`) map onto Hydra link terms, each a typed
+  # node reference (`{"@id", "@type"}`) so a strict client recognises the target's
+  # kind without decoding a private `rel` token.
   defp merge_navigation(node, nav) do
     Enum.reduce(nav, node, fn
-      {"collection", %{"href" => href}}, acc -> Map.put(acc, "hydra:collection", %{"@id" => href})
-      {"up", %{"href" => href}}, acc -> Map.put(acc, "hydra:view", %{"@id" => href})
+      {"collection", link}, acc -> Map.put(acc, "hydra:collection", nav_ref(link))
+      {"up", link}, acc -> Map.put(acc, "hydra:view", nav_ref(link))
       _other, acc -> acc
     end)
   end
+
+  # A transport-neutral `%{url:, kind:}` navigation link → a Hydra node reference.
+  # The `@type` value is a bare class token (`Collection`/`Resource`) the emitted
+  # `@context` resolves to the Hydra core vocabulary.
+  defp nav_ref(%{url: url, kind: kind}) do
+    %{"@id" => url, "@type" => nav_type(kind)}
+  end
+
+  defp nav_type(:collection), do: "Collection"
+  defp nav_type(:resource), do: "Resource"
 
   # ── Route matching ──────────────────────────────────────────────────────────
 
@@ -608,7 +647,7 @@ defmodule AshHateoas.Hydra.Plug do
   defp member_href(resource, id, opts) do
     case get_route(resource, &(&1.type == :get and &1.primary?)) do
       nil -> nil
-      route -> prefix(opts) <> String.replace(route.route, ":id", to_string(id))
+      route -> href_prefix(opts) <> String.replace(route.route, ":id", to_string(id))
     end
   end
 
@@ -627,17 +666,41 @@ defmodule AshHateoas.Hydra.Plug do
     [domain: domain, domains: opts[:domains]]
   end
 
-  defp render_opts(type, opts, extra \\ []) do
-    [type: type, prefix: prefix(opts)] ++ extra
+  defp render_opts(type, resource, opts, extra \\ []) do
+    [
+      type: type,
+      prefix: href_prefix(opts),
+      semantic_actions: AshHateoas.Resource.Info.semantic_actions(resource)
+    ] ++ extra
   end
 
-  defp nav_opts(opts), do: [prefix: prefix(opts)]
+  defp nav_opts(opts), do: [prefix: href_prefix(opts)]
 
   defp doc_opts(conn, opts) do
-    [entrypoint: prefix(opts) <> "/", id: request_url(conn)]
+    [entrypoint: href_prefix(opts) <> "/", id: href_prefix(opts) <> request_url(conn)]
   end
 
   defp prefix(opts), do: Keyword.get(opts, :prefix, "") || ""
+
+  # The absolute base for a public URL, if configured. Emitted hrefs (`@id`,
+  # links, navigation, the `Link` header) are prefixed with it so every URL a
+  # client receives is dereferenceable as-is — a relative `/people/1` cannot be
+  # followed by a consumer that only has the document, and cannot be rendered as
+  # a clickable link. Trailing slash trimmed so it composes cleanly with the
+  # leading-slash routes.
+  #
+  # It is used ONLY for rendering. Route matching keeps using `prefix/1` against
+  # `conn.path_info`, so setting `base_url` never affects which requests match.
+  defp base_url(opts) do
+    case Keyword.get(opts, :base_url) do
+      nil -> ""
+      "" -> ""
+      url -> String.trim_trailing(url, "/")
+    end
+  end
+
+  # The full prefix for a rendered href: the public base plus any mount prefix.
+  defp href_prefix(opts), do: base_url(opts) <> prefix(opts)
 
   defp doc_segments(opts) do
     opts[:doc_path] |> String.split("/", trim: true)
@@ -650,7 +713,7 @@ defmodule AshHateoas.Hydra.Plug do
   # ── Response ────────────────────────────────────────────────────────────────
 
   defp put_link_header(conn, opts) do
-    doc_url = prefix(opts) <> opts[:doc_path]
+    doc_url = href_prefix(opts) <> opts[:doc_path]
 
     Plug.Conn.put_resp_header(
       conn,

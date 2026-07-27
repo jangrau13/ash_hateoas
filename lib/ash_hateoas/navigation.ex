@@ -35,7 +35,11 @@ defmodule AshHateoas.Navigation do
   This is the one URL a client hardcodes. Types the actor cannot access are
   omitted entirely.
 
-  Returns `%{type_string => %{"href" => collection_url, "rel" => "collection"}}`.
+  Transport-neutral: returns `%{type_string => %{url: collection_url, kind:
+  :collection}}`. The transport that renders it (the Hydra plug) turns each entry
+  into whatever its serialization needs — for Hydra, a `{"@id", "@type":
+  "Collection"}` node reference. `Navigation` names *what* the link is, not how a
+  given media type spells it.
   """
   @spec root(module() | [module()], term(), keyword()) :: %{String.t() => map()}
   def root(domains, actor, opts \\ []) do
@@ -45,21 +49,19 @@ defmodule AshHateoas.Navigation do
     |> Index.build()
     |> Enum.filter(fn {_type, resource} -> reachable?(resource, actor, domains, opts) end)
     |> Map.new(fn {type, resource} ->
-      {type,
-       %{
-         "href" => collection_href(resource, domains, opts),
-         "rel" => "collection"
-       }}
+      {type, %{url: collection_href(resource, domains, opts), kind: :collection}}
     end)
   end
 
   @doc """
   Structural links for a single record: its collection and its owning domain.
 
-  `collection` and `up` are registered IANA relation types, so navigation and
-  affordances arrive together in one `links` object without colliding.
+  Transport-neutral, keyed by relation name (`"collection"`, `"up"`), each value
+  a `%{url:, kind:}` the rendering transport shapes. `collection` and `up`
+  mirror the registered IANA relation types, so navigation and affordances
+  arrive together without colliding.
   """
-  @spec record_links(struct(), [module()], keyword()) :: %{String.t() => map() | String.t()}
+  @spec record_links(struct(), [module()], keyword()) :: %{String.t() => map()}
   def record_links(record, domains, opts \\ []) when is_struct(record) do
     resource = record.__struct__
 
@@ -112,7 +114,7 @@ defmodule AshHateoas.Navigation do
   defp put_collection(links, resource, domains, opts) do
     case collection_href(resource, domains, opts) do
       nil -> links
-      href -> Map.put(links, "collection", %{"href" => href, "rel" => "collection"})
+      href -> Map.put(links, "collection", %{url: href, kind: :collection})
     end
   end
 
@@ -124,10 +126,7 @@ defmodule AshHateoas.Navigation do
         links
 
       _domain ->
-        Map.put(links, "up", %{
-          "href" => prefix(opts, domains) <> "/",
-          "rel" => "up"
-        })
+        Map.put(links, "up", %{url: prefix(opts, domains) <> "/", kind: :resource})
     end
   end
 

@@ -70,6 +70,7 @@ defmodule AshHateoas.Resource do
     Method,
     NotDelegable,
     Override,
+    SemanticAction,
     SemanticProperty,
     Unrouted
   }
@@ -183,6 +184,34 @@ defmodule AshHateoas.Resource do
     ]
   }
 
+  @semantic_action %Spark.Dsl.Entity{
+    name: :semantic_action,
+    target: SemanticAction,
+    args: [:action, :iri],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    Map one of this resource's actions to a well-known Action-type IRI, sharpening
+    the `schema:potentialAction` beyond the subtype inferred from its CRUD type.
+    """,
+    examples: [~s(semantic_action :confirm, "ConfirmAction")],
+    schema: [
+      action: [
+        type: :atom,
+        required: true,
+        doc: "The action whose Action-type IRI is being mapped."
+      ],
+      iri: [
+        type: :string,
+        required: true,
+        doc: """
+        The well-known Action-type IRI. A bare token resolves against schema.org
+        (`"ConfirmAction"` → `"https://schema.org/ConfirmAction"`); an absolute
+        IRI is used verbatim.
+        """
+      ]
+    ]
+  }
+
   @hateoas %Spark.Dsl.Section{
     name: :hateoas,
     describe: """
@@ -199,7 +228,14 @@ defmodule AshHateoas.Resource do
       end
       """
     ],
-    entities: [@exclude, @override, @unrouted, @method, @semantic_property],
+    entities: [
+      @exclude,
+      @override,
+      @unrouted,
+      @method,
+      @semantic_property,
+      @semantic_action
+    ],
     schema: [
       type: [
         type: {:or, [:string, {:literal, nil}]},

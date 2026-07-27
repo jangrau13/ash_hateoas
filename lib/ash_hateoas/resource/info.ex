@@ -30,6 +30,7 @@ defmodule AshHateoas.Resource.Info do
     Method,
     NotDelegable,
     Override,
+    SemanticAction,
     SemanticProperty,
     Unrouted
   }
@@ -134,6 +135,25 @@ defmodule AshHateoas.Resource.Info do
     |> Enum.filter(&match?(%SemanticProperty{}, &1))
     |> Map.new(fn %SemanticProperty{} = mapping ->
       {mapping.attribute, resolve_iri(mapping.iri)}
+    end)
+  end
+
+  @doc """
+  A map of `action => well-known Action-type IRI` from the resource's
+  `semantic_action` declarations — the explicit overrides for an operation's
+  `schema:potentialAction` type.
+
+  Only overrides are present; an action without one falls back to the subtype
+  inferred from its CRUD type. Bare tokens are resolved against schema.org;
+  absolute IRIs are used verbatim.
+  """
+  @spec semantic_actions(Ash.Resource.t() | map()) :: %{atom() => String.t()}
+  def semantic_actions(resource_or_dsl) do
+    resource_or_dsl
+    |> hateoas()
+    |> Enum.filter(&match?(%SemanticAction{}, &1))
+    |> Map.new(fn %SemanticAction{} = mapping ->
+      {mapping.action, resolve_iri(mapping.iri)}
     end)
   end
 

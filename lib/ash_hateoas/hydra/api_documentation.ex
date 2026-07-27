@@ -9,7 +9,10 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     * `hydra:entrypoint` — the API's base URL.
     * `hydra:supportedClass` — one `hydra:Class` per resource carrying the
       extension, with `hydra:supportedProperty` from its public attributes and
-      `hydra:supportedOperation` from its derived routes.
+      `hydra:supportedOperation` from its derived routes. A resource that
+      declares a well-known (e.g. schema.org) type yields a **second** class
+      entry keyed by that IRI too — mirroring the record node's dual `@type`, so
+      a client indexing by either IRI finds a described class.
 
   ## Catalogue vs. availability
 
@@ -37,7 +40,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       domains
       |> Index.build()
       |> Enum.sort_by(fn {type, _resource} -> type end)
-      |> Enum.map(fn {type, resource} -> supported_class(resource, type) end)
+      |> Enum.flat_map(fn {type, resource} -> supported_classes(resource, type) end)
 
     %{
       "@context" => Context.context(),
@@ -48,6 +51,31 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     |> put_unless_nil("hydra:entrypoint", Keyword.get(opts, :entrypoint))
   end
 
+  # A resource yields its own `vocab#` class, and — when it declares a well-known
+  # (e.g. schema.org) type — a companion class keyed by that IRI too. A record
+  # node is dual-typed `[vocab#Class, schema:Class]`, so a client indexing the
+  # documentation by *either* IRI must find a fully-described class; the companion
+  # is that second entry. Both carry `owl:equivalentClass` pointing at the other,
+  # so they are declared genuinely equivalent, not merely duplicated.
+  defp supported_classes(resource, type) do
+    vocab_iri = Context.class_iri(type)
+
+    case AshHateoas.Resource.Info.semantic_type(resource) do
+      nil ->
+        [supported_class(resource, type)]
+
+      semantic_type ->
+        primary = supported_class(resource, type)
+
+        companion =
+          primary
+          |> Map.put("@id", semantic_type)
+          |> Map.put("owl:equivalentClass", %{"@id" => vocab_iri})
+
+        [primary, companion]
+    end
+  end
+
   @doc "Build one `hydra:Class` for a resource."
   @spec supported_class(module(), String.t()) :: map()
   def supported_class(resource, type) do
@@ -56,7 +84,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "@type" => "Class",
       "hydra:title" => type,
       "hydra:supportedProperty" => supported_properties(resource, type),
-      "hydra:supportedOperation" => supported_operations(resource)
+      "hydra:supportedOperation" => supported_operations(resource, type)
     }
     |> put_unless_nil("hydra:description", description(resource))
     |> put_equivalent_class(AshHateoas.Resource.Info.semantic_type(resource))
@@ -88,10 +116,11 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
 
       %{
         "@type" => "SupportedProperty",
-        "hydra:property" => %{
-          "@id" => property_id,
-          "@type" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type))
-        },
+        # `hydra:property` ranges over rdf:Property — a reference to the property.
+        # The value's datatype is a fact about the property, carried alongside
+        # under an `ah:` term rather than by mistyping the reference.
+        "hydra:property" => %{"@id" => property_id},
+        "ah:datatype" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type)),
         "hydra:title" => to_string(attribute.name),
         "hydra:required" => not Map.get(attribute, :allow_nil?, true),
         "hydra:readable" => true,
@@ -107,8 +136,8 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   Actor-independent: it describes operation shape, not availability. Reads the
   route table directly rather than the gated backbone.
   """
-  @spec supported_operations(module()) :: [map()]
-  def supported_operations(resource) do
+  @spec supported_operations(module(), String.t()) :: [map()]
+  def supported_operations(resource, type) do
     resource
     |> routes()
     |> Enum.reject(&(&1.type in [:related, :relationship]))
@@ -120,19 +149,26 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         "hydra:method" => method(route, action) |> to_string() |> String.upcase()
       }
       |> put_unless_nil("hydra:title", action && Map.get(action, :description))
-      |> put_expects(action, resource)
+      |> put_shape(action, resource, type)
     end)
   end
 
-  defp put_expects(op, nil, _resource), do: op
+  # Reuse the renderer's `expects`/`returns` derivation so the documentation
+  # catalogue and the live per-node operations describe input/output identically.
+  defp put_shape(op, nil, _resource, _type), do: op
 
-  defp put_expects(op, action, resource) do
-    affordance = AshHateoas.Descriptor.build(action, nil, resource)
+  defp put_shape(op, action, resource, type) do
+    rendered =
+      AshHateoas.Descriptor.build(action, nil, resource)
+      |> Renderer.operation(
+        type: type,
+        semantic_actions: AshHateoas.Resource.Info.semantic_actions(resource)
+      )
 
-    case affordance.fields do
-      [] -> op
-      _fields -> Map.put(op, "hydra:expects", Renderer.operation(affordance)["hydra:expects"])
-    end
+    op
+    |> put_unless_nil("hydra:expects", Map.get(rendered, "hydra:expects"))
+    |> put_unless_nil("hydra:returns", Map.get(rendered, "hydra:returns"))
+    |> put_unless_nil("schema:potentialAction", Map.get(rendered, "schema:potentialAction"))
   end
 
   defp method(%Route{method: method}, _action) when not is_nil(method), do: method
