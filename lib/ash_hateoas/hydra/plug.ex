@@ -380,7 +380,7 @@ defmodule AshHateoas.Hydra.Plug do
           Map.new(Map.from_struct(struct), fn {k, v} -> {to_string(k), encodable(v)} end)
 
         other ->
-          %{"@type" => "Result", "ah:value" => encodable(other)}
+          %{"@type" => "Result", "schema:result" => encodable(other)}
       end
 
     send_json(conn, 200, Map.put(body, "@context", Context.context()))
