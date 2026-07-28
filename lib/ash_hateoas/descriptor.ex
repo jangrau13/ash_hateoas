@@ -33,7 +33,6 @@ defmodule AshHateoas.Descriptor do
       method: method(route, action),
       description: action.description,
       fields: fields(action, resource),
-      multi_step?: multi_step?(action),
       not_delegable?: not_delegable?(action, resource)
     }
   end
@@ -139,12 +138,4 @@ defmodule AshHateoas.Descriptor do
       _other, acc -> acc
     end)
   end
-
-  # A Reactor-backed action is an affordance like any other — its internal saga
-  # steps are never exposed — but the flag lets a client know it is compound.
-  defp multi_step?(%{type: :action, run: {module, _opts}}) do
-    Code.ensure_loaded?(module) and function_exported?(module, :reactor, 0)
-  end
-
-  defp multi_step?(_action), do: false
 end

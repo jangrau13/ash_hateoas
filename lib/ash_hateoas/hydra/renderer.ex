@@ -137,7 +137,6 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_expects(affordance, opts)
     |> put_returns(affordance, opts)
     |> put_potential_action(affordance, opts)
-    |> put_if(affordance.multi_step?, "ah:multiStep", true)
     end
 
   # The schema.org description of the operation as an *action* — so a client that

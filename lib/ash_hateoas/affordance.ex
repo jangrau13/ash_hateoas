@@ -11,7 +11,6 @@ defmodule AshHateoas.Affordance do
     * `method` — the HTTP verb the route declares (`:get`, `:post`, …)
     * `description` — the action's own `description`, surfaced verbatim
     * `fields` — `AshHateoas.Field` structs, one per public argument
-    * `multi_step?` — optional flag for a compound (e.g. Reactor-backed) operation
     * `not_delegable?` — optional flag: only a committing credential may execute
       this action. Declared, so it reads the same for every actor; what
       varies is whether the endpoint commits.
@@ -28,7 +27,6 @@ defmodule AshHateoas.Affordance do
           method: atom(),
           description: String.t() | nil,
           fields: [Field.t()],
-          multi_step?: boolean(),
           not_delegable?: boolean()
         }
 
@@ -38,7 +36,6 @@ defmodule AshHateoas.Affordance do
     :method,
     :description,
     fields: [],
-    multi_step?: false,
     not_delegable?: false
   ]
 end

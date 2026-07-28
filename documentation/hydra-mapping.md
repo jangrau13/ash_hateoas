@@ -29,10 +29,9 @@ node offers — knowing nothing about Ash or this package.
 | an error / refusal | a `hydra:Error` (`hydra:statusCode`, `hydra:title`, `hydra:description`); RFC 7807 on request |
 
 Facts Hydra core has no term for are carried under an `ah:` extension
-vocabulary declared in the emitted `@context`: `ah:multiStep` (a
-compound/Reactor-backed operation), `ah:commit` (the ODRL duty action a
+vocabulary declared in the emitted `@context`: `ah:commit` (the ODRL duty action a
 not-delegable permission is subject to), `ah:datatype` (a property's value
-datatype), All are emitted
+datatype). All are emitted
 **prefixed**; the `@context` declares only the prefixes (`ah`, `xsd`, `owl`,
 `schema`, `odrl`), no per-term aliases. The same
 `ah:` vocabulary carries `ah:datatype` on a property.
