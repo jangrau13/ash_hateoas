@@ -11,7 +11,7 @@ defmodule AshHateoas.Hydra.Context do
   The emitted context references the canonical Hydra context and inline-extends
   it with the prefixes this package's documents use: `ah:` (its own vocabulary,
   for facts Hydra core has no term for — `ah:multiStep`,
-  `ah:datatype`, `ah:EntryPoint`), plus `xsd:`/`owl:`/`schema:`/`odrl:`. Every
+  `ah:datatype`), plus `xsd:`/`owl:`/`schema:`/`odrl:`. Every
   such term is emitted **prefixed** on the wire, so no per-term aliases are
   declared — only the prefixes. Bare tokens are used solely for `@type` *values*
   the Hydra context already resolves (`Operation`, `Collection`, …).

@@ -84,11 +84,8 @@ defmodule AshHateoas.Hydra.Plug do
   # ── Dispatch ────────────────────────────────────────────────────────────────
 
   # The root entry document: every reachable type and its collection link.
-  #
-  # `EntryPoint` is not a Hydra Core class, so it is typed with this package's own
-  # `ah:` vocabulary term rather than a bare token the Hydra context would leave
-  # unresolved. Each collection link is a `{"@id", "@type": "Collection"}` node
-  # reference — the canonical Hydra shape for pointing at a typed resource.
+  # `hydra:collection` alone is enough for a generic Hydra client to discover
+  # the API — no custom `@type` needed.
   defp dispatch(%{method: "GET"} = conn, [], actor, _tenant, opts) do
     collections =
       opts[:domains]
@@ -97,7 +94,6 @@ defmodule AshHateoas.Hydra.Plug do
 
     document = %{
       "@context" => Context.context(),
-      "@type" => "ah:EntryPoint",
       "hydra:collection" => collections
     }
 

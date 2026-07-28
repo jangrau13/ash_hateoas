@@ -142,10 +142,7 @@ defmodule AshHateoas.Hydra.Renderer do
 
   # The schema.org description of the operation as an *action* — so a client that
   # speaks schema.org (a search engine, an assistant) understands the verb even
-  # when it does not speak Hydra. The Action subtype is inferred from the HTTP
-  # method, or overridden per action via `semantic_action`. Its `target` is a
-  # schema.org `EntryPoint` (an action's endpoint descriptor — distinct from this
-  # API's own `ah:EntryPoint` root node).
+  # when it does not speak Hydra.
   defp put_potential_action(op, %Affordance{} = affordance, opts) do
     url = href(affordance, opts)
     method = affordance.method |> to_string() |> String.upcase()
@@ -160,7 +157,6 @@ defmodule AshHateoas.Hydra.Renderer do
 
   defp target(url, method) do
     %{
-      "@type" => "schema:EntryPoint",
       "schema:contentType" => "application/ld+json",
       "schema:httpMethod" => method
     }

@@ -77,10 +77,9 @@ defmodule AshHateoas.Hydra.RendererTest do
       op = Renderer.operation(approve, type: "document", path_params: %{"id" => "7"})
       action = op["schema:potentialAction"]
 
-      # a PATCH infers UpdateAction; the target is a schema.org EntryPoint
+      # a PATCH infers UpdateAction
       assert action["@type"] == "schema:UpdateAction"
       target = action["schema:target"]
-      assert target["@type"] == "schema:EntryPoint"
       assert target["schema:httpMethod"] == "PATCH"
       assert target["schema:urlTemplate"] == "/documents/7/approve"
       assert target["schema:contentType"] == "application/ld+json"

@@ -12,7 +12,7 @@ node offers — knowing nothing about Ash or this package.
 | Backbone output | Hydra / JSON-LD |
 |---|---|
 | an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class, or `owl:Nothing` for a destroy) — plus a `schema:potentialAction` (see below) |
-| an operation as a *verb* | `schema:potentialAction` — a schema.org `Action` (subtype inferred from the HTTP method: GET→`ReadAction`, POST→`CreateAction`, PATCH→`UpdateAction`, DELETE→`DeleteAction`; overridable per action with `semantic_action`) whose `schema:target` is a `schema:EntryPoint` (`urlTemplate`, `httpMethod`, `contentType`). See [semantic-affordances.md](semantic-affordances.md) |
+| an operation as a *verb* | `schema:potentialAction` — a schema.org `Action` (subtype inferred from the HTTP method: GET→`ReadAction`, POST→`CreateAction`, PATCH→`UpdateAction`, DELETE→`DeleteAction`; overridable per action with `semantic_action`) with `schema:target` (`urlTemplate`, `httpMethod`, `contentType`). See [semantic-affordances.md](semantic-affordances.md) |
 | the affordance set on a record | the node's `hydra:operation` array (same-URL ops) + one `ah:<action>` link node per named sub-action |
 | a write action's fields | `hydra:expects` → a `hydra:Class` (with its own `@id`) carrying one `hydra:SupportedProperty` per field |
 | a query/search read's fields | a `hydra:IriTemplate` (`hydra:template`, `hydra:mapping` of `hydra:IriTemplateMapping`) |
@@ -23,7 +23,7 @@ node offers — knowing nothing about Ash or this package.
 | a collection | a `hydra:Collection` — `hydra:member`, `hydra:totalItems`, `hydra:view` |
 | pagination | a `hydra:PartialCollectionView` — `hydra:first` / `previous` / `next` / `last` |
 | the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `hydra:supportedProperty` + `hydra:supportedOperation`) |
-| the entry point | a node typed `ah:EntryPoint` whose `hydra:collection` maps each reachable type to `{"@id", "@type": "Collection"}`; the `ApiDocumentation` carries `hydra:entrypoint` |
+| the entry point | a node whose `hydra:collection` maps each reachable type to `{"@id", "@type": "Collection"}`; the `ApiDocumentation` carries `hydra:entrypoint` |
 | a record's structural links | `hydra:collection` → `{"@id", "@type": "Collection"}`, `hydra:view` → `{"@id", "@type": "Resource"}` (typed node references, never `{href, rel}`) |
 | the actor's granted set | an `odrl:permission` list on the node — one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `odrl:obtainConsent`. See [semantic-affordances.md](semantic-affordances.md) | one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `ah:commit`. See [semantic-affordances.md](semantic-affordances.md) |
 | an error / refusal | a `hydra:Error` (`hydra:statusCode`, `hydra:title`, `hydra:description`); RFC 7807 on request |
@@ -32,11 +32,10 @@ Facts Hydra core has no term for are carried under an `ah:` extension
 vocabulary declared in the emitted `@context`: `ah:multiStep` (a
 compound/Reactor-backed operation), `ah:commit` (the ODRL duty action a
 not-delegable permission is subject to), `ah:datatype` (a property's value
-datatype), and `ah:EntryPoint` (the API root node's type). All are emitted
+datatype), All are emitted
 **prefixed**; the `@context` declares only the prefixes (`ah`, `xsd`, `owl`,
 `schema`, `odrl`), no per-term aliases. The same
-`ah:` vocabulary types the entry-point node (`ah:EntryPoint`, which Hydra core
-has no class for) and carries `ah:datatype` on a property.
+`ah:` vocabulary carries `ah:datatype` on a property.
 
 ### On term spelling (`hydra:` prefix vs bare)
 

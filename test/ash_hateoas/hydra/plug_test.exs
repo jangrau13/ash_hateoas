@@ -59,9 +59,7 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "lists reachable types with their collection links" do
       doc = body(get("/", @admin))
 
-      # EntryPoint is not a Hydra Core class, so it is typed with this package's
-      # own ah: vocabulary term (which the emitted @context resolves).
-      assert doc["@type"] == "ah:EntryPoint"
+      # the root document is self-describing via hydra:collection
       collections = doc["hydra:collection"]
       assert is_map(collections)
       # document and order are both routed and readable

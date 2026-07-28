@@ -12,31 +12,7 @@ artifact.
   `https://raw.githubusercontent.com/HydraCG/Specifications/master/spec/latest/core/core.jsonld`
   — the RDF definitions of every Hydra term (each term's `@type`, `range`,
   `domain`).
-- **JSON-LD `@context` (normative for term expansion):**
-  `http://www.w3.org/ns/hydra/context.jsonld` — what a bare term expands to.
-  Fetched and inspected directly (28 321 bytes).
-- **Spec text:** `https://www.hydra-cg.com/spec/latest/core/` and the
-  Markus-Lanthaler mirror. Explicitly self-described as *"a work in progress …
-  several sections are incomplete, missing, or outdated"* — so it is used only
-  to confirm the vocabulary, never over it.
-- **Worked examples:** the local knowledge base `docs/03-examples.md`,
-  `docs/06-json-ld.md`, and the Hydra cookbook.
-
-## Findings
-
-### 1. Bare terms vs `hydra:` prefix — cosmetic, NOT a conformance axis
-
-The `@context` at `.../hydra/context.jsonld` maps **both** the bare token and the
-`hydra:`-prefixed token to the same IRI. Verified directly against the fetched
-context:
-
-| token | expands to |
-|---|---|
-| `collection` | `http://www.w3.org/ns/hydra/core#collection` |
-| `hydra:collection` | `http://www.w3.org/ns/hydra/core#collection` |
-| `member`, `method`, `expects`, `supportedClass`, … | all aliased bare |
-
-So `"collection"` and `"hydra:collection"` are **identical after JSON-LD
+- **JSON-LD `@context` (normative for term expansion):*o `"collection"` and `"hydra:collection"` are **identical after JSON-LD
 expansion**. The spec text confirms there is *no normative preference*: term
 formatting is purely a `@context` concern; the only requirement is that terms
 resolve to the correct IRI.
@@ -126,17 +102,15 @@ nothing → `owl:Nothing`).
   (no `@id`) — a client cannot reference or dedupe it. Giving it an `@id`
   (`<class>/<action>Input`) makes it a real, referenceable class.
 
-### 6. No `EntryPoint` class exists in Hydra
+### 6. No `EntryPoint` class exists in Hydra — resolved by omission
 
 Confirmed absent from both the vocabulary and the fetched `@context` (the token
 `EntryPoint` is `<<NOT IN CONTEXT>>`). Hydra models the entry point only as the
 target of `hydra:entrypoint` on `ApiDocumentation`; the entry-point *resource*
 is typed by its own domain class, not a Hydra one.
 
-**Previous bug:** the root document used `"@type": "EntryPoint"`, an
-**undefined term** under the Hydra `@context`. It must be typed with a defined
-term — this package's own `ah:EntryPoint` (declared via the `ah:` prefix in the
-emitted `@context`) — or `hydra:Resource`.
+**Resolution:** the root document now carries no `@type` — `hydra:collection`
+alone is sufficient for a generic Hydra client to navigate the API.
 
 ## Net: what is actually non-conformant (and must change) vs. cosmetic
 

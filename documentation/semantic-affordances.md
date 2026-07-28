@@ -77,18 +77,12 @@ search engines and assistants understand where they do not speak Hydra:
 "schema:potentialAction": {
   "@type": "UpdateAction",
   "target": {
-    "@type": "EntryPoint",
     "urlTemplate": "/orders/{id}/confirm",
     "httpMethod": "PATCH",
     "contentType": "application/ld+json"
   }
 }
 ```
-
-Note: schema.org's `EntryPoint` is an *action's HTTP endpoint descriptor* — a
-**different** concept from this package's `ah:EntryPoint` (the API root node). We
-keep both; they never collide because one is a `target` value and the other is a
-document `@type`.
 
 **Action-subtype mapping — CRUD auto, with an optional override.** The subtype is
 inferred from the Ash action's *type* (never guessed from its name, which would
@@ -190,9 +184,9 @@ Uses more of the vocabulary already grounded, no new namespace:
   mapping needs no invented terms. `ah:commit` is our own term (ODRL has no
   create/commit action).
 - **schema.org Actions:** `https://schema.org/docs/actions.html`,
-  `https://schema.org/potentialAction`, `https://schema.org/EntryPoint`.
+  `https://schema.org/potentialAction`.
   Confirmed `potentialAction` (domain `Thing`, range `Action`); `Action` →
-  `target` → `EntryPoint` with `urlTemplate` / `httpMethod` / `contentType`;
+  `target` with `urlTemplate` / `httpMethod` / `contentType`;
   CRUD subtypes `ReadAction` / `CreateAction` / `UpdateAction` / `DeleteAction`
   and domain verbs (`ConfirmAction`, `CancelAction`, `ShipAction`, …).
 - **IANA Link Relations:** the registered `edit` relation (RFC 5023) for a
