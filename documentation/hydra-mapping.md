@@ -73,7 +73,7 @@ and the state gate apply only to the node.
    resolved per request from the requesting actor's context; two actors may
    receive different operations on the same record.
 2. **Never emit a sensitive input's default.** The `hydra:SupportedProperty`
-   still appears — the client must know to supply it — but no `ah:default`.
+   still appears — the client must know to supply it — but no `sh:defaultValue`.
 3. **Never expose a private input.** An input the server does not accept from
    clients does not appear as a property.
 4. **Collections carry collection-level operations only.** A `hydra:Collection`

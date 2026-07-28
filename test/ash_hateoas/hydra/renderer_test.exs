@@ -62,8 +62,8 @@ defmodule AshHateoas.Hydra.RendererTest do
       plain =
         Renderer.supported_property(%Field{name: :notify, type: "boolean", default: {:ok, false}})
 
-      refute Map.has_key?(sensitive, "ah:default")
-      assert plain["ah:default"] == false
+refute Map.has_key?(sensitive, "sh:defaultValue")
+assert plain["sh:defaultValue"] == false
     end
 
     test "an operation carries a schema:potentialAction typed by its HTTP method" do

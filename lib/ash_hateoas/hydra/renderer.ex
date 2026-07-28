@@ -294,7 +294,7 @@ defmodule AshHateoas.Hydra.Renderer do
   defp template_suffix(variables), do: "{?" <> Enum.join(variables, ",") <> "}"
 
   # A sensitive argument's default is :error and must never reach the wire.
-  defp put_default(map, {:ok, value}), do: Map.put(map, "ah:default", encodable(value))
+  defp put_default(map, {:ok, value}), do: Map.put(map, "sh:defaultValue", encodable(value))
   defp put_default(map, :error), do: map
 
   defp put_sh_in(map, constraints) when map_size(constraints) == 0, do: map
