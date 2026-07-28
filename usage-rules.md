@@ -158,7 +158,7 @@ of `exclude` and `unrouted`:
 |---|---|---|
 | `unrouted` | no — no route at all | — |
 | `exclude` | no — routed but unadvertised | yes |
-| `not_delegable` | **yes**, flagged `ah:notDelegable` | only a committing credential |
+| `not_delegable` | **yes**, flagged `odrl:duty` / `odrl:obtainConsent` | only a committing credential |
 
 Withholding it would leave the caller unable to tell "this does not exist" from
 "you may propose this but not perform it", and so unable to ask anyone for it.
@@ -272,7 +272,7 @@ determine that — a wrong guess returns a wrong authorization answer.
 - **Reaching for `not_delegable` to hide an action.** It does the opposite: the
   action stays routed and stays advertised, and only its execution is gated. Use
   `unrouted` to keep it off the surface, or a policy to make it unauthorized.
-- **Reading `ah:notDelegable` as "you will be refused".** The flag is a declared
+- **Reading the ODRL Duty as "you will be refused".** The duty is a declared
   property of the *action*, identical for every actor — a person sees it too. It
   says the action needs a committing credential, not that the reader lacks one.
 - **Expecting `not_delegable` to enforce anything with no commit authority

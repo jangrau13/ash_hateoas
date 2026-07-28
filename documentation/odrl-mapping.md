@@ -204,7 +204,6 @@ before it may proceed; it cannot delegate the action to another agent.
     {
       "@type": "Operation",
       "hydra:method": "PATCH",
-      "ah:notDelegable": true,
       "odrl:permission": {
         "@type": "odrl:Permission",
         "odrl:action": {"@id": "odrl:modify"},
@@ -221,8 +220,7 @@ before it may proceed; it cannot delegate the action to another agent.
 }
 ```
 
-The `ah:notDelegable` flag is **also** still emitted on the operation itself,
-for a Hydra-only client that does not read ODRL.
+
 
 ## Relationship to the `@context`
 

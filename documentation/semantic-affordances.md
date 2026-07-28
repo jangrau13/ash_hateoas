@@ -63,7 +63,7 @@ schema.org's CRUD verb; give it your ontology's verb with an explicit
 | an operation's *action semantics* | `hydra:operation` | `schema:potentialAction` typed `ReadAction`/`CreateAction`/`UpdateAction`/`DeleteAction`/… | schema.org Actions |
 | the named-sub-action relation | `ah:<action>` key | (identifier stays; CRUD writes *are* the IANA `edit` rel) | IANA Link Relations |
 | an actor's granted operation | node `hydra:operation` (present-if-allowed) | `odrl:Permission` with an `odrl:action` | ODRL 2.2 |
-| `not_delegable?` | `ah:notDelegable` | `odrl:Duty` / `odrl:Constraint` | ODRL 2.2 |
+| `not_delegable?` | — | `odrl:Duty` / `odrl:Constraint` | ODRL 2.2 |
 | a to-many relationship | a navigation route | `hydra:Link` property on the node | Hydra Core |
 | an operation's outcomes | (none today) | `hydra:possibleStatus` → `hydra:Status` | Hydra Core |
 
@@ -135,10 +135,8 @@ posture dictates the ODRL mapping:
   a permission list, not a permission/prohibition pair. Two actors reading the
   same record therefore receive *different* permission lists.
 - `not_delegable?` → the permission carries an **`odrl:duty`** whose action is
-  `ah:commit` (ODRL has no "commit" action, so it is our own term): the permission
-  is discharged only by a credential that commits. The `ah:notDelegable` flag is
-  *also* still emitted on the operation itself, for a Hydra-only client that does
-  not read ODRL.
+  `odrl:obtainConsent`: the permission is discharged only by a credential that
+  commits.
 - **`odrl:assignee` is omitted unless the actor has a stable IRI.** The plug
   resolves an opaque actor; when it exposes no dereferenceable identity there is
   nothing honest to put there, so the permission states the action and target and
