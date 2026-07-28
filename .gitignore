@@ -19,3 +19,4 @@ ash_hateoas-*.tar
 
 # macOS
 .DS_Store
+.dockerignore
