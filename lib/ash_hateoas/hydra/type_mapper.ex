@@ -1,21 +1,15 @@
 defmodule AshHateoas.Hydra.TypeMapper do
   @moduledoc """
-  Maps a wire-format type name to a JSON-LD datatype IRI.
+  Maps a wire-format type name to JSON-LD type metadata using standard
+  ontologies: `sh:datatype` for XSD scalars, `sh:nodeKind` for link references,
+  `rdfs:range` with `jsonschema:` for structural types (`ArraySchema`,
+  `ObjectSchema`), and `schema:rangeIncludes` for unions.
 
-  `AshHateoas.TypeMapper` remains the single authority for Ash type → wire name
-  (`:string` → `"string"`, `Ash.Type.Integer` → `"integer"`, …). This module
-  only carries the second half — wire name → the datatype IRI a Hydra property
-  advertises — so the Ash→wire mapping is never duplicated.
-
-  Scalars map to `xsd:` datatypes. A `link` maps to `@id`: JSON-LD's marker that
-  the value is itself an IRI (a followable resource), which is exactly what the
-  `link` wire type means. Structural types (`map`, `array`, `union`) have no
-  single xsd datatype and map to an `ah:` term, so the information is not lost.
+  `AshHateoas.TypeMapper` remains the single authority for Ash type → wire name.
+  This module carries only the wire-name → standard-ontology-IRI mapping.
   """
 
-  alias AshHateoas.Hydra.Context
-
-  @table %{
+  @sh_datatype_table %{
     "string" => "xsd:string",
     "integer" => "xsd:integer",
     "number" => "xsd:decimal",
@@ -23,29 +17,77 @@ defmodule AshHateoas.Hydra.TypeMapper do
     "date" => "xsd:date",
     "time" => "xsd:time",
     "datetime" => "xsd:dateTime",
-    "duration" => "xsd:duration",
-    # A followable IRI, not a literal — JSON-LD's own marker for "value is a link".
-    "link" => "@id"
+    "duration" => "xsd:duration"
   }
 
   @doc """
-  The JSON-LD datatype IRI for a wire-format type name.
+  Returns a tagged tuple describing the type to the renderer.
 
-      iex> AshHateoas.Hydra.TypeMapper.to_datatype("integer")
-      "xsd:integer"
+      iex> type_info("integer")
+      {:sh_datatype, "xsd:integer"}
 
-      iex> AshHateoas.Hydra.TypeMapper.to_datatype("link")
-      "@id"
+      iex> type_info("link")
+      {:sh_node_kind, "sh:IRI"}
+
+      iex> type_info("array")
+      {:rdfs_range, "jsonschema:ArraySchema"}
+
+      iex> type_info("union")
+      :union
+
+      iex> type_info("unknown_thing")
+      :none
   """
-  @spec to_datatype(String.t()) :: String.t()
-  def to_datatype(wire) when is_binary(wire) do
-    case Map.fetch(@table, wire) do
-      {:ok, datatype} -> datatype
-      :error -> Context.vocab_iri(wire)
+  @spec type_info(String.t()) :: {:sh_datatype, String.t()} | {:sh_node_kind, String.t()} | {:rdfs_range, String.t()} | :union | :none
+  def type_info(wire) when is_binary(wire) do
+    cond do
+      Map.has_key?(@sh_datatype_table, wire) ->
+        {:sh_datatype, @sh_datatype_table[wire]}
+
+      wire == "link" ->
+        {:sh_node_kind, "sh:IRI"}
+
+      wire == "array" ->
+        {:rdfs_range, "jsonschema:ArraySchema"}
+
+      wire == "map" ->
+        {:rdfs_range, "jsonschema:ObjectSchema"}
+
+      wire == "union" ->
+        :union
+
+      true ->
+        :none
     end
   end
 
-  @doc "The wire-name → datatype table, for tests and documentation."
-  @spec table() :: %{String.t() => String.t()}
-  def table, do: @table
+  @doc """
+  Maps a wire type to its IRI for use in `schema:rangeIncludes`.
+
+  Unions list their member types via this function so each member's IRI can be
+  included in the rangeIncludes array.
+
+      iex> wire_to_iri("string")
+      "xsd:string"
+
+      iex> wire_to_iri("link")
+      "rdfs:Resource"
+
+      iex> wire_to_iri("map")
+      "jsonschema:ObjectSchema"
+  """
+  @spec wire_to_iri(String.t()) :: String.t() | nil
+  def wire_to_iri(wire) when is_binary(wire) do
+    cond do
+      Map.has_key?(@sh_datatype_table, wire) -> @sh_datatype_table[wire]
+      wire == "link" -> "rdfs:Resource"
+      wire == "array" -> "jsonschema:ArraySchema"
+      wire == "map" -> "jsonschema:ObjectSchema"
+      true -> nil
+    end
+  end
+
+  @doc "The wire-name → XSD datatype table, for tests and documentation."
+  @spec sh_datatype_table() :: %{String.t() => String.t()}
+  def sh_datatype_table, do: @sh_datatype_table
 end

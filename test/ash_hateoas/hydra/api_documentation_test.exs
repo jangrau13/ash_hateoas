@@ -151,7 +151,7 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
 
     # hydra:property is a reference node (rdf:Property range), datatype rides on ah:
     assert title["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/title"}
-    assert title["ah:datatype"] == "xsd:string"
+    assert title["sh:datatype"] == "xsd:string"
   end
 
   test "the whole document is JSON-encodable" do

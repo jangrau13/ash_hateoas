@@ -130,6 +130,13 @@ defmodule AshHateoas.Descriptor do
     |> List.wrap()
     |> Enum.reduce(%{}, fn
       {:one_of, values}, acc -> Map.put(acc, :enum, values)
+      {:types, types}, acc ->
+        union_types =
+          Enum.map(types, fn {name, config} ->
+            {name, TypeMapper.to_wire(config[:type])}
+          end)
+
+        Map.put(acc, :union_types, union_types)
       {:min, value}, acc -> Map.put(acc, :min, value)
       {:max, value}, acc -> Map.put(acc, :max, value)
       {:min_length, value}, acc -> Map.put(acc, :min_length, value)

@@ -240,10 +240,10 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_unless_nil("hydra:title", to_string_or_nil(field.name))
     |> put_unless_nil("hydra:description", field.description)
     # `hydra:property` ranges over rdf:Property, so its value is the property
-    # reference itself — the value's datatype is a fact about the property, not
-    # about this reference, so it rides alongside under an `ah:` term instead of
-    # mistyping the reference.
-    |> put_unless_nil("ah:datatype", TypeMapper.to_datatype(field.type))
+    # reference itself — the value's type is a fact about the property, not
+    # about this reference, so it rides alongside under a standard ontology
+    # term instead of mistyping the reference.
+    |> put_type_info(field)
     |> put_default(field.default)
     |> put_sh_in(field.constraints)
   end
@@ -272,7 +272,7 @@ defmodule AshHateoas.Hydra.Renderer do
       "hydra:property" => property_ref(field, type),
       "hydra:required" => not field.allow_nil?
     }
-    |> put_unless_nil("ah:datatype", TypeMapper.to_datatype(field.type))
+    |> put_type_info(field)
   end
 
   # `hydra:property` ranges over `rdf:Property`, so its value is a reference to
@@ -303,6 +303,30 @@ defmodule AshHateoas.Hydra.Renderer do
     case constraints[:enum] do
       nil -> map
       values -> Map.put(map, "sh:in", Enum.map(values, &encodable/1))
+    end
+  end
+
+  defp put_type_info(map, %Field{type: "union", constraints: constraints}) do
+    case constraints[:union_types] do
+      nil -> map
+      types ->
+        iris =
+          types
+          |> Enum.map(fn {_name, wire} -> TypeMapper.wire_to_iri(wire) end)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&%{"@id" => &1})
+
+        Map.put(map, "schema:rangeIncludes", iris)
+    end
+  end
+
+  defp put_type_info(map, %Field{type: type}) do
+    case TypeMapper.type_info(type) do
+      {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)
+      {:sh_node_kind, kind} -> Map.put(map, "sh:nodeKind", kind)
+      {:rdfs_range, iri} -> Map.put(map, "rdfs:range", %{"@id" => iri})
+      :union -> map
+      :none -> map
     end
   end
 

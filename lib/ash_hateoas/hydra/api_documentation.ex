@@ -116,18 +116,20 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         property_id =
           Map.get(semantic, attribute.name) || Context.property_iri(type, attribute.name)
 
+        wire = AshHateoas.TypeMapper.to_wire(attribute.type)
+
         %{
           "@type" => "SupportedProperty",
           # `hydra:property` ranges over rdf:Property — a reference to the
-          # property. The value's datatype is a fact about the property, carried
-          # alongside under an `ah:` term rather than by mistyping the reference.
+          # property. The value's type is a fact about the property, carried
+          # alongside under a standard ontology term.
           "hydra:property" => %{"@id" => property_id},
-          "ah:datatype" => TypeMapper.to_datatype(AshHateoas.TypeMapper.to_wire(attribute.type)),
           "hydra:title" => to_string(attribute.name),
           "hydra:required" => not Map.get(attribute, :allow_nil?, true),
           "hydra:readable" => true,
           "hydra:writeable" => Map.get(attribute, :writable?, true)
         }
+        |> put_type_info(wire)
         |> put_unless_nil("hydra:description", Map.get(attribute, :description))
       end)
 
@@ -267,6 +269,16 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     Ash.Resource.Info.description(resource)
   rescue
     _ -> nil
+  end
+
+defp put_type_info(map, wire) do
+    case TypeMapper.type_info(wire) do
+      {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)
+      {:sh_node_kind, kind} -> Map.put(map, "sh:nodeKind", kind)
+      {:rdfs_range, iri} -> Map.put(map, "rdfs:range", %{"@id" => iri})
+      :union -> map
+      :none -> map
+    end
   end
 
   defp put_unless_nil(map, _key, nil), do: map

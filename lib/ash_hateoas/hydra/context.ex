@@ -9,8 +9,8 @@ defmodule AshHateoas.Hydra.Context do
   generic.
 
   The emitted context references the canonical Hydra context and inline-extends
-  it with the prefixes this package's documents use: `ah:` (its own vocabulary,
-  for facts Hydra core has no term for — `ah:datatype`), plus `xsd:`/`owl:`/`schema:`/`odrl:`. Every
+  it with this package's own vocabulary (`ah:`) and the standard prefixes
+  `xsd:`, `owl:`, `schema:`, `odrl:`, `sh:`, `jsonschema:`. Every
   such term is emitted **prefixed** on the wire, so no per-term aliases are
   declared — only the prefixes. Bare tokens are used solely for `@type` *values*
   the Hydra context already resolves (`Operation`, `Collection`, …).
@@ -38,7 +38,7 @@ defmodule AshHateoas.Hydra.Context do
   The `@context` value embedded in every emitted document.
 
   References the canonical Hydra context and layers this package's own vocab on
-  top, so both Hydra core terms and the `ah:` extension terms resolve.
+  top, so both Hydra core terms and the extension terms resolve.
   """
   @spec context() :: [String.t() | map()]
   def context do
@@ -50,7 +50,8 @@ defmodule AshHateoas.Hydra.Context do
         "owl" => "http://www.w3.org/2002/07/owl#",
         "schema" => "https://schema.org/",
         "odrl" => "http://www.w3.org/ns/odrl/2/",
-        "sh" => "http://www.w3.org/ns/shacl#"
+        "sh" => "http://www.w3.org/ns/shacl#",
+        "jsonschema" => "https://www.w3.org/2019/wot/json-schema#"
       }
       |> put_semantic_vocab()
     ]

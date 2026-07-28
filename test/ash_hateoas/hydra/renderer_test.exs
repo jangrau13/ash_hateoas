@@ -39,7 +39,7 @@ defmodule AshHateoas.Hydra.RendererTest do
       # hydra:property ranges over rdf:Property -> a reference, {"@id": iri}
       assert prop["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/notify"}
       # the value's datatype rides alongside, not on the property reference
-      assert prop["ah:datatype"] == "xsd:boolean"
+      assert prop["sh:datatype"] == "xsd:boolean"
       assert prop["hydra:writeable"] == true
     end
 
@@ -146,6 +146,61 @@ defmodule AshHateoas.Hydra.RendererTest do
 
       assert prop["sh:in"] == ["public", "private"]
       assert {:ok, _} = Jason.encode(prop)
+    end
+
+    test "a union field emits schema:rangeIncludes with member type IRIs" do
+      prop =
+        Renderer.supported_property(%Field{
+          name: :content,
+          type: "union",
+          constraints: %{union_types: [text: "string", number: "integer"]}
+        })
+
+      assert prop["schema:rangeIncludes"] == [
+        %{"@id" => "xsd:string"},
+        %{"@id" => "xsd:integer"}
+      ]
+    end
+
+    test "a link field emits sh:nodeKind IRI" do
+      prop =
+        Renderer.supported_property(%Field{
+          name: :related,
+          type: "link"
+        })
+
+      assert prop["sh:nodeKind"] == "sh:IRI"
+    end
+
+    test "an array field emits rdfs:range pointing to jsonschema:ArraySchema" do
+      prop =
+        Renderer.supported_property(%Field{
+          name: :tags,
+          type: "array"
+        })
+
+      assert prop["rdfs:range"] == %{"@id" => "jsonschema:ArraySchema"}
+    end
+
+    test "a map field emits rdfs:range pointing to jsonschema:ObjectSchema" do
+      prop =
+        Renderer.supported_property(%Field{
+          name: :metadata,
+          type: "map"
+        })
+
+      assert prop["rdfs:range"] == %{"@id" => "jsonschema:ObjectSchema"}
+    end
+
+    test "a scalar field now emits sh:datatype instead of ah:datatype" do
+      prop =
+        Renderer.supported_property(%Field{
+          name: :title,
+          type: "string"
+        })
+
+      assert prop["sh:datatype"] == "xsd:string"
+      refute Map.has_key?(prop, "ah:datatype")
     end
   end
 

@@ -17,7 +17,7 @@ node offers — knowing nothing about Ash or this package.
 | a write action's fields | `hydra:expects` → a `hydra:Class` (with its own `@id`) carrying one `hydra:SupportedProperty` per field |
 | a query/search read's fields | a `hydra:IriTemplate` (`hydra:template`, `hydra:mapping` of `hydra:IriTemplateMapping`) |
 | `field.allow_nil?` | `hydra:required` (inverted at the edge) |
-| a field / attribute | `hydra:property` → `{"@id": <property-iri>}` (a reference; `hydra:property` ranges over `rdf:Property`); the value's datatype rides alongside as `ah:datatype` — `xsd:*`, or `@id` for a `link` |
+| a field / attribute | `hydra:property` → `{"@id": <property-iri>}` (a reference; `hydra:property` ranges over `rdf:Property`); the value's type rides alongside as `sh:datatype` (xsd scalars), `sh:nodeKind sh:IRI` (links), `rdfs:range` (structurals via `jsonschema:`), or `schema:rangeIncludes` (unions) |
 | a public to-many relationship | on a node: a property keyed by the relationship name → `{"@id": …/:id/<name>, "@type": "Collection"}`; in `ApiDocumentation`: a `hydra:SupportedProperty` whose `hydra:property` is typed `hydra:Link` |
 | an operation's possible outcomes | `hydra:possibleStatus` in `ApiDocumentation` — `hydra:Status` nodes derived from the gate chain (403 if authorizers, 422 for a write, 404 for a member op) |
 | a collection | a `hydra:Collection` — `hydra:member`, `hydra:totalItems`, `hydra:view` |
@@ -30,11 +30,13 @@ node offers — knowing nothing about Ash or this package.
 
 Facts Hydra core has no term for are carried under an `ah:` extension
 vocabulary declared in the emitted `@context`: `ah:commit` (the ODRL duty action a
-not-delegable permission is subject to), `ah:datatype` (a property's value
-datatype). All are emitted
+not-delegable permission is subject to), All are emitted
 **prefixed**; the `@context` declares only the prefixes (`ah`, `xsd`, `owl`,
-`schema`, `odrl`), no per-term aliases. The same
-`ah:` vocabulary carries `ah:datatype` on a property.
+`schema`, `odrl`, `sh`, `jsonschema`), no per-term aliases.
+
+Standard ontology terms (`sh:datatype`, `sh:nodeKind`, `rdfs:range`,
+`schema:rangeIncludes`) replace the former `ah:datatype` for value type
+information.
 
 ### On term spelling (`hydra:` prefix vs bare)
 

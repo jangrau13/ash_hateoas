@@ -76,8 +76,9 @@ property is an xsd:string*, which is wrong (a property is an `rdf:Property`, and
 property reference.
 
 **Fix:** `hydra:property` → `{"@id": <iri>}`; carry the value datatype separately
-under an `ah:` extension term (`ah:datatype`) so no information is lost while the
-property reference stays honest.
+under a standard ontology term (`sh:datatype`, `sh:nodeKind`, `rdfs:range`, or
+`schema:rangeIncludes`) so no information is lost while the property reference
+stays honest.
 
 ### 5. `hydra:expects` / `hydra:returns` — reference a Class
 
@@ -119,7 +120,7 @@ alone is sufficient for a generic Hydra client to navigate the API.
 | 1 | bare vs `hydra:` keys | **cosmetic** — both expand identically | keep existing `hydra:` keys; no wire change |
 | 2 | `hydra:collection` key | already correct | keep |
 | 3 | `{href, rel}` link values | **non-conformant** (not Hydra terms) | → `{"@id", "@type"}` node refs |
-| 4 | `hydra:property` datatype-typed node | **wrong** (`@type` mistypes the property) | → `{"@id"}` ref; datatype to `ah:datatype` |
+| 4 | `hydra:property` datatype-typed node | **wrong** (`@type` mistypes the property) | → `{"@id"}` ref; datatype to standard ontology term (`sh:datatype` etc.) |
 | 5 | missing `hydra:returns` | **incomplete** | emit `returns` (class IRI / `owl:Nothing`) |
 | 5 | anonymous `hydra:expects` class | nit (blank node) | give it an `@id` |
 | 6 | `"@type": "EntryPoint"` | **non-conformant** (undefined term) | → `ah:EntryPoint` |
