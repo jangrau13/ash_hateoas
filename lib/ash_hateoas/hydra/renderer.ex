@@ -137,7 +137,7 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_expects(affordance, opts)
     |> put_returns(affordance, opts)
     |> put_potential_action(affordance, opts)
-    end
+  end
 
   # The schema.org description of the operation as an *action* — so a client that
   # speaks schema.org (a search engine, an assistant) understands the verb even
@@ -308,7 +308,9 @@ defmodule AshHateoas.Hydra.Renderer do
 
   defp put_type_info(map, %Field{type: "union", constraints: constraints}) do
     case constraints[:union_types] do
-      nil -> map
+      nil ->
+        map
+
       types ->
         iris =
           types
@@ -367,7 +369,4 @@ defmodule AshHateoas.Hydra.Renderer do
 
   defp put_unless_nil(map, _key, nil), do: map
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
-
-  defp put_if(map, false, _key, _value), do: map
-  defp put_if(map, _true, key, value), do: Map.put(map, key, value)
 end
