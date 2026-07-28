@@ -145,7 +145,7 @@ defmodule AshHateoas.Hydra.RendererTest do
           constraints: %{enum: [:public, :private]}
         })
 
-      assert prop["ah:constraints"] == %{"enum" => ["public", "private"]}
+      assert prop["sh:in"] == ["public", "private"]
       assert {:ok, _} = Jason.encode(prop)
     end
   end
@@ -178,7 +178,7 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert Enum.all?(perms, &(&1["@type"] == "odrl:Permission"))
     end
 
-    test "a not_delegable action carries an odrl:duty to commit" do
+    test "a not_delegable action carries an odrl:duty to obtainConsent" do
       out =
         Renderer.render(
           %{
@@ -196,7 +196,7 @@ defmodule AshHateoas.Hydra.RendererTest do
       [perm] = out["odrl:permission"]
       [duty] = perm["odrl:duty"]
       assert duty["@type"] == "odrl:Duty"
-      assert duty["odrl:action"] == %{"@id" => "ah:commit"}
+      assert duty["odrl:action"] == %{"@id" => "odrl:obtainConsent"}
     end
 
     test "an empty envelope carries no odrl:permission" do

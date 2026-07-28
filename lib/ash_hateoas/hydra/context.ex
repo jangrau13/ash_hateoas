@@ -50,7 +50,8 @@ defmodule AshHateoas.Hydra.Context do
         "xsd" => "http://www.w3.org/2001/XMLSchema#",
         "owl" => "http://www.w3.org/2002/07/owl#",
         "schema" => "https://schema.org/",
-        "odrl" => "http://www.w3.org/ns/odrl/2/"
+        "odrl" => "http://www.w3.org/ns/odrl/2/",
+        "sh" => "http://www.w3.org/ns/shacl#"
       }
       |> put_semantic_vocab()
     ]

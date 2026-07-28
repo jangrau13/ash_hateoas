@@ -96,23 +96,24 @@ defmodule AshHateoas.Hydra.Renderer do
   end
 
   defp permission(%Affordance{} = affordance, target) do
-    %{
+    perm = %{
       "@type" => "odrl:Permission",
       "odrl:action" => %{"@id" => odrl_action(affordance.method)}
     }
-    |> put_unless_nil("odrl:target", target && %{"@id" => target})
-    |> put_if(affordance.not_delegable?, "odrl:duty", [committing_duty()])
-  end
 
-  # An action flagged `not_delegable?` is subject to a duty: it commits, so only a
-  # credential that commits may discharge it. Expressed as an ODRL Duty rather
-  # than the private `ah:notDelegable` flag (which is still emitted on the
-  # operation for a Hydra-only client).
-  defp committing_duty do
-    %{
-      "@type" => "odrl:Duty",
-      "odrl:action" => %{"@id" => "ah:commit"}
-    }
+    perm =
+      if affordance.not_delegable? do
+        duty = %{
+          "@type" => "odrl:Duty",
+          "odrl:action" => %{"@id" => "odrl:obtainConsent"}
+        }
+
+        Map.put(perm, "odrl:duty", [duty])
+      else
+        perm
+      end
+
+    put_unless_nil(perm, "odrl:target", target && %{"@id" => target})
   end
 
   # ODRL action terms (Common Vocabulary) for each HTTP method. `read`/`modify`/
@@ -250,7 +251,7 @@ defmodule AshHateoas.Hydra.Renderer do
     # mistyping the reference.
     |> put_unless_nil("ah:datatype", TypeMapper.to_datatype(field.type))
     |> put_default(field.default)
-    |> put_constraints(field.constraints)
+    |> put_sh_in(field.constraints)
   end
 
   @doc "Render a query/search read's fields as a `hydra:IriTemplate`."
@@ -302,17 +303,16 @@ defmodule AshHateoas.Hydra.Renderer do
   defp put_default(map, {:ok, value}), do: Map.put(map, "ah:default", encodable(value))
   defp put_default(map, :error), do: map
 
-  defp put_constraints(map, constraints) when map_size(constraints) == 0, do: map
+  defp put_sh_in(map, constraints) when map_size(constraints) == 0, do: map
 
-  defp put_constraints(map, constraints) do
-    Map.put(
-      map,
-      "ah:constraints",
-      Map.new(constraints, fn {key, value} -> {to_string(key), encodable(value)} end)
-    )
+  defp put_sh_in(map, constraints) do
+    case constraints[:enum] do
+      nil -> map
+      values -> Map.put(map, "sh:in", Enum.map(values, &encodable/1))
+    end
   end
 
-  # An operation attaches inline when its href is the node's own URL (or it has
+  # An operation attaches inline when its href is the node's own URL (or it has operation attaches inline when its href is the node's own URL (or it has
   # no href at all — the fallback path, where the node URL is all a client has).
   defp inline?(nil, _node_id), do: true
   defp inline?(href, node_id), do: href == node_id
