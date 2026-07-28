@@ -147,7 +147,7 @@ posture dictates the ODRL mapping:
     "@type": "odrl:Permission",
     "odrl:target": { "@id": "/orders/1" },
     "odrl:action": { "@id": "odrl:use" },
-    "odrl:duty": [ { "@type": "odrl:Duty", "odrl:action": { "@id": "ah:commit" } } ]
+    "odrl:duty": [ { "@type": "odrl:Duty", "odrl:action": { "@id": "odrl:obtainConsent" } } ]
   }
 ]
 ```
@@ -181,8 +181,7 @@ Uses more of the vocabulary already grounded, no new namespace:
   `constraint`, `duty`. Action terms confirmed present: `use` (Core), and from
   the Common Vocabulary `read` ("obtain data from the Asset"), `modify` ("change
   existing content"), `delete` ("permanently remove all copies") — so the CRUD
-  mapping needs no invented terms. `ah:commit` is our own term (ODRL has no
-  create/commit action).
+  mapping needs no invented terms.
 - **schema.org Actions:** `https://schema.org/docs/actions.html`,
   `https://schema.org/potentialAction`.
   Confirmed `potentialAction` (domain `Thing`, range `Action`); `Action` →

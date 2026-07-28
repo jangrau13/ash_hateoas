@@ -25,12 +25,12 @@ node offers — knowing nothing about Ash or this package.
 | the API's type catalogue | `hydra:ApiDocumentation` → `hydra:supportedClass` (each a `hydra:Class` with `hydra:supportedProperty` + `hydra:supportedOperation`) |
 | the entry point | a node whose `hydra:collection` maps each reachable type to `{"@id", "@type": "Collection"}`; the `ApiDocumentation` carries `hydra:entrypoint` |
 | a record's structural links | `hydra:collection` → `{"@id", "@type": "Collection"}`, `hydra:view` → `{"@id", "@type": "Resource"}` (typed node references, never `{href, rel}`) |
-| the actor's granted set | an `odrl:permission` list on the node — one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `odrl:obtainConsent`. See [semantic-affordances.md](semantic-affordances.md) | one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `ah:commit`. See [semantic-affordances.md](semantic-affordances.md) |
+| the actor's granted set | an `odrl:permission` list on the node — one `odrl:Permission` per granted affordance (`odrl:action` from the method: GET→`read`, PATCH→`modify`, DELETE→`delete`, else `use`; `odrl:target` = the node). Permission-only: a denied action is omitted, so there is no `odrl:Prohibition`. A `not_delegable?` action carries an `odrl:duty` to `odrl:obtainConsent`. See [semantic-affordances.md](semantic-affordances.md) |
 | an error / refusal | a `hydra:Error` (`hydra:statusCode`, `hydra:title`, `hydra:description`); RFC 7807 on request |
 
 Facts Hydra core has no term for are carried under an `ah:` extension
-vocabulary declared in the emitted `@context`: `ah:commit` (the ODRL duty action a
-not-delegable permission is subject to), All are emitted
+vocabulary declared in the emitted `@context`: named sub-action link properties
+(`ah:<action>`), error metadata keys (`ah:*`). All are emitted
 **prefixed**; the `@context` declares only the prefixes (`ah`, `xsd`, `owl`,
 `schema`, `odrl`, `sh`, `jsonschema`), no per-term aliases.
 
