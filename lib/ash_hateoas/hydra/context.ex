@@ -68,6 +68,24 @@ defmodule AshHateoas.Hydra.Context do
         # plain JSON rather than declared with `@container`, which cannot
         # express a list of lists.
         "ah:identity" => %{"rdfs:subPropertyOf" => %{"@id" => "owl:hasKey"}},
+        # Two operation roles schema.org cannot express, each related to the
+        # nearest published term so a client that speaks only schema.org still
+        # learns something true.
+        #
+        # `ah:SaveAction` — writing a whole document, rather than one record.
+        # `schema:UpdateAction` describes the act correctly but is also what
+        # this package infers for *any* PATCH, so declaring it would make a
+        # document save indistinguishable from an ordinary record update. The
+        # subclass says "this writes" to a generic reader and "this writes a
+        # document" to one that knows the term.
+        #
+        # `ah:RunAction` — executing a resource. schema.org has no term for it:
+        # `ControlAction` and `ActivateAction` are device control, and
+        # `AchieveAction`'s subtypes are Win/Lose/Tie. `schema:Action` is the
+        # only honest parent — it says an agent does something, which is all
+        # that is shared.
+        "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}},
+        "ah:RunAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:Action"}},
         "rdfs" => "http://www.w3.org/2000/01/rdf-schema#"
       }
       |> put_semantic_vocab()

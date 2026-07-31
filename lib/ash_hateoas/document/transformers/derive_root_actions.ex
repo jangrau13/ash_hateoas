@@ -153,10 +153,17 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   # mutation semantics. Not `AssessAction`, whose siblings are `ReviewAction`
   # and `ReactAction`: that is forming an opinion, not checking a fact.
   #
-  # `schema:UpdateAction` — "The act of managing by changing/editing the state
-  # of the object", whose subtypes are Add/Replace/Delete. `:save` reconciles a
-  # whole document against what exists, which is all three. `CreateAction` would
-  # claim it only ever creates.
+  # `:save` gets a term from this package's vocabulary rather than
+  # `schema:UpdateAction`, even though that reads right in isolation. The
+  # inferred type for *any* PATCH is already `schema:UpdateAction`, so using it
+  # here would make a document save indistinguishable from an ordinary record
+  # update — a consumer reading the role would treat every PATCH as a
+  # document-level write. A term is only worth declaring if it says something
+  # the inference does not.
+  #
+  # `ah:SaveAction` is related to `schema:UpdateAction` in the `@context`, so a
+  # client that speaks only schema.org still learns this writes rather than
+  # reads, while one that speaks the vocabulary gets the narrower fact.
   #
   # Overridable like everything else here: a resource declaring its own
   # `semantic_action` for either keeps it.
@@ -174,8 +181,11 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
     end
   end
 
+  # `CheckAction` is published and unambiguous: no HTTP method infers it, so it
+  # can only have been declared. `SaveAction` is this package's own, for the
+  # reason above.
   defp semantic_action_iri(:validate), do: "CheckAction"
-  defp semantic_action_iri(:save), do: "UpdateAction"
+  defp semantic_action_iri(:save), do: AshHateoas.Hydra.Context.vocab_iri("SaveAction")
 
   defp add_action(dsl_state, name) do
     with {:ok, document} <- document_argument(),

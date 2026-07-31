@@ -242,11 +242,30 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
                "https://schema.org/CheckAction"
     end
 
-    test "save is an UpdateAction" do
-      # Not `CreateAction`: a save reconciles a whole document against what
-      # already exists, so it adds, replaces and removes.
+    test "save is distinguishable from an ordinary record update" do
+      # Not `schema:UpdateAction`, though that reads right in isolation: it is
+      # already what any PATCH infers, so declaring it would make a document
+      # save indistinguishable from updating one record. A term is only worth
+      # declaring if it says something the inference does not.
       assert recipe_operation("save")["schema:potentialAction"]["@type"] ==
-               "https://schema.org/UpdateAction"
+               "https://ash-hateoas.org/vocab#SaveAction"
+
+      refute recipe_operation("save")["schema:potentialAction"]["@type"] ==
+               recipe_operation("update")["schema:potentialAction"]["@type"]
+    end
+
+    test "the vocabulary relates both new terms to the nearest published one" do
+      # So a client speaking only schema.org still learns something true: that
+      # a save writes, and that a run is an action an agent performs.
+      terms =
+        AshHateoas.Hydra.Context.context()
+        |> Enum.find(&is_map/1)
+
+      assert terms["ah:SaveAction"] == %{
+               "rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}
+             }
+
+      assert terms["ah:RunAction"] == %{"rdfs:subClassOf" => %{"@id" => "schema:Action"}}
     end
 
     test "the POSTs are told apart by role, not only by name" do
