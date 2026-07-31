@@ -222,6 +222,62 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     end
   end
 
+  describe "the document operations declare what they are for" do
+    defp recipe_operation(action) do
+      [AshHateoas.Test.Domain]
+      |> ApiDocumentation.build()
+      |> Map.fetch!("hydra:supportedClass")
+      |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#Recipe"))
+      |> Map.fetch!("hydra:supportedOperation")
+      |> Enum.find(&(&1["ah:action"] == action))
+    end
+
+    test "validate is a CheckAction, not a create" do
+      # Both document operations are POSTs, so the type inferred from the method
+      # is `CreateAction` for each — which says checking a document creates
+      # something. Declaring the role is what lets a client tell them apart
+      # without matching the string "validate", which is a naming convention
+      # rather than anything the API states.
+      assert recipe_operation("validate")["schema:potentialAction"]["@type"] ==
+               "https://schema.org/CheckAction"
+    end
+
+    test "save is an UpdateAction" do
+      # Not `CreateAction`: a save reconciles a whole document against what
+      # already exists, so it adds, replaces and removes.
+      assert recipe_operation("save")["schema:potentialAction"]["@type"] ==
+               "https://schema.org/UpdateAction"
+    end
+
+    test "the POSTs are told apart by role, not only by name" do
+      types =
+        for action <- ["create", "validate", "save", "cook"],
+            do: recipe_operation(action)["schema:potentialAction"]["@type"]
+
+      assert length(Enum.uniq(types)) == 4
+    end
+
+    test "an execute action carries a role schema.org has no term for" do
+      # schema.org has nothing meaning "run this": `ControlAction` and
+      # `ActivateAction` are device control, and `AchieveAction`'s subtypes are
+      # Win/Lose/Tie. So the role is named in this package's vocabulary.
+      #
+      # Nothing about it is special-cased — `semantic_action` passes an absolute
+      # IRI through verbatim, which is what makes a vocabulary this package does
+      # not own expressible at all.
+      assert recipe_operation("cook")["schema:potentialAction"]["@type"] ==
+               "https://ash-hateoas.org/vocab#RunAction"
+    end
+
+    test "a resource declaring its own semantic_action keeps it" do
+      # Generated as a default, like the actions themselves.
+      assert %{validate: iri} =
+               AshHateoas.Resource.Info.semantic_actions(AshHateoas.Test.Recipe)
+
+      assert iri == "https://schema.org/CheckAction"
+    end
+  end
+
   describe "ah:identity" do
     test "a declared identity names the properties that key the class" do
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])

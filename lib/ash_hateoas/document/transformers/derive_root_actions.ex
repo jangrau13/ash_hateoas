@@ -26,6 +26,16 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   `:save` is generic too, because it writes *many* resources rather than the
   one it is declared on; a `create` would be a claim about a single record.
 
+  ## Both declare what they are for
+
+  Each is given a `semantic_action` — `CheckAction` for `:validate`,
+  `UpdateAction` for `:save` — so the wire states the operation's *role* rather
+  than leaving a client to infer it. Both are POSTs, so without this the
+  inferred type is `schema:CreateAction` for each, and a client can only tell
+  them apart by matching the string `"validate"`. That is a naming convention
+  two parties happen to share, not something the API says. See
+  `declare_semantic_action/2` for why these two terms.
+
   ## Default, with deliberate override
 
   Both are added with `Ash.Resource.Builder.add_new_action/4`, which is a no-op
@@ -94,7 +104,9 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
       with {:ok, dsl_state} <- add_action(dsl_state, :validate),
            {:ok, dsl_state} <- add_action(dsl_state, :save),
            {:ok, dsl_state} <- declare_method(dsl_state, :validate),
-           {:ok, dsl_state} <- declare_method(dsl_state, :save) do
+           {:ok, dsl_state} <- declare_method(dsl_state, :save),
+           {:ok, dsl_state} <- declare_semantic_action(dsl_state, :validate),
+           {:ok, dsl_state} <- declare_semantic_action(dsl_state, :save) do
         {:ok, dsl_state}
       end
     else
@@ -124,6 +136,46 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
       end
     end
   end
+
+  # What the operation *is for*, declared rather than left to be guessed from
+  # the verb.
+  #
+  # Without this both actions are POSTs, and `put_potential_action/3` infers
+  # `schema:CreateAction` from the method — which says a document check creates
+  # something. A client then has no way to tell the two apart except by matching
+  # the string "validate", which is a naming convention two parties happen to
+  # share rather than anything the API states. Declaring the type puts the role
+  # on the wire, where a client can match on it.
+  #
+  # `schema:CheckAction` — "An agent inspects, determines, investigates,
+  # inquires, or examines an object's accuracy, quality, condition, or state."
+  # That is validation, and it sits under `FindAction`, which carries no
+  # mutation semantics. Not `AssessAction`, whose siblings are `ReviewAction`
+  # and `ReactAction`: that is forming an opinion, not checking a fact.
+  #
+  # `schema:UpdateAction` — "The act of managing by changing/editing the state
+  # of the object", whose subtypes are Add/Replace/Delete. `:save` reconciles a
+  # whole document against what exists, which is all three. `CreateAction` would
+  # claim it only ever creates.
+  #
+  # Overridable like everything else here: a resource declaring its own
+  # `semantic_action` for either keeps it.
+  defp declare_semantic_action(dsl_state, name) do
+    if Map.has_key?(AshHateoas.Resource.Info.semantic_actions(dsl_state), name) do
+      {:ok, dsl_state}
+    else
+      with {:ok, entity} <-
+             Transformer.build_entity(AshHateoas.Resource, [:hateoas], :semantic_action,
+               action: name,
+               iri: semantic_action_iri(name)
+             ) do
+        {:ok, Transformer.add_entity(dsl_state, [:hateoas], entity)}
+      end
+    end
+  end
+
+  defp semantic_action_iri(:validate), do: "CheckAction"
+  defp semantic_action_iri(:save), do: "UpdateAction"
 
   defp add_action(dsl_state, name) do
     with {:ok, document} <- document_argument(),

@@ -22,6 +22,21 @@ defmodule AshHateoas.Test.Recipe do
   hateoas do
     type("recipe")
     base("/recipes")
+
+    # An operation that *executes* the aggregate rather than reading or writing
+    # it. schema.org has no term for this: `ControlAction` and `ActivateAction`
+    # are device control, and `AchieveAction`'s subtypes are Win/Lose/Tie. So
+    # the role is named in this package's own vocabulary, and a client matches
+    # the declared type rather than the string "cook".
+    #
+    # Nothing here is special-cased: `semantic_action` already passes an
+    # absolute IRI through verbatim, which is what makes a vocabulary the
+    # package does not own — or one a customer owns — expressible.
+    semantic_action(:cook, "https://ash-hateoas.org/vocab#RunAction")
+
+    # A generic action declares no HTTP semantics, so this says what the verb is
+    # rather than leaving it inferred.
+    method(:cook, :post)
   end
 
   document do
@@ -54,6 +69,14 @@ defmodule AshHateoas.Test.Recipe do
 
   actions do
     defaults([:read, create: [:title], update: [:title]])
+
+    # The domain's own execute action — the counterpart of `run` on a simulation
+    # model. Its role is declared above; without that it is one POST among
+    # several, indistinguishable from `create`.
+    action :cook, :map do
+      description("Cook the recipe.")
+      run(fn _input, _context -> {:ok, %{cooked: true}} end)
+    end
   end
 
   policies do
