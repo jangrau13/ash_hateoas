@@ -1,13 +1,13 @@
-defmodule AshHateoas.Document.Transformers.DeriveRootActions do
+defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
   @moduledoc """
-  Generates `:validate` and `:save` on a resource declaring `aggregate_root?`.
+  Generates `:validate` and `:save` on a resource carrying `AshHateoas.DslRoot`.
 
-      document do
-        aggregate_root? true
-      end
+      use Ash.Resource,
+        extensions: [AshHateoas.Resource, AshHateoas.DslRoot]
 
-  That one line is the whole declaration. Both actions take a `document`
-  argument carrying the aggregate as a flat list of elements.
+  Carrying the extension is the whole declaration — there is no section and no
+  flag. Both actions take a `document` argument carrying the aggregate as a flat
+  list of elements.
 
   This transformer runs **before**
   `AshHateoas.Resource.Transformers.DeriveActionRoutes`, so the generated
@@ -85,7 +85,7 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   use Spark.Dsl.Transformer
 
   alias Ash.Resource.Builder
-  alias AshHateoas.Document.Info
+  alias AshHateoas.DslRoot.Info
   alias Spark.Dsl.Transformer
 
   @doc false
@@ -100,7 +100,7 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
 
   @doc false
   def transform(dsl_state) do
-    if Info.aggregate_root?(dsl_state) do
+    if Info.root?(dsl_state) do
       with {:ok, dsl_state} <- add_action(dsl_state, :validate),
            {:ok, dsl_state} <- add_action(dsl_state, :save),
            {:ok, dsl_state} <- declare_method(dsl_state, :validate),

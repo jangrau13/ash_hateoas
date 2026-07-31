@@ -1,7 +1,7 @@
 defmodule AshHateoas.RootActions do
   @moduledoc """
   The bodies of the `:validate` and `:save` actions generated for an aggregate
-  root. See `AshHateoas.Document.Transformers.DeriveRootActions`.
+  root. See `AshHateoas.DslRoot.Transformers.DeriveRootActions`.
 
   A document is a **flat list of elements**. Each element names its class in a
   `kind` key and carries that class's attributes alongside:

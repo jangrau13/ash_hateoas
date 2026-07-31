@@ -1,8 +1,8 @@
 defmodule AshHateoas.Test.Recipe do
   @moduledoc """
   An aggregate root: the thing a client authors, validates and saves as one
-  document. Declaring `aggregate_root?` is the whole configuration —
-  `AshHateoas.Document.Transformers.DeriveRootActions` generates `:validate`
+  document. Carrying `AshHateoas.DslRoot` is the whole configuration —
+  `AshHateoas.DslRoot.Transformers.DeriveRootActions` generates `:validate`
   and `:save` from it.
 
   Paired with `AshHateoas.Test.Step` and `AshHateoas.Test.Ingredient`, which
@@ -13,7 +13,7 @@ defmodule AshHateoas.Test.Recipe do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshHateoas.Resource, AshHateoas.Document]
+    extensions: [AshHateoas.Resource, AshHateoas.DslRoot]
 
   ets do
     private?(true)
@@ -37,10 +37,6 @@ defmodule AshHateoas.Test.Recipe do
     # A generic action declares no HTTP semantics, so this says what the verb is
     # rather than leaving it inferred.
     method(:cook, :post)
-  end
-
-  document do
-    aggregate_root?(true)
   end
 
   attributes do

@@ -1,6 +1,6 @@
 defmodule AshHateoas.RootActionsTest do
   @moduledoc """
-  `aggregate_root? true` generates `:validate` and `:save`, and they behave.
+  Carrying `AshHateoas.DslRoot` generates `:validate` and `:save`, and they behave.
 
   The invariant under test throughout is that **validation never writes**. It is
   what makes the action safe to call on every editor keystroke and callable by
@@ -99,19 +99,19 @@ defmodule AshHateoas.RootActionsTest do
       # documents. A resource carrying only it never sees this DSL, and asking
       # whether it is a root answers false rather than raising — so a caller
       # never has to check for the extension first.
-      refute AshHateoas.Document in Spark.extensions(Ingredient)
-      refute AshHateoas.Document.Info.aggregate_root?(Ingredient)
+      refute AshHateoas.DslRoot in Spark.extensions(Ingredient)
+      refute AshHateoas.DslRoot.Info.root?(Ingredient)
 
       # And a resource with neither extension at all.
-      refute AshHateoas.Document.Info.aggregate_root?(AshHateoas.Test.Unrouted)
+      refute AshHateoas.DslRoot.Info.root?(AshHateoas.Test.Unrouted)
     end
 
     test "an aggregate root carries both extensions" do
       extensions = Spark.extensions(Recipe)
 
       assert AshHateoas.Resource in extensions
-      assert AshHateoas.Document in extensions
-      assert AshHateoas.Document.Info.aggregate_root?(Recipe)
+      assert AshHateoas.DslRoot in extensions
+      assert AshHateoas.DslRoot.Info.root?(Recipe)
     end
   end
 

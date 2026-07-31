@@ -4,7 +4,7 @@ defmodule AshHateoas.Test.HandValidated do
 
   `Ash.Resource.Builder.add_new_action/4` is a no-op when an action of that name
   already exists, so the hand-written one is used as-is and `:save` is still
-  generated. That is what makes `aggregate_root?` a default rather than a
+  generated. That is what makes the generated pair a default rather than a
   commitment: an author overrides the half they care about without giving up
   the other.
   """
@@ -13,7 +13,7 @@ defmodule AshHateoas.Test.HandValidated do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshHateoas.Resource, AshHateoas.Document]
+    extensions: [AshHateoas.Resource, AshHateoas.DslRoot]
 
   ets do
     private?(true)
@@ -22,10 +22,6 @@ defmodule AshHateoas.Test.HandValidated do
   hateoas do
     type("hand_validated")
     base("/hand_validated")
-  end
-
-  document do
-    aggregate_root?(true)
   end
 
   attributes do
