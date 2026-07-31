@@ -447,6 +447,58 @@ defmodule AshHateoas.RootActionsTest do
       assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
     end
 
+    test "a shared element is referenced, never edited" do
+      relationship = Ash.Resource.Info.relationship(Recipe, :techniques)
+      opts = AshHateoas.RootActions.manage_opts(relationship, Recipe)
+
+      # The load-bearing pair. `on_match: :ignore` means a document can link a
+      # shared element but not write its attributes — so one author cannot
+      # change what another author's document refers to. `on_lookup: :relate`
+      # is what makes sharing work at all: without it, an element not yet
+      # linked to this aggregate is created fresh, so two documents naming the
+      # same technique produce two records rather than one shared one.
+      assert opts[:on_match] == :ignore
+      assert opts[:on_lookup] == :relate
+      assert opts[:on_missing] == :unrelate
+    end
+
+    test "two aggregates naming the same element share one record" do
+      bread = recipe!()
+      cake = Recipe |> Ash.Changeset.for_create(:create, %{title: "Cake"}) |> Ash.create!()
+
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: bread.id})
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: cake.id})
+
+      # One technique, two links — not two techniques. Under `on_lookup:
+      # :ignore` this silently produced a duplicate on a data layer that does
+      # not enforce identities, and a constraint violation on one that does.
+      assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
+      assert Ash.count!(AshHateoas.Test.RecipeTechnique, authorize?: false) == 2
+    end
+
+    test "one aggregate cannot rename a shared element out from under another" do
+      bread = recipe!()
+      cake = Recipe |> Ash.Changeset.for_create(:create, %{title: "Cake"}) |> Ash.create!()
+
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: bread.id})
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: cake.id})
+
+      # Bread's author renames it in their file. Under identity matching this is
+      # indistinguishable from "remove Kneading, add Folding" — the document
+      # carries no id, so the two edits are byte-identical. Rather than guess,
+      # the shared element is read-only: Bread unlinks Kneading and links a new
+      # Folding, and Cake is untouched.
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Folding"}], %{id: bread.id})
+
+      cake_techniques =
+        Recipe
+        |> Ash.get!(cake.id, load: [:techniques], authorize?: false)
+        |> Map.get(:techniques)
+        |> Enum.map(& &1.name)
+
+      assert cake_techniques == ["Kneading"]
+    end
+
     test "matching uses the resource's declared identity, not the primary key" do
       relationship = Ash.Resource.Info.relationship(Recipe, :ingredients)
 

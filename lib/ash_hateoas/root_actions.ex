@@ -60,10 +60,19 @@ defmodule AshHateoas.RootActions do
   to carry ids. One consequence worth stating: under name matching a rename is
   indistinguishable from a delete plus a create.
 
-  **How an absent element is removed is derived from the schema**, never
-  decided here — see `manage_opts/2`. A `has_many` whose far side declares
-  `allow_nil?: false` states exclusive ownership, so removal destroys; a
-  `many_to_many` states the element is shared, so removal only unlinks.
+  **How an element is managed is derived from the schema**, never decided here
+  — see `manage_opts/2`. A `has_many` whose far side declares `allow_nil?:
+  false` states exclusive ownership, so the document owns the element outright:
+  it is created, updated and destroyed with the document.
+
+  A `many_to_many` states the element is shared, so the document may only
+  **reference** it — link it, unlink it, and create it if it does not exist
+  yet, but never edit its attributes. Otherwise one author's file could change
+  what another author's file refers to, invisibly. Renaming is the sharpest
+  case and the reason for the rule: with no id in the document text, a rename
+  and a delete-plus-create are byte-identical, so a rename cannot be detected,
+  let alone handled safely. A shared element's attributes are edited through
+  its own resource, where the authority for them lives.
   """
 
   alias AshHateoas.Index
@@ -93,7 +102,7 @@ defmodule AshHateoas.RootActions do
   @spec validate(Ash.ActionInput.t(), term()) :: {:ok, map()}
   def validate(input, _context) do
     document = document_of(input)
-    errors = errors_for(document, input.resource)
+    errors = errors_for(document, input.resource, input)
 
     {:ok, %{"valid?" => errors == [], "errors" => Enum.map(errors, &stringify/1)}}
   end
@@ -111,7 +120,7 @@ defmodule AshHateoas.RootActions do
   def save(input, _context) do
     document = document_of(input)
 
-    case errors_for(document, input.resource) do
+    case errors_for(document, input.resource, input) do
       [] ->
         persist(document, input)
 
@@ -124,13 +133,13 @@ defmodule AshHateoas.RootActions do
   # Validation
   # ---------------------------------------------------------------------------
 
-  defp errors_for(document, root) when is_list(document) do
+  defp errors_for(document, root, _input) when is_list(document) do
     index = index_for(root)
 
     element_errors(document, index, root) ++ graph_errors(document, index)
   end
 
-  defp errors_for(_document, _root) do
+  defp errors_for(_document, _root, _input) do
     [
       %{
         index: nil,
@@ -401,18 +410,44 @@ defmodule AshHateoas.RootActions do
   Anything else falls back to unlinking, which is the recoverable mistake.
   """
   @spec manage_opts(map(), Ash.Resource.t()) :: keyword()
+  def manage_opts(%{type: :many_to_many} = relationship, _root) do
+    # A shared element is **referenced, never edited**, through a document.
+    #
+    # `on_match: :ignore` is the load-bearing part. A `many_to_many` says the
+    # element is reachable from other aggregates, so letting one document write
+    # its attributes would let an author change what another author's document
+    # refers to — invisibly, from a file that says nothing about them. Renaming
+    # is the sharpest case: under identity matching a rename is indistinguishable
+    # from a delete plus a create, so it cannot even be detected, let alone
+    # handled. Making the element read-only here removes the question rather
+    # than guessing at an answer.
+    #
+    # `on_lookup: :relate` is what makes sharing work at all. Without it an
+    # element not yet linked to *this* aggregate is created fresh, so two
+    # documents naming the same technique produce two records rather than one
+    # shared one — silently on a data layer that does not enforce identities,
+    # and as a constraint violation on one that does.
+    #
+    # A shared element's own attributes are edited through its own resource,
+    # which is where the authority for them lives.
+    [
+      on_lookup: :relate,
+      on_no_match: :create,
+      on_match: :ignore,
+      on_missing: :unrelate,
+      use_identities: identities_for(relationship.destination)
+    ]
+  end
+
   def manage_opts(relationship, root) do
-    opts = [
+    [
       on_lookup: :ignore,
       on_no_match: :create,
       on_match: :update,
-      on_missing: on_missing(relationship, root)
+      on_missing: on_missing(relationship, root),
+      use_identities: identities_for(relationship.destination)
     ]
-
-    Keyword.put(opts, :use_identities, identities_for(relationship.destination))
   end
-
-  defp on_missing(%{type: :many_to_many}, _root), do: :unrelate
 
   defp on_missing(%{type: :has_many, destination: destination}, root) do
     owned? =
