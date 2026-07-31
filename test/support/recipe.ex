@@ -38,6 +38,15 @@ defmodule AshHateoas.Test.Recipe do
     has_many :ingredients, AshHateoas.Test.Ingredient do
       public?(true)
     end
+
+    # A shared element: a technique is reachable from several recipes, so
+    # removing it from one document must not delete the record.
+    many_to_many :techniques, AshHateoas.Test.Technique do
+      public?(true)
+      through(AshHateoas.Test.RecipeTechnique)
+      source_attribute_on_join_resource(:recipe_id)
+      destination_attribute_on_join_resource(:technique_id)
+    end
   end
 
   actions do
@@ -85,6 +94,13 @@ defmodule AshHateoas.Test.Ingredient do
     attribute(:quantity, :integer, public?: true)
   end
 
+  identities do
+    # Name is the key an author writes, which is what lets the DSL keep the
+    # uuid out of the text: a save matches on this rather than on an id the
+    # author would have to carry.
+    identity(:unique_name, [:name])
+  end
+
   relationships do
     belongs_to :recipe, AshHateoas.Test.Recipe do
       public?(true)
@@ -94,7 +110,12 @@ defmodule AshHateoas.Test.Ingredient do
   end
 
   actions do
-    defaults([:read, create: [:name, :unit, :quantity, :recipe_id]])
+    defaults([
+      :read,
+      :destroy,
+      create: [:name, :unit, :quantity, :recipe_id],
+      update: [:name, :unit, :quantity]
+    ])
   end
 
   policies do
@@ -132,6 +153,10 @@ defmodule AshHateoas.Test.Step do
     attribute(:body, :string, public?: true)
   end
 
+  identities do
+    identity(:unique_name, [:name])
+  end
+
   relationships do
     belongs_to :recipe, AshHateoas.Test.Recipe do
       public?(true)
@@ -141,7 +166,103 @@ defmodule AshHateoas.Test.Step do
   end
 
   actions do
-    defaults([:read, create: [:name, :body, :recipe_id]])
+    defaults([:read, :destroy, create: [:name, :body, :recipe_id], update: [:name, :body]])
+  end
+
+  policies do
+    policy always() do
+      authorize_if(always())
+    end
+  end
+end
+
+defmodule AshHateoas.Test.Technique do
+  @moduledoc """
+  An element shared across aggregates. `Recipe many_to_many :techniques` states
+  that a technique belongs to no single recipe, so removing it from one
+  recipe's document unlinks it rather than destroying it — the record is still
+  referenced elsewhere.
+  """
+
+  use Ash.Resource,
+    domain: AshHateoas.Test.Domain,
+    data_layer: Ash.DataLayer.Ets,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshHateoas.Resource]
+
+  ets do
+    private?(true)
+  end
+
+  hateoas do
+    type("technique")
+    base("/techniques")
+  end
+
+  attributes do
+    uuid_primary_key(:id)
+    attribute(:name, :string, public?: true, allow_nil?: false)
+  end
+
+  identities do
+    identity(:unique_name, [:name])
+  end
+
+  relationships do
+    many_to_many :recipes, AshHateoas.Test.Recipe do
+      public?(true)
+      through(AshHateoas.Test.RecipeTechnique)
+      source_attribute_on_join_resource(:technique_id)
+      destination_attribute_on_join_resource(:recipe_id)
+    end
+  end
+
+  actions do
+    defaults([:read, :destroy, create: [:name], update: [:name]])
+  end
+
+  policies do
+    policy always() do
+      authorize_if(always())
+    end
+  end
+end
+
+defmodule AshHateoas.Test.RecipeTechnique do
+  @moduledoc "Join resource for `Recipe many_to_many :techniques`."
+
+  use Ash.Resource,
+    domain: AshHateoas.Test.Domain,
+    data_layer: Ash.DataLayer.Ets,
+    authorizers: [Ash.Policy.Authorizer]
+
+  ets do
+    private?(true)
+  end
+
+  attributes do
+    uuid_primary_key(:id)
+  end
+
+  relationships do
+    belongs_to :recipe, AshHateoas.Test.Recipe do
+      public?(true)
+      allow_nil?(false)
+      attribute_writable?(true)
+    end
+
+    belongs_to :technique, AshHateoas.Test.Technique do
+      public?(true)
+      allow_nil?(false)
+      attribute_writable?(true)
+    end
+  end
+
+  actions do
+    # `manage_relationship` on a many_to_many updates the join row as well as
+    # the target, so the join needs an update action even though nothing about
+    # it is author-editable.
+    defaults([:read, :destroy, create: [:recipe_id, :technique_id], update: []])
   end
 
   policies do

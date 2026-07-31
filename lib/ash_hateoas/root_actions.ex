@@ -45,6 +45,25 @@ defmodule AshHateoas.RootActions do
 
   Both are filtered. The general rule: surface an error only for a field the
   author could actually edit.
+
+  ## A save is a sync, not an append
+
+  The document is the aggregate's whole contents, so an element absent from it
+  has been removed. `save/2` hands each relationship to
+  `Ash.Changeset.manage_relationship/4`, which matches by identity, creates the
+  missing, updates the matched and removes the absent — inside one transaction.
+
+  **Matching is by the resource's declared identity**, which is what lets the
+  authoring language keep primary keys out of the text: `stock Susceptible` is
+  matched on its name because the domain declared name unique. A resource with
+  no identity falls back to the primary key, and a document for it would have
+  to carry ids. One consequence worth stating: under name matching a rename is
+  indistinguishable from a delete plus a create.
+
+  **How an absent element is removed is derived from the schema**, never
+  decided here — see `manage_opts/2`. A `has_many` whose far side declares
+  `allow_nil?: false` states exclusive ownership, so removal destroys; a
+  `many_to_many` states the element is shared, so removal only unlinks.
   """
 
   alias AshHateoas.Index
@@ -302,52 +321,177 @@ defmodule AshHateoas.RootActions do
   # Persistence
   # ---------------------------------------------------------------------------
 
+  # A save is a **sync**, not an append: the document is the aggregate's whole
+  # contents, so an element absent from it has been removed.
+  #
+  # `manage_relationship` does exactly that — match by identity, create the
+  # missing, update the matched, remove the absent — inside the changeset's own
+  # transaction. Hand-rolling the loop instead means reimplementing identity
+  # matching, deletion and atomicity, and getting all three wrong: a create-only
+  # loop duplicates the whole document on a second save and orphans anything
+  # deleted from it.
   defp persist(document, input) do
     root = input.resource
-    index = index_for(root)
-    root_id = Map.get(input.arguments, :id)
+    grouped = group_by_relationship(document, root)
 
-    created =
-      Enum.reduce_while(document, {:ok, []}, fn element, {:ok, acc} ->
-        case create_element(element, index, root, root_id, input) do
-          {:ok, record} -> {:cont, {:ok, [record | acc]}}
-          {:error, reason} -> {:halt, {:error, reason}}
+    case fetch_root(input) do
+      {:ok, record} ->
+        record
+        |> Ash.Changeset.for_update(update_action(root), %{},
+          actor: actor(input),
+          tenant: input.tenant
+        )
+        |> manage_all(grouped, root)
+        |> Ash.update(authorize?: true)
+        |> case do
+          {:ok, _updated} ->
+            {:ok, %{"valid?" => true, "errors" => [], "synced" => count(grouped)}}
+
+          {:error, reason} ->
+            {:error, reason}
         end
+
+      :error ->
+        {:error, "no #{AshHateoas.Resource.Info.type(root)} with that id"}
+    end
+  end
+
+  # Every managed relationship is passed, including the ones the document says
+  # nothing about — those get an empty list.
+  #
+  # Iterating only the relationships present in the document would make removal
+  # impossible to express: deleting the last stock from a file leaves no stock
+  # element behind to group, so the relationship would never be managed and the
+  # record would survive. "Absent from the document" has to mean "managed with
+  # nothing in it", or a save can add but never remove.
+  defp manage_all(changeset, grouped, root) do
+    root
+    |> managed_relationships()
+    |> Enum.reduce(changeset, fn relationship, acc ->
+      Ash.Changeset.manage_relationship(
+        acc,
+        relationship.name,
+        Map.get(grouped, relationship, []),
+        manage_opts(relationship, root)
+      )
+    end)
+  end
+
+  defp managed_relationships(root) do
+    root
+    |> Ash.Resource.Info.relationships()
+    |> Enum.filter(&(&1.cardinality == :many))
+  end
+
+  @doc """
+  How a relationship's absent elements are removed, derived from the schema.
+
+  The domain has already said who owns what, so nothing here is a policy this
+  module invents:
+
+    * a `has_many` whose far side declares `allow_nil?: false` states
+      **exclusive ownership** — the child cannot exist without this parent, so
+      removing it from the document destroys it;
+    * a `many_to_many` states the opposite. The element is reachable from other
+      aggregates, so removal unlinks it and the record survives. Destroying it
+      would delete data another aggregate still refers to — and on a
+      polymorphic edge the database will not stop that, because such a column
+      carries no foreign key.
+
+  Anything else falls back to unlinking, which is the recoverable mistake.
+  """
+  @spec manage_opts(map(), Ash.Resource.t()) :: keyword()
+  def manage_opts(relationship, root) do
+    opts = [
+      on_lookup: :ignore,
+      on_no_match: :create,
+      on_match: :update,
+      on_missing: on_missing(relationship, root)
+    ]
+
+    Keyword.put(opts, :use_identities, identities_for(relationship.destination))
+  end
+
+  defp on_missing(%{type: :many_to_many}, _root), do: :unrelate
+
+  defp on_missing(%{type: :has_many, destination: destination}, root) do
+    owned? =
+      destination
+      |> Ash.Resource.Info.relationships()
+      |> Enum.any?(fn back ->
+        back.type == :belongs_to and back.destination == root and
+          Map.get(back, :allow_nil?) == false
       end)
 
-    case created do
-      {:ok, records} ->
-        {:ok, %{"valid?" => true, "errors" => [], "created" => length(records)}}
+    if owned?, do: :destroy, else: :unrelate
+  end
 
-      {:error, reason} ->
-        {:error, reason}
+  defp on_missing(_relationship, _root), do: :unrelate
+
+  # Matching is by the resource's declared identity, which is what lets the DSL
+  # keep primary keys out of the text an author writes: `stock Susceptible` is
+  # matched on its name because the domain declared name unique, not because
+  # this module assumed it. A resource with no identity falls back to the
+  # primary key, so a document for it would have to carry ids.
+  defp identities_for(resource) do
+    case Ash.Resource.Info.identities(resource) do
+      [] -> [:_primary_key]
+      identities -> Enum.map(identities, & &1.name)
+    end
+  rescue
+    _ -> [:_primary_key]
+  end
+
+  # Which relationship an element belongs to is decided by its class: the
+  # element names its `kind`, and exactly one of the root's relationships points
+  # at that resource.
+  defp group_by_relationship(document, root) do
+    index = index_for(root)
+    by_destination = relationships_by_destination(root)
+
+    document
+    |> Enum.reduce(%{}, fn element, acc ->
+      with {:ok, resource} <- Index.fetch(index, to_string(element["kind"])),
+           %{} = relationship <- Map.get(by_destination, resource) do
+        attributes = authorable(element, resource, root)
+        Map.update(acc, relationship, [attributes], &(&1 ++ [attributes]))
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp relationships_by_destination(root) do
+    root
+    |> Ash.Resource.Info.relationships()
+    |> Enum.filter(&(&1.cardinality == :many))
+    |> Map.new(&{&1.destination, &1})
+  end
+
+  defp fetch_root(input) do
+    case Map.get(input.arguments, :id) do
+      nil ->
+        :error
+
+      id ->
+        case Ash.get(input.resource, id, authorize?: false, tenant: input.tenant) do
+          {:ok, record} -> {:ok, record}
+          _ -> :error
+        end
     end
   end
 
-  defp create_element(element, index, root, root_id, input) do
-    with {:ok, resource} <- Index.fetch(index, to_string(element["kind"])) do
-      attributes =
-        element
-        |> authorable(resource, root)
-        |> put_owner(resource, root, root_id)
-
-      resource
-      |> Ash.Changeset.for_create(create_action(resource), attributes,
-        actor: input.context[:private][:actor],
-        tenant: input.tenant
-      )
-      |> Ash.create(authorize?: true)
-    else
-      :error -> {:error, "unknown element kind #{inspect(element["kind"])}"}
+  defp update_action(resource) do
+    case Ash.Resource.Info.primary_action(resource, :update) do
+      %{name: name} -> name
+      _ -> :update
     end
   end
 
-  defp put_owner(attributes, resource, root, root_id) do
-    case owner_key(resource, root) do
-      nil -> attributes
-      key when is_nil(root_id) -> attributes |> Map.delete(key)
-      key -> Map.put(attributes, key, root_id)
-    end
+  defp actor(input), do: get_in(input.context, [:private, :actor])
+
+  defp count(grouped) do
+    grouped |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
   end
 
   # ---------------------------------------------------------------------------

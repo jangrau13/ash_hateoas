@@ -13,7 +13,13 @@ defmodule AshHateoas.RootActionsTest do
   alias AshHateoas.Test.{Ingredient, Recipe, Step}
 
   setup do
-    for resource <- [Ingredient, Step, Recipe] do
+    for resource <- [
+          AshHateoas.Test.RecipeTechnique,
+          AshHateoas.Test.Technique,
+          Ingredient,
+          Step,
+          Recipe
+        ] do
       resource |> Ash.read!(authorize?: false) |> Enum.each(&Ash.destroy!(&1, authorize?: false))
     end
 
@@ -278,7 +284,9 @@ defmodule AshHateoas.RootActionsTest do
         )
 
       assert result["valid?"]
-      assert result["created"] == 2
+      # "synced", not "created": a save reconciles the aggregate against the
+      # document rather than appending to it.
+      assert result["synced"] == 2
       assert Ash.count!(Ingredient, authorize?: false) == 1
       assert Ash.count!(Step, authorize?: false) == 1
     end
@@ -312,6 +320,150 @@ defmodule AshHateoas.RootActionsTest do
       {:ok, saved} = save(document, %{id: recipe.id})
 
       assert fields(validate(document)) == fields(saved)
+    end
+  end
+
+  describe "save is a sync, not an append" do
+    # A document is the aggregate's whole contents, so saving it twice must not
+    # duplicate it and removing an element from it must remove the record.
+    # These are the cases a create-only loop passes in a fresh database and
+    # fails on the second save — the normal editing loop.
+
+    test "saving the same document twice does not duplicate it" do
+      recipe = recipe!()
+      document = [%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}]
+
+      {:ok, _} = save(document, %{id: recipe.id})
+      {:ok, _} = save(document, %{id: recipe.id})
+
+      assert Ash.count!(Ingredient, authorize?: false) == 1
+    end
+
+    test "an element matched by name is updated in place" do
+      recipe = recipe!()
+
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 10}], %{id: recipe.id})
+
+      [before] = Ash.read!(Ingredient, authorize?: false)
+
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 99}], %{id: recipe.id})
+
+      assert [after_edit] = Ash.read!(Ingredient, authorize?: false)
+      assert after_edit.quantity == 99
+      # The same row, not a replacement. Matching is by the resource's declared
+      # identity, which is what lets the DSL keep primary keys out of the text
+      # an author writes.
+      assert after_edit.id == before.id
+    end
+
+    test "an element removed from the document is removed from the aggregate" do
+      recipe = recipe!()
+
+      {:ok, _} =
+        save(
+          [
+            %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"},
+            %{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}
+          ],
+          %{id: recipe.id}
+        )
+
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}], %{id: recipe.id})
+
+      assert ["Salt"] = Ash.read!(Ingredient, authorize?: false) |> Enum.map(& &1.name)
+    end
+
+    test "emptying the document empties the aggregate" do
+      recipe = recipe!()
+
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+
+      {:ok, _} = save([], %{id: recipe.id})
+
+      # Every managed relationship is passed, including ones the document says
+      # nothing about. Iterating only what the document contains would make
+      # removal inexpressible — deleting the last element leaves nothing behind
+      # to group, so the relationship would never be managed.
+      assert Ash.count!(Ingredient, authorize?: false) == 0
+    end
+
+    test "a relationship the document never mentions is still emptied" do
+      recipe = recipe!()
+
+      {:ok, _} =
+        save(
+          [
+            %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"},
+            %{"kind" => "step", "name" => "Mix", "body" => "combine"}
+          ],
+          %{id: recipe.id}
+        )
+
+      # Only ingredients now; steps are absent entirely rather than emptied.
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+
+      assert Ash.count!(Step, authorize?: false) == 0
+      assert Ash.count!(Ingredient, authorize?: false) == 1
+    end
+  end
+
+  describe "removal is derived from the schema" do
+    test "an exclusively-owned child is destroyed" do
+      # `Recipe has_many :ingredients` and `Ingredient belongs_to :recipe,
+      # allow_nil?: false` — the child cannot exist without this parent, so the
+      # schema states exclusive ownership and removal means destruction.
+      relationship = Ash.Resource.Info.relationship(Recipe, :ingredients)
+
+      assert AshHateoas.RootActions.manage_opts(relationship, Recipe)[:on_missing] == :destroy
+    end
+
+    test "a shared element is unlinked, not destroyed" do
+      # `Recipe many_to_many :techniques` states that a technique belongs to no
+      # single recipe. Destroying it because one document stopped mentioning it
+      # would delete data another aggregate still refers to — and on a
+      # polymorphic edge the database will not stop that, because such a column
+      # carries no foreign key.
+      relationship = Ash.Resource.Info.relationship(Recipe, :techniques)
+
+      assert AshHateoas.RootActions.manage_opts(relationship, Recipe)[:on_missing] == :unrelate
+    end
+
+    test "removing a shared element from the document leaves the record" do
+      recipe = recipe!()
+
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: recipe.id})
+      assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
+      assert Ash.count!(AshHateoas.Test.RecipeTechnique, authorize?: false) == 1
+
+      {:ok, _} = save([], %{id: recipe.id})
+
+      # The link is gone; the technique is not.
+      assert Ash.count!(AshHateoas.Test.RecipeTechnique, authorize?: false) == 0
+      assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
+    end
+
+    test "matching uses the resource's declared identity, not the primary key" do
+      relationship = Ash.Resource.Info.relationship(Recipe, :ingredients)
+
+      # `identity :unique_name, [:name]` is why `stock Susceptible` can be
+      # matched without the author ever writing a uuid.
+      assert AshHateoas.RootActions.manage_opts(relationship, Recipe)[:use_identities] ==
+               [:unique_name]
+    end
+
+    test "a resource with no identity falls back to the primary key" do
+      relationship = Ash.Resource.Info.relationship(AshHateoas.Test.Document, :comments)
+
+      # Nothing to match on but the id, so a document for such a resource would
+      # have to carry one. Degrading rather than guessing at a natural key.
+      assert AshHateoas.RootActions.manage_opts(relationship, AshHateoas.Test.Document)[
+               :use_identities
+             ] == [:_primary_key]
     end
   end
 
