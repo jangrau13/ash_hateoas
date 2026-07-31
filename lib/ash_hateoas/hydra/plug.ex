@@ -133,6 +133,9 @@ defmodule AshHateoas.Hydra.Plug do
       {:collection, resource, type, action} ->
         serve_collection(conn, resource, type, action, actor, opts)
 
+      {:related, resource, relationship, id} ->
+        serve_related(conn, resource, relationship, id, actor, opts)
+
       :error ->
         send_error(conn, 404, "Not Found")
     end
@@ -227,6 +230,62 @@ defmodule AshHateoas.Hydra.Plug do
         # is down). Classify by the Ash error so the status is honest, instead of
         # reporting every failure as Forbidden.
         send_ash_error(conn, error)
+    end
+  end
+
+  # One record's related collection (`/base/:id/<relationship>`) — the URL a
+  # node advertises for each of its public to-many relationships.
+  #
+  # This is a read of the DESTINATION resource scoped to one source record, not
+  # a read of the source: the members are comments, and they are rendered
+  # exactly as the destination's own collection renders them, so a client
+  # following a link gets the same node shape either way.
+  #
+  # Loading the source first is deliberate. It makes an unknown or unreadable
+  # source a 404 rather than an empty collection — "this record has no
+  # comments" and "this record does not exist" are different answers, and
+  # authorization on the source is what decides whether its related set may be
+  # seen at all.
+  defp serve_related(conn, resource, relationship, id, actor, opts) do
+    tenant = Ash.PlugHelpers.get_tenant(conn)
+
+    with %{destination: destination} = definition <-
+           Ash.Resource.Info.relationship(resource, relationship),
+         record when not is_nil(record) <- load(resource, id, actor, tenant),
+         {:ok, loaded} <-
+           Ash.load(record, [relationship], actor: actor, tenant: tenant, authorize?: true) do
+      related = loaded |> Map.get(relationship) |> List.wrap()
+      type = AshHateoas.Resource.Info.type(destination)
+
+      members =
+        Enum.map(related, fn member ->
+          node(member, type, destination, record_id(member), actor, tenant, opts,
+            scope: :collection
+          )
+        end)
+
+      # No collection-level operations: a related collection is a view onto one
+      # record's associations, and a create here would have to invent which
+      # side owns the new row. The destination's own collection is where its
+      # create affordance lives.
+      document =
+        Collection.wrap(members,
+          id: related_href(resource, definition, id, opts),
+          total_items: length(members)
+        )
+        |> Map.put("@context", Context.context())
+
+      send_json(conn, 200, document)
+    else
+      {:error, error} -> send_ash_error(conn, error)
+      _ -> send_error(conn, 404, "Not Found")
+    end
+  end
+
+  defp related_href(resource, %{name: relationship}, id, opts) do
+    case get_route(resource, &(&1.type == :related and &1.relationship == relationship)) do
+      nil -> nil
+      route -> href_prefix(opts) <> String.replace(route.route, ":id", to_string(id))
     end
   end
 
@@ -558,11 +617,13 @@ defmodule AshHateoas.Hydra.Plug do
     end)
   end
 
-  # Lower rank is tried first. Index (literal) before member (wildcard); anything
-  # else does not participate in GET read matching.
+  # Lower rank is tried first. Index (literal) before related (one more literal
+  # segment than the member route) before member (wildcard); anything else does
+  # not participate in GET read matching.
   defp route_match_rank(%Route{type: :index}), do: 0
-  defp route_match_rank(%Route{type: :get, primary?: true}), do: 1
-  defp route_match_rank(_route), do: 2
+  defp route_match_rank(%Route{type: :related}), do: 1
+  defp route_match_rank(%Route{type: :get, primary?: true}), do: 2
+  defp route_match_rank(_route), do: 3
 
   # A named index (`/base/<action>`) carries its own action so the collection
   # read runs THAT action, not the primary read.
@@ -580,6 +641,27 @@ defmodule AshHateoas.Hydra.Plug do
     case capture_id(prefix <> route, path) do
       nil -> nil
       id -> {:member, resource, type, id}
+    end
+  end
+
+  # `/base/:id/<relationship>` — the URL the node advertises for a public
+  # to-many relationship. Matching it here is what makes that link followable;
+  # without this clause the node emits a URL the router 404s, which is a broken
+  # contract for any client that follows links rather than constructing them.
+  #
+  # The match carries the SOURCE resource and the relationship, not the
+  # destination: the destination's own collection route already exists and
+  # returns every row, whereas this one is scoped to one record's related set.
+  defp match_route(
+         %Route{type: :related, route: route, relationship: relationship},
+         resource,
+         _type,
+         path,
+         prefix
+       ) do
+    case capture_id(prefix <> route, path) do
+      nil -> nil
+      id -> {:related, resource, relationship, id}
     end
   end
 

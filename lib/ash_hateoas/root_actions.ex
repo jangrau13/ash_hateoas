@@ -185,6 +185,10 @@ defmodule AshHateoas.RootActions do
     end
   end
 
+  defp element_error(_element, position, _index, _root) do
+    [error_at(position, nil, %{}, nil, "element must be a map")]
+  end
+
   # A key that is neither an attribute nor a reference vanishes silently.
   #
   # `authorable/3` drops what the resource does not accept, and `reference_keys/2`
@@ -217,10 +221,6 @@ defmodule AshHateoas.RootActions do
             key,
             "#{inspect(kind)} has no #{key}. Accepted: #{Enum.join(Enum.sort(accepted), ", ")}."
           )
-  end
-
-  defp element_error(_element, position, _index, _root) do
-    [error_at(position, nil, %{}, nil, "element must be a map")]
   end
 
   # A changeset that is never run. `for_create/4` casts, applies constraints and

@@ -16,6 +16,7 @@ defmodule AshHateoas.Hydra.PlugTest do
   alias AshHateoas.Test.{
     Actor,
     Article,
+    Comment,
     Document,
     HydraEndpoint,
     MultiRead,
@@ -202,6 +203,53 @@ defmodule AshHateoas.Hydra.PlugTest do
       comments = node["comments"]
       assert comments["@id"] =~ "/articles/#{article.id}/comments"
       assert comments["@type"] == "Collection"
+    end
+
+    test "the related collection link RESOLVES, and holds only that record's related rows" do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Followed"})
+        |> Ash.create!(authorize?: false)
+
+      other =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Unrelated"})
+        |> Ash.create!(authorize?: false)
+
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Owner", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      for {body_text, article_id} <- [{"mine", article.id}, {"theirs", other.id}] do
+        Comment
+        |> Ash.Changeset.for_create(:create, %{
+          body: body_text,
+          document_id: document.id,
+          article_id: article_id
+        })
+        |> Ash.create!(authorize?: false)
+      end
+
+      # Follow the link the node itself advertised. Asserting only that the key
+      # is present leaves the URL free to 404 — which is what shipped, and is
+      # a broken contract for every client that follows links rather than
+      # constructing them.
+      node = body(get("/articles/#{article.id}", @admin))
+      collection = body(get(node["comments"]["@id"], @admin))
+
+      assert collection["@type"] == "Collection"
+
+      # Scoped to the source record: a related collection that returned every
+      # row would resolve without erroring while still being wrong.
+      assert Enum.map(collection["hydra:member"], & &1["body"]) == ["mine"]
+      assert collection["hydra:totalItems"] == 1
+    end
+
+    test "a related collection for an unknown source record is a 404, not an empty list" do
+      unknown = Ash.UUID.generate()
+
+      assert get("/articles/#{unknown}/comments", @admin).status == 404
     end
   end
 
