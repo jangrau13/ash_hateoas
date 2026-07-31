@@ -136,26 +136,73 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     attribute_properties ++ link_properties(resource, type)
   end
 
-  # A to-many relationship (a routed `:related`) is advertised as a
-  # `hydra:Link` — its `hydra:property` is a node typed `hydra:Link`, so a client
-  # knows the key on a record is a followable link to a related collection, not a
-  # literal value.
+  # A relationship is advertised as a `hydra:Link` — its `hydra:property` is a
+  # node typed `hydra:Link`, so a client knows the key on a record is a
+  # followable link rather than a literal value.
+  #
+  # Both cardinalities are described. To-MANY comes from a routed `:related`
+  # route (the link is to a collection). To-ONE has no route by design — a to-one
+  # is served as an inline node reference rather than a collection route (see
+  # `DeriveRelationshipRoutes`) — but it is still part of the class's shape, so
+  # it belongs in the catalogue. Omitting it left roughly half the graph edges
+  # undescribed, invisible to any client deriving structure from the
+  # documentation.
+  #
+  # Each link carries `sh:class`: the IRI of the class it points AT. Without it
+  # a link says only "this is followable", never "→ what", which is not enough
+  # for a client to resolve the reference to a described class.
   defp link_properties(resource, type) do
-    resource
-    |> routes()
-    |> Enum.filter(&(&1.type == :related))
-    |> Enum.map(fn %Route{relationship: name} ->
+    routed = MapSet.new(routes(resource), fn %Route{} = route -> route.relationship end)
+
+    to_many =
+      resource
+      |> routes()
+      |> Enum.filter(&(&1.type == :related))
+      |> Enum.map(&link_property(resource, type, &1.relationship, "Collection"))
+
+    # Public to-one relationships, which are never routed.
+    to_one =
+      resource
+      |> Ash.Resource.Info.public_relationships()
+      |> Enum.filter(&(&1.cardinality == :one and &1.name not in routed))
+      |> Enum.map(&link_property(resource, type, &1.name, nil))
+
+    to_many ++ to_one
+  end
+
+  # One `hydra:Link` property. `target_kind` is `"Collection"` for a to-many
+  # link (it resolves to a `hydra:Collection` of the destination) and `nil` for
+  # a to-one (it resolves to a single node of the destination class).
+  defp link_property(resource, type, name, target_kind) do
+    property =
       %{
-        "@type" => "SupportedProperty",
-        "hydra:property" => %{
-          "@id" => Context.property_iri(type, name),
-          "@type" => "hydra:Link"
-        },
-        "hydra:title" => to_string(name),
-        "hydra:readable" => true,
-        "hydra:writeable" => false
+        "@id" => Context.property_iri(type, name),
+        "@type" => "hydra:Link"
       }
-    end)
+      |> put_unless_nil("sh:class", link_target_class(resource, name))
+
+    %{
+      "@type" => "SupportedProperty",
+      "hydra:property" => property,
+      "hydra:title" => to_string(name),
+      "hydra:readable" => true,
+      "hydra:writeable" => false
+    }
+    |> put_unless_nil("ah:targetKind", target_kind)
+  end
+
+  # The class IRI a relationship points at, from the destination's own declared
+  # type. A destination without a type is not addressable as a node, so the link
+  # is emitted without `sh:class` rather than with a bogus one — a consumer then
+  # degrades to an untyped link instead of resolving to nothing.
+  defp link_target_class(resource, name) do
+    with %{destination: destination} <- Ash.Resource.Info.relationship(resource, name),
+         destination_type when is_binary(destination_type) <-
+           AshHateoas.Resource.Info.type(destination) do
+      Context.class_iri(destination_type)
+    else
+      _ -> nil
+    end
   end
 
   @doc """
