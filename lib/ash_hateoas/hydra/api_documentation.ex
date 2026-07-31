@@ -291,7 +291,18 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
 
       %{
         "@type" => "Operation",
-        "hydra:method" => method(route, action) |> to_string() |> String.upcase()
+        "hydra:method" => method(route, action) |> to_string() |> String.upcase(),
+        # The action's own name. Hydra gives an operation no name of its own —
+        # it describes *how* to invoke one, not what the domain calls it — so a
+        # client is otherwise left with the HTTP method, and a class with two
+        # POSTs offers two indistinguishable operations.
+        #
+        # It is the domain's word, and the only thing that can label a button:
+        # `approve` and `archive` are what an author recognises, where "POST"
+        # and "POST" are not. It also lets a client find an operation by name
+        # rather than by guessing from a URL, which is what makes an affordance
+        # addressable at all.
+        "ah:action" => to_string(route.action)
       }
       |> put_unless_nil("hydra:title", action && Map.get(action, :description))
       |> put_shape(action, resource, type)

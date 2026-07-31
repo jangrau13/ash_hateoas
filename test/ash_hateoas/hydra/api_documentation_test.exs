@@ -180,6 +180,48 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     assert "document" in titles
   end
 
+  describe "ah:action" do
+    test "an operation carries the action's own name" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      article =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Article")
+        )
+
+      names = Enum.map(article["hydra:supportedOperation"], & &1["ah:action"])
+
+      # Hydra gives an operation no name of its own — it describes *how* to
+      # invoke one, not what the domain calls it. `publish` is the only thing
+      # that can label a button; "POST" cannot.
+      assert "publish" in names
+      assert "read" in names
+    end
+
+    test "two operations sharing a method are distinguishable" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      recipe =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Recipe")
+        )
+
+      posts =
+        recipe["hydra:supportedOperation"]
+        |> Enum.filter(&(&1["hydra:method"] == "POST"))
+        |> Enum.map(& &1["ah:action"])
+
+      # Three POSTs — create, validate and save. Without a name a client sees
+      # three identical offers and cannot tell which one saves a document.
+      assert "create" in posts
+      assert "validate" in posts
+      assert "save" in posts
+      assert length(Enum.uniq(posts)) == length(posts)
+    end
+  end
+
   describe "ah:identity" do
     test "a declared identity names the properties that key the class" do
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])

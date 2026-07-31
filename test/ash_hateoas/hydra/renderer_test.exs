@@ -26,6 +26,11 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert op["hydra:method"] == "PATCH"
       assert op["hydra:title"] == "Approve this document."
 
+      # The action's own name, which is what lets a client match a live offer
+      # on a node against the operation the documentation describes — and what
+      # labels a button, since "PATCH" cannot.
+      assert op["ah:action"] == "approve"
+
       # a write returns the resource's own class
       assert op["hydra:returns"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
 
@@ -62,8 +67,8 @@ defmodule AshHateoas.Hydra.RendererTest do
       plain =
         Renderer.supported_property(%Field{name: :notify, type: "boolean", default: {:ok, false}})
 
-refute Map.has_key?(sensitive, "sh:defaultValue")
-assert plain["sh:defaultValue"] == false
+      refute Map.has_key?(sensitive, "sh:defaultValue")
+      assert plain["sh:defaultValue"] == false
     end
 
     test "an operation carries a schema:potentialAction typed by its HTTP method" do
@@ -157,9 +162,9 @@ assert plain["sh:defaultValue"] == false
         })
 
       assert prop["schema:rangeIncludes"] == [
-        %{"@id" => "xsd:string"},
-        %{"@id" => "xsd:integer"}
-      ]
+               %{"@id" => "xsd:string"},
+               %{"@id" => "xsd:integer"}
+             ]
     end
 
     test "a link field emits sh:nodeKind IRI" do

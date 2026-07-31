@@ -131,7 +131,13 @@ defmodule AshHateoas.Hydra.Renderer do
   def operation(%Affordance{} = affordance, opts \\ []) do
     %{
       "@type" => "Operation",
-      "hydra:method" => affordance.method |> to_string() |> String.upcase()
+      "hydra:method" => affordance.method |> to_string() |> String.upcase(),
+      # The action's own name — see the note in
+      # `AshHateoas.Hydra.ApiDocumentation.supported_operations/2`. A node's
+      # offers are the actor- and state-dependent ones, so this is what lets a
+      # client match a live offer against the operation the documentation
+      # describes, rather than pairing them by method and URL shape.
+      "ah:action" => to_string(affordance.name)
     }
     |> put_unless_nil("hydra:title", affordance.description)
     |> put_expects(affordance, opts)
