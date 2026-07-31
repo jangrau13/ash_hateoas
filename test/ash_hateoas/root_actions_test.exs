@@ -539,6 +539,33 @@ defmodule AshHateoas.RootActionsTest do
     end
   end
 
+  describe "which relationships a document syncs" do
+    test "a many_to_many join is not managed twice" do
+      # Ash exposes the join a `many_to_many` travels through as a `has_many` of
+      # its own, so both appear as manageable. Syncing both writes the join
+      # table twice, and on the wire it would advertise the join as an element
+      # kind an author writes — when it is plumbing nobody was asked to author.
+      names =
+        AshHateoas.Test.Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.name)
+
+      assert :techniques in names
+      refute :techniques_join_assoc in names
+    end
+
+    test "the many_to_many itself is still managed" do
+      # Removing the join must not remove the relationship it serves: a document
+      # still adds and removes techniques.
+      names =
+        AshHateoas.Test.Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.name)
+
+      assert Enum.sort(names) == [:ingredients, :steps, :techniques]
+    end
+  end
+
   describe "deliberate override" do
     test "a hand-written action of the same name is used as-is" do
       # `add_new_action/4` is a no-op when the action already exists, so the

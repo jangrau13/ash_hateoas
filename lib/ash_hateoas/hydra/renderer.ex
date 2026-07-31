@@ -328,6 +328,23 @@ defmodule AshHateoas.Hydra.Renderer do
     end
   end
 
+  # An array whose elements are instances of known classes says which, rather
+  # than stopping at "an array of something".
+  #
+  # `sh:class` is the same term a link property uses to name its target, so a
+  # client that can already follow a link can read this with nothing new — and
+  # the classes it names are described in full elsewhere in the same document.
+  # That is the hypermedia answer to "what goes in here": link to the
+  # description rather than inlining a copy of it that can drift.
+  defp put_type_info(map, %Field{type: "array", constraints: constraints}) do
+    map = Map.put(map, "rdfs:range", %{"@id" => "jsonschema:ArraySchema"})
+
+    case constraints[:element_classes] do
+      [_ | _] = iris -> Map.put(map, "sh:class", Enum.map(iris, &%{"@id" => &1}))
+      _ -> map
+    end
+  end
+
   defp put_type_info(map, %Field{type: type}) do
     case TypeMapper.type_info(type) do
       {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)

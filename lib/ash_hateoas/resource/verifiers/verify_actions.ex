@@ -28,14 +28,106 @@ defmodule AshHateoas.Resource.Verifiers.VerifyActions do
     module = Verifier.get_persisted(dsl_state, :module)
 
     with :ok <- verify_action_names(dsl_state, module),
-         :ok <- verify_semantic_properties(dsl_state, module) do
+         :ok <- verify_semantic_properties(dsl_state, module),
+         :ok <- verify_observable_subjects(dsl_state, module) do
       warn_on_missing_authorizers(dsl_state, module)
       warn_on_unaddressable_records(dsl_state, module)
       warn_on_assumed_methods(dsl_state, module)
       warn_on_ambiguous_collection(dsl_state, module)
       warn_on_inert_not_delegable(dsl_state, module)
+      warn_on_inert_observables(dsl_state, module)
       :ok
     end
+  end
+
+  # An `observable` subject must be one of the two reserved subjects
+  # (`:resource`, `:collection`) or name an attribute that exists — the same
+  # contract `semantic_property` has, so a renamed attribute fails the build
+  # rather than silently never notifying.
+  #
+  # The reserved subjects are absolute: an attribute NAMED `:resource` or
+  # `:collection` makes that declaration ambiguous — is the member topic meant,
+  # or the property? Rather than picking one, the build fails and the author
+  # renames the attribute. Such an attribute name is vanishingly rare, and a
+  # contextual rule ("the attribute wins when both exist") would notify a
+  # different topic than the subscriber subscribed to, silently.
+  defp verify_observable_subjects(dsl_state, module) do
+    attribute_names =
+      dsl_state
+      |> Ash.Resource.Info.attributes()
+      |> MapSet.new(& &1.name)
+
+    dsl_state
+    |> AshHateoas.Resource.Info.observable_subjects()
+    |> Enum.find_value(:ok, fn
+      subject when subject in [:resource, :collection] ->
+        if MapSet.member?(attribute_names, subject) do
+          {:error,
+           Spark.Error.DslError.exception(
+             module: module,
+             path: [:hateoas, :observable, subject],
+             message: """
+             `observable :#{subject}` is ambiguous on #{inspect(module)}: `:#{subject}` is a reserved \
+             subject (the #{subject} topic), but the resource also has an attribute named `:#{subject}`.
+
+             Rename the attribute. Reserved subjects always win, so the property could \
+             never be observed by name.
+             """
+           )}
+        end
+
+      subject ->
+        if MapSet.member?(attribute_names, subject) do
+          nil
+        else
+          {:error,
+           Spark.Error.DslError.exception(
+             module: module,
+             path: [:hateoas, :observable, subject],
+             message: """
+             `observable :#{subject}` names an attribute that does not exist on #{inspect(module)}.
+
+             Known attributes: #{attribute_names |> Enum.sort() |> Enum.map_join(", ", &":#{&1}")}
+
+             Reserved subjects: :resource, :collection
+
+             If the attribute was renamed, update this entry. If it was removed,
+             delete this entry — leaving it would silently stop notifying.
+             """
+           )}
+        end
+    end)
+  rescue
+    _ -> :ok
+  end
+
+  # A declaration whose topic cannot be derived yields NO spec: `observable
+  # :resource` on a resource with no primary get, or `observable :collection`
+  # with no canonical index. The declaration is then inert — subscribers to the
+  # topic would wait forever. Warns rather than fails: the resource may be
+  # mid-refactor, and the failure mode is silence, not exposure.
+  defp warn_on_inert_observables(dsl_state, module) do
+    declared = dsl_state |> AshHateoas.Resource.Info.observable_subjects() |> Enum.uniq()
+
+    missing =
+      declared --
+        (dsl_state |> AshHateoas.Resource.Info.observables() |> Enum.map(& &1.subject))
+
+    if missing != [] do
+      IO.warn(
+        """
+        #{inspect(module)} declares #{Enum.map_join(missing, ", ", &"`observable :#{&1}`")}, but no topic could be derived for them.
+
+        `:resource` and property subjects need a primary `get` route (the member
+        URL); `:collection` needs a canonical `index` route at the collection
+        base. #{inspect(module)} is missing the route these subjects derive
+        from, so the declarations are inert.
+        """,
+        []
+      )
+    end
+
+    :ok
   end
 
   # A `semantic_property` naming an attribute that does not exist fails the build

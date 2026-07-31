@@ -69,6 +69,7 @@ defmodule AshHateoas.Resource do
     Exclusion,
     Method,
     NotDelegable,
+    Observable,
     Override,
     SemanticAction,
     SemanticProperty,
@@ -212,6 +213,30 @@ defmodule AshHateoas.Resource do
     ]
   }
 
+  @observable %Spark.Dsl.Entity{
+    name: :observable,
+    target: Observable,
+    args: [:subject],
+    identifier: {:auto, :unique_integer},
+    describe: """
+    Declare part of this resource observable, so a subscriber can be told
+    when it changes.
+    """,
+    examples: ["observable :resource", "observable :collection", "observable :name"],
+    schema: [
+      subject: [
+        type: :atom,
+        required: true,
+        doc: """
+        What is observed: `:resource` (a record's member URL), `:collection`
+        (the type's index URL), or an attribute name (that property on the
+        member URL, via `?observe=`). The declaration is transport-neutral —
+        a publishing transport (e.g. `ash_websub`) acts on the derived specs.
+        """
+      ]
+    ]
+  }
+
   @hateoas %Spark.Dsl.Section{
     name: :hateoas,
     describe: """
@@ -234,7 +259,8 @@ defmodule AshHateoas.Resource do
       @unrouted,
       @method,
       @semantic_property,
-      @semantic_action
+      @semantic_action,
+      @observable
     ],
     schema: [
       type: [
@@ -348,6 +374,7 @@ defmodule AshHateoas.Resource do
     transformers: [
       AshHateoas.Resource.Transformers.DeriveActionRoutes,
       AshHateoas.Resource.Transformers.DeriveRelationshipRoutes,
+      AshHateoas.Resource.Transformers.DeriveObservables,
       AshHateoas.Resource.Transformers.EnforceNotDelegable
     ],
     verifiers: [AshHateoas.Resource.Verifiers.VerifyActions]

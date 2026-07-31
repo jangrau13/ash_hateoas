@@ -142,6 +142,10 @@ defmodule AshHateoas.Descriptor do
       {:min_length, value}, acc -> Map.put(acc, :min_length, value)
       {:max_length, value}, acc -> Map.put(acc, :max_length, value)
       {:match, %Regex{} = regex}, acc -> Map.put(acc, :pattern, Regex.source(regex))
+      # The classes an array's elements may be. Not an Ash constraint Ash knows
+      # about — it is carried on the argument so the wire can name what a
+      # document holds instead of stopping at "an array".
+      {:element_classes, iris}, acc -> Map.put(acc, :element_classes, iris)
       _other, acc -> acc
     end)
   end

@@ -29,6 +29,7 @@ defmodule AshHateoas.Resource.Info do
     Exclusion,
     Method,
     NotDelegable,
+    Observable,
     Override,
     SemanticAction,
     SemanticProperty,
@@ -36,6 +37,7 @@ defmodule AshHateoas.Resource.Info do
   }
 
   @persisted_routes_key :ash_hateoas_routes
+  @persisted_observables_key :ash_hateoas_observables
 
   @doc """
   The resource's declared or inferred type.
@@ -163,6 +165,33 @@ defmodule AshHateoas.Resource.Info do
   @spec routes(Ash.Resource.t() | map()) :: [AshHateoas.Route.t()]
   def routes(resource_or_dsl) do
     Spark.Dsl.Extension.get_persisted(resource_or_dsl, @persisted_routes_key, [])
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  The declared `observable` subjects: `:resource`, `:collection`, or attribute
+  names — the raw declarations, before derivation.
+  """
+  @spec observable_subjects(Ash.Resource.t() | map()) :: [atom()]
+  def observable_subjects(resource_or_dsl) do
+    resource_or_dsl
+    |> hateoas()
+    |> Enum.filter(&match?(%Observable{}, &1))
+    |> Enum.map(& &1.subject)
+  end
+
+  @doc """
+  The observability specs derived for this resource.
+
+  Derivation persists `AshHateoas.Observable` structs under an
+  `ash_hateoas`-owned key, so a publishing transport (e.g. `ash_websub`) can
+  read them and the Hydra plug can serve property topics. This package never
+  publishes them itself — with no transport installed they are inert.
+  """
+  @spec observables(Ash.Resource.t() | map()) :: [AshHateoas.Observable.t()]
+  def observables(resource_or_dsl) do
+    Spark.Dsl.Extension.get_persisted(resource_or_dsl, @persisted_observables_key, [])
   rescue
     _ -> []
   end

@@ -297,6 +297,62 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     end
   end
 
+  describe "a document names the classes it holds" do
+    defp document_property(action) do
+      [AshHateoas.Test.Domain]
+      |> ApiDocumentation.build()
+      |> Map.fetch!("hydra:supportedClass")
+      |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#Recipe"))
+      |> Map.fetch!("hydra:supportedOperation")
+      |> Enum.find(&(&1["ah:action"] == action))
+      |> get_in(["hydra:expects", "hydra:supportedProperty"])
+      |> Enum.find(&(&1["hydra:title"] == "document"))
+    end
+
+    test "the element classes are named, not left as 'an array of something'" do
+      # Without this the wire says `jsonschema:ArraySchema` and nothing more, and
+      # the only statement of what an element looks like is English prose in a
+      # description — which a client cannot construct a call from.
+      iris = document_property("save")["sh:class"] |> Enum.map(& &1["@id"])
+
+      assert "https://ash-hateoas.org/vocab#Step" in iris
+      assert "https://ash-hateoas.org/vocab#Ingredient" in iris
+      assert "https://ash-hateoas.org/vocab#Technique" in iris
+    end
+
+    test "each named class is described in full elsewhere in the same document" do
+      # The point of linking rather than inlining: the description is already
+      # there, and a copy could drift from it.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      described = MapSet.new(doc["hydra:supportedClass"], & &1["@id"])
+
+      for %{"@id" => iri} <- document_property("save")["sh:class"] do
+        assert iri in described, "#{iri} is named but never described"
+      end
+    end
+
+    test "it names what a save accepts, not every relationship" do
+      # Describing a different set would advertise a document the API rejects.
+      managed =
+        AshHateoas.Test.Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.destination)
+
+      assert length(document_property("save")["sh:class"]) == length(managed)
+    end
+
+    test "validate describes the same document as save" do
+      # They take the same argument; a client checking against one and saving
+      # against the other must not find them disagreeing.
+      assert document_property("validate")["sh:class"] == document_property("save")["sh:class"]
+    end
+
+    test "sh:class is the term a link already uses, so nothing new is needed" do
+      # A client that can follow a link property can read this unchanged.
+      assert %{"rdfs:range" => %{"@id" => "jsonschema:ArraySchema"}} = document_property("save")
+    end
+  end
+
   describe "ah:identity" do
     test "a declared identity names the properties that key the class" do
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])

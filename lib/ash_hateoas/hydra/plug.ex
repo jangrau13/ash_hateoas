@@ -147,9 +147,44 @@ defmodule AshHateoas.Hydra.Plug do
 
       record ->
         node = node(record, type, resource, id, actor, tenant, opts)
+        node = maybe_project_observed(node, conn, resource)
         context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
         send_json(conn, 200, Map.put(node, "@context", context))
     end
+  end
+
+  # `?observe=<attribute>` returns the property-level projection of a member:
+  # just that attribute plus the node's identity. This is the URL a property
+  # observable (`observable :name`) names as its topic, so it must resolve —
+  # both for a hub that re-fetches (a thin ping) and for a client told "this
+  # property changed" that wants the new value and nothing else.
+  #
+  # Only DECLARED observable attributes are projectable: projecting an
+  # arbitrary attribute would make `?observe=` a second, ungoverned read shape.
+  # An unknown or undeclared value yields the full member node, not an error —
+  # the param narrows a response, it never changes what may be read.
+  defp maybe_project_observed(node, conn, resource) do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    case conn.query_params["observe"] do
+      nil ->
+        node
+
+      observed ->
+        projectable =
+          resource
+          |> AshHateoas.Resource.Info.observables()
+          |> Enum.map(& &1.subject)
+          |> Enum.reject(&(&1 in [:resource, :collection]))
+
+        if Enum.any?(projectable, &(to_string(&1) == observed)) do
+          Map.take(node, ["@id", "@type", observed])
+        else
+          node
+        end
+    end
+  rescue
+    _ -> node
   end
 
   defp serve_collection(conn, resource, type, action, actor, opts) do

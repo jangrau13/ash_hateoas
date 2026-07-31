@@ -386,10 +386,37 @@ defmodule AshHateoas.RootActions do
     end)
   end
 
-  defp managed_relationships(root) do
-    root
-    |> Ash.Resource.Info.relationships()
-    |> Enum.filter(&(&1.cardinality == :many))
+  @doc """
+  The relationships a document's elements belong to — what a save accepts.
+
+  Public because the wire has to describe the same set the runtime syncs. A
+  document naming a class this does not return would be rejected, so describing
+  a different set would advertise a document the API will not take.
+
+  Reads only cardinality and the destination *module name*, never the
+  destination's attributes, so it is safe to call from a transformer: a
+  destination compiled after the root does not exist yet, and asking it anything
+  raises.
+  """
+  @spec managed_relationships(Ash.Resource.t() | map()) :: [Ash.Resource.Relationships.relationship()]
+  def managed_relationships(root) do
+    relationships =
+      root
+      |> Ash.Resource.Info.relationships()
+      |> Enum.filter(&(&1.cardinality == :many))
+
+    # A `many_to_many` names the join relationship it travels through, and Ash
+    # exposes that join as a `has_many` of its own. Managing both syncs the join
+    # table twice — once as itself and once through the `many_to_many` — and on
+    # the wire it would advertise the join as an element kind an author writes,
+    # when it is plumbing the domain never asked anyone to author.
+    joins =
+      relationships
+      |> Enum.map(&Map.get(&1, :join_relationship))
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    Enum.reject(relationships, &MapSet.member?(joins, &1.name))
   end
 
   @doc """

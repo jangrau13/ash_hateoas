@@ -188,7 +188,7 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   defp semantic_action_iri(:save), do: AshHateoas.Hydra.Context.vocab_iri("SaveAction")
 
   defp add_action(dsl_state, name) do
-    with {:ok, document} <- document_argument(),
+    with {:ok, document} <- document_argument(dsl_state),
          {:ok, id} <- id_argument(name) do
       Builder.add_new_action(dsl_state, :action, name,
         returns: :map,
@@ -216,12 +216,47 @@ defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   defp run_for(:validate), do: &AshHateoas.RootActions.validate/2
   defp run_for(:save), do: &AshHateoas.RootActions.save/2
 
-  defp document_argument do
+  defp document_argument(dsl_state) do
     Builder.build_action_argument(:document, {:array, :map},
       allow_nil?: false,
       public?: true,
+      constraints: [element_classes: element_classes(dsl_state)],
       description: "The aggregate as a flat list of elements, each naming its class in `kind`."
     )
+  end
+
+  # The classes a document's elements may be — which the wire names rather than
+  # describing, since each is already described in full elsewhere in the same
+  # API documentation. Linking to a description beats inlining a copy that can
+  # drift from it, and `sh:class` is the term a client already follows for links.
+  #
+  # Read from the relationships a save actually manages, so the wire describes
+  # the document the API will take rather than a different one.
+  #
+  # Safe in a transformer because it reads cardinality and the destination
+  # *module name* only. Asking a destination for its attributes would raise
+  # whenever that module compiles after this one, which is the trap every
+  # earlier attempt at typing this argument fell into — and the reason each
+  # element class describes itself rather than being inlined here.
+  defp element_classes(dsl_state) do
+    dsl_state
+    |> AshHateoas.RootActions.managed_relationships()
+    |> Enum.map(& &1.destination)
+    |> Enum.map(&class_iri/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp class_iri(destination) do
+    case AshHateoas.Resource.Info.type(destination) do
+      nil -> nil
+      type -> AshHateoas.Hydra.Context.class_iri(to_string(type))
+    end
+  rescue
+    # A destination still compiling has no readable type yet. It is described
+    # in its own right when it compiles; omitting it here loses nothing but a
+    # cross-reference, where raising would fail the whole build.
+    _ -> nil
   end
 
   defp description(:validate) do
