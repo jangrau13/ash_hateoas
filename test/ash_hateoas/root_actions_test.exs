@@ -93,6 +93,26 @@ defmodule AshHateoas.RootActionsTest do
       refute :validate in names
       refute :save in names
     end
+
+    test "the extension is optional" do
+      # `AshHateoas.Resource` describes and routes; it has no opinion about
+      # documents. A resource carrying only it never sees this DSL, and asking
+      # whether it is a root answers false rather than raising — so a caller
+      # never has to check for the extension first.
+      refute AshHateoas.Document in Spark.extensions(Ingredient)
+      refute AshHateoas.Document.Info.aggregate_root?(Ingredient)
+
+      # And a resource with neither extension at all.
+      refute AshHateoas.Document.Info.aggregate_root?(AshHateoas.Test.Unrouted)
+    end
+
+    test "an aggregate root carries both extensions" do
+      extensions = Spark.extensions(Recipe)
+
+      assert AshHateoas.Resource in extensions
+      assert AshHateoas.Document in extensions
+      assert AshHateoas.Document.Info.aggregate_root?(Recipe)
+    end
   end
 
   describe "validate" do

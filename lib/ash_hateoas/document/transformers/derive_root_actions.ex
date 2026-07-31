@@ -1,8 +1,8 @@
-defmodule AshHateoas.Resource.Transformers.DeriveRootActions do
+defmodule AshHateoas.Document.Transformers.DeriveRootActions do
   @moduledoc """
   Generates `:validate` and `:save` on a resource declaring `aggregate_root?`.
 
-      hateoas do
+      document do
         aggregate_root? true
       end
 
@@ -75,7 +75,7 @@ defmodule AshHateoas.Resource.Transformers.DeriveRootActions do
   use Spark.Dsl.Transformer
 
   alias Ash.Resource.Builder
-  alias AshHateoas.Resource.Info
+  alias AshHateoas.Document.Info
   alias Spark.Dsl.Transformer
 
   @doc false
@@ -112,7 +112,7 @@ defmodule AshHateoas.Resource.Transformers.DeriveRootActions do
   # its input does not fit in a URL. The invariant that it never writes is
   # carried by the action type, not by the verb.
   defp declare_method(dsl_state, name) do
-    if Info.method(dsl_state, name) do
+    if AshHateoas.Resource.Info.method(dsl_state, name) do
       {:ok, dsl_state}
     else
       with {:ok, entity} <-

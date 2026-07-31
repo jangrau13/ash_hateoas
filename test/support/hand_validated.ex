@@ -13,7 +13,7 @@ defmodule AshHateoas.Test.HandValidated do
     domain: AshHateoas.Test.Domain,
     data_layer: Ash.DataLayer.Ets,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshHateoas.Resource]
+    extensions: [AshHateoas.Resource, AshHateoas.Document]
 
   ets do
     private?(true)
@@ -22,6 +22,9 @@ defmodule AshHateoas.Test.HandValidated do
   hateoas do
     type("hand_validated")
     base("/hand_validated")
+  end
+
+  document do
     aggregate_root?(true)
   end
 
