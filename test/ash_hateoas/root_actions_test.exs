@@ -566,6 +566,39 @@ defmodule AshHateoas.RootActionsTest do
     end
   end
 
+  describe "a key that would vanish silently" do
+    test "a non-string value under an unknown key is reported" do
+      # The gap between the two existing checks: `authorable/3` drops what the
+      # resource does not accept, and `reference_keys/2` catches the rest only
+      # when the value is a *string*. A number or a boolean under a misspelled
+      # key was cast by nothing and resolved by nothing — so a save reported
+      # success and discarded the value, which is the worst answer available.
+      result = validate([%{"kind" => "ingredient", "name" => "Sugar", "calories" => 5}])
+
+      refute result["valid?"]
+      assert Enum.any?(result["errors"], &(&1["field"] == "calories"))
+    end
+
+    test "the error names what the class does accept" do
+      # An author who misspelled a field needs the list, not just a refusal.
+      result = validate([%{"kind" => "ingredient", "name" => "Sugar", "calories" => 5}])
+      [error] = Enum.filter(result["errors"], &(&1["field"] == "calories"))
+
+      assert error["message"] =~ "Accepted:"
+      assert error["message"] =~ "unit"
+    end
+
+    test "a string under an unknown key is still read as a reference" do
+      # Not broken by the above: an unaccepted string key is how a document
+      # writes a cross-element edge, and `graph_errors` reports it when it names
+      # nothing.
+      result = validate([%{"kind" => "step", "name" => "Mix", "uses" => "Nothing"}])
+
+      refute result["valid?"]
+      assert Enum.any?(result["errors"], &(&1["message"] =~ "no element named"))
+    end
+  end
+
   describe "deliberate override" do
     test "a hand-written action of the same name is used as-is" do
       # `add_new_action/4` is a no-op when the action already exists, so the

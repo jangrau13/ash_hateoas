@@ -169,8 +169,9 @@ defmodule AshHateoas.RootActions do
       {:ok, resource} ->
         owner = owner_key(resource, root)
 
-        resource
-        |> changeset_errors(authorable(element, resource, root))
+        unknown_key_errors(element, resource, root, position, kind) ++
+          (resource
+           |> changeset_errors(authorable(element, resource, root))
         # The owning foreign key is filtered from the *errors*, not merely from
         # the input. A part declaring `belongs_to :root, allow_nil?: false`
         # fails its own `allow_nil?` check whenever it is cast standalone —
@@ -178,10 +179,44 @@ defmodule AshHateoas.RootActions do
         # Filtering the input alone leaves the error, which would put an
         # unfixable problem on every element in the document.
         |> Enum.reject(fn {field, _message} -> to_string(field) == owner end)
-        |> Enum.map(fn {field, message} ->
-          error_at(position, kind, element, to_string(field), message)
-        end)
+           |> Enum.map(fn {field, message} ->
+             error_at(position, kind, element, to_string(field), message)
+           end))
     end
+  end
+
+  # A key that is neither an attribute nor a reference vanishes silently.
+  #
+  # `authorable/3` drops what the resource does not accept, and `reference_keys/2`
+  # treats any remaining **string** value as a cross-element reference — so a
+  # misspelled attribute is caught there, as a dangling reference. What falls
+  # between the two is a key whose value is not a string: it is not cast, not
+  # resolved, and reported by nothing.
+  #
+  # That gap is not theoretical. Measured on a real document, elements written
+  # with key names the resource did not have saved cleanly and arrived empty,
+  # because the wrong keys carried non-string values. A save reporting success
+  # while discarding the value is the worst answer available.
+  #
+  # Structural keys are exempt: `kind` names the class rather than being an
+  # attribute of it, and the owning foreign key is supplied by `save/2`.
+  defp unknown_key_errors(element, resource, root, position, kind) do
+    accepted = accepted_keys_for(resource)
+    structural = ["kind", to_string(owner_key(resource, root))]
+
+    for {key, value} <- element,
+        not is_binary(value),
+        key = to_string(key),
+        key not in accepted,
+        key not in structural,
+        do:
+          error_at(
+            position,
+            kind,
+            element,
+            key,
+            "#{inspect(kind)} has no #{key}. Accepted: #{Enum.join(Enum.sort(accepted), ", ")}."
+          )
   end
 
   defp element_error(_element, position, _index, _root) do
