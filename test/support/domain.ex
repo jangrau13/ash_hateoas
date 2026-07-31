@@ -226,5 +226,11 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.ReadFailure)
     resource(AshHateoas.Test.AuthUser)
     resource(AshHateoas.Test.AuthToken)
+    resource(AshHateoas.Test.Recipe)
+    resource(AshHateoas.Test.Ingredient)
+    resource(AshHateoas.Test.Step)
+    resource(AshHateoas.Test.HandValidated)
+    resource(AshHateoas.Test.Technique)
+    resource(AshHateoas.Test.RecipeTechnique)
   end
 end
