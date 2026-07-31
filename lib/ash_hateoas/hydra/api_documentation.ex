@@ -87,7 +87,77 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:supportedOperation" => supported_operations(resource, type)
     }
     |> put_unless_nil("hydra:description", description(resource))
+    |> put_unless_nil("ah:identity", identities(resource))
     |> put_equivalent_class(AshHateoas.Resource.Info.semantic_type(resource))
+  end
+
+  # Which properties identify a record, besides its primary key.
+  #
+  # A resource declares this — `identity :unique_name, [:name]` — and until now
+  # it stayed on the Elixir side. Without it a client has no way to know what
+  # names a record, so it is left guessing from convention: is the key `name`,
+  # `title`, `slug`, `code`? A guess that is merely *usually* right is worse
+  # than no answer, because it fails silently on the domain that names things
+  # differently.
+  #
+  # It matters most to a client that edits: an update has to match the record
+  # the author meant, and matching on a guessed key matches the wrong record or
+  # none. `Ash.Changeset.manage_relationship/4` already keys on exactly these
+  # (`use_identities`), so publishing them is what lets a client agree with the
+  # server rather than coincide with it.
+  #
+  # ## Why an `ah:` term rather than a standard one
+  #
+  # No published vocabulary says "these properties are the natural key of this
+  # class" without dragging something else along:
+  #
+  #   * SHACL has no key concept at all — it constrains values, not identity.
+  #   * Hydra has none.
+  #   * Dublin Core is descriptive: `dcterms:identifier` is an identifier's
+  #     *value* on an instance (an ISBN), not which property keys a class.
+  #   * `csvw:primaryKey` has exactly the right meaning but a domain of
+  #     `csvw:Schema`/`csvw:Row`, so putting it on a `hydra:Class` misuses it.
+  #   * `dash:PrimaryKeyConstraintComponent` implies a URI-construction policy
+  #     (`dash:uriStart`) this says nothing about.
+  #   * `owl:hasKey` states the right fact — no two named instances of a class
+  #     coincide on these properties — but as a *reasoning axiom*: it licenses
+  #     an inference engine to conclude two records are the same individual and
+  #     merge them. A client needs "match the record with this name", which is
+  #     nearly the opposite.
+  #
+  # So the term is declared here, as `ah:targetKind` is, and the `@context`
+  # relates it to `owl:hasKey` with `rdfs:subPropertyOf` — the narrower,
+  # actionable statement, with the valid weaker inference still available to
+  # anything reasoning over the document.
+  #
+  # A composite identity keys on several properties at once, so each entry is
+  # itself a list.
+  defp identities(resource) do
+    type = AshHateoas.Resource.Info.type(resource)
+
+    resource
+    |> Ash.Resource.Info.identities()
+    |> Enum.reject(&(&1.keys == [] or has_private_key?(resource, &1)))
+    |> Enum.map(fn identity ->
+      Enum.map(identity.keys, &%{"@id" => Context.property_iri(type, &1)})
+    end)
+    |> case do
+      [] -> nil
+      keys -> keys
+    end
+  rescue
+    _ -> nil
+  end
+
+  # An identity over a private attribute is unusable by a client: the property
+  # it names is never rendered, so nothing on the wire could carry the value.
+  defp has_private_key?(resource, identity) do
+    Enum.any?(identity.keys, fn key ->
+      case Ash.Resource.Info.attribute(resource, key) do
+        %{public?: true} -> false
+        _ -> true
+      end
+    end)
   end
 
   # A declared well-known type (e.g. schema.org) is advertised as an
@@ -318,7 +388,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     _ -> nil
   end
 
-defp put_type_info(map, wire) do
+  defp put_type_info(map, wire) do
     case TypeMapper.type_info(wire) do
       {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)
       {:sh_node_kind, kind} -> Map.put(map, "sh:nodeKind", kind)

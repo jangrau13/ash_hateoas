@@ -180,6 +180,54 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     assert "document" in titles
   end
 
+  describe "ah:identity" do
+    test "a declared identity names the properties that key the class" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      ingredient =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Ingredient")
+        )
+
+      # `identity :unique_name, [:name]`. Without this on the wire a client has
+      # no way to know what names a record, and is left guessing from
+      # convention — is the key `name`, `title`, `slug`? A guess that is merely
+      # usually right fails silently on the domain that names things
+      # differently.
+      assert ingredient["ah:identity"] == [
+               [%{"@id" => "https://ash-hateoas.org/vocab#ingredient/name"}]
+             ]
+    end
+
+    test "a resource with no declared identity carries no key" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      comment =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Comment")
+        )
+
+      # Absent rather than guessed. A client then knows it cannot match this
+      # class by a natural key, instead of matching the wrong record.
+      refute Map.has_key?(comment, "ah:identity")
+    end
+
+    test "the term is related to owl:hasKey in the context" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      terms = Enum.find(doc["@context"], &is_map/1)
+
+      # `owl:hasKey` states the same fact but as a reasoning axiom — it
+      # licenses an engine to conclude two records are the same individual,
+      # where a client needs "match the record with this name". Declaring the
+      # narrower term a subproperty keeps the weaker inference available
+      # without asking a client to act on it.
+      assert terms["ah:identity"]["rdfs:subPropertyOf"] == %{"@id" => "owl:hasKey"}
+      assert terms["rdfs"] == "http://www.w3.org/2000/01/rdf-schema#"
+    end
+  end
+
   test "operations advertise their possibleStatus from the gate chain" do
     doc = ApiDocumentation.build([AshHateoas.Test.Domain])
 

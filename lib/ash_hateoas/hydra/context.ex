@@ -51,7 +51,24 @@ defmodule AshHateoas.Hydra.Context do
         "schema" => "https://schema.org/",
         "odrl" => "http://www.w3.org/ns/odrl/2/",
         "sh" => "http://www.w3.org/ns/shacl#",
-        "jsonschema" => "https://www.w3.org/2019/wot/json-schema#"
+        "jsonschema" => "https://www.w3.org/2019/wot/json-schema#",
+        # `ah:identity` names the properties that key a class — what a client
+        # matches on when it edits an existing record. No published vocabulary
+        # says that without dragging something else along, so the term is
+        # declared here and related to the nearest standard one.
+        #
+        # `owl:hasKey` states the same fact ("no two named instances of this
+        # class coincide on these properties") but as a reasoning axiom: it
+        # licenses an engine to conclude two records are the same individual.
+        # Declaring `ah:identity` a subproperty gives that weaker inference to
+        # anything reasoning over the document, while a client reads the
+        # narrower, actionable term.
+        # The value is a list of identities, each itself a list of properties,
+        # since a composite key names several at once. That nesting is left as
+        # plain JSON rather than declared with `@container`, which cannot
+        # express a list of lists.
+        "ah:identity" => %{"rdfs:subPropertyOf" => %{"@id" => "owl:hasKey"}},
+        "rdfs" => "http://www.w3.org/2000/01/rdf-schema#"
       }
       |> put_semantic_vocab()
     ]
