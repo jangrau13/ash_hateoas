@@ -142,8 +142,18 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     # class. `article.comments` points at Comment.
     assert link["hydra:property"]["sh:class"] == "https://ash-hateoas.org/vocab#Comment"
 
-    # A to-many link resolves to a collection of that class, not a single node.
-    assert link["ah:targetKind"] == "Collection"
+    # Cardinality is no longer marked here. `ah:targetKind: "Collection"` said
+    # in a minted term what the ontology's `rdfs:range` now says with two
+    # standard ones: the property ranges over a `hydra:Collection` subclass
+    # whose `hydra:memberAssertion` names the member class.
+    refute Map.has_key?(link, "ah:targetKind")
+
+    range =
+      doc["@included"]
+      |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#article/comments"))
+      |> get_in(["rdfs:range", "@id"])
+
+    assert range == "https://ash-hateoas.org/vocab#ArticleComments"
   end
 
   test "a to-one relationship is advertised as a hydra:Link supported property" do

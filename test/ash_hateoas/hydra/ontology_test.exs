@@ -85,8 +85,23 @@ defmodule AshHateoas.Hydra.OntologyTest do
       steps = declared("#{@vocab}recipe/steps")
 
       assert types(steps) == ["owl:ObjectProperty", "hydra:Link"]
-      assert steps["rdfs:range"] == %{"@id" => "#{@vocab}Step"}
       assert steps["rdfs:domain"] == %{"@id" => "#{@vocab}Recipe"}
+    end
+
+    test "a to-many ranges over a collection class, not over its members" do
+      # The value of `recipe.steps` is a collection, not a Step — and
+      # `rdfs:range` is an assertion about every value the property takes
+      # (rdfs3). Naming `#Step` here would have a reasoner conclude the
+      # collection *is* a Step.
+      steps = declared("#{@vocab}recipe/steps")
+      assert steps["rdfs:range"] == %{"@id" => "#{@vocab}RecipeSteps"}
+    end
+
+    test "a to-one ranges over the destination class directly" do
+      document = declared("#{@vocab}comment/document")
+
+      assert types(document) == ["owl:ObjectProperty", "hydra:Link"]
+      assert document["rdfs:range"] == %{"@id" => "#{@vocab}Document"}
     end
 
     test "a scalar is a datatype property with an XSD range" do
@@ -97,22 +112,62 @@ defmodule AshHateoas.Hydra.OntologyTest do
       assert title["rdfs:domain"] == %{"@id" => "#{@vocab}Recipe"}
     end
 
-    test "the range is stated once on the property, not per usage" do
-      # `sh:class` on a SupportedProperty says "a value *here* must be a Step".
-      # The general fact — values of `recipe/steps` are Steps — is what a
-      # declared range says, and it is what stops the target being restated
-      # wherever the property appears.
-      assert declared("#{@vocab}recipe/steps")["rdfs:range"] == %{"@id" => "#{@vocab}Step"}
+    test "the member class is stated once, on the collection class" do
+      # `sh:class` on a SupportedProperty says "a value *here* must be a Step",
+      # restated wherever the property appears. The collection class says it
+      # once, in the spec's own pattern for a strongly typed collection: every
+      # member has `rdf:type #Step`.
+      collection = declared("#{@vocab}RecipeSteps")
+
+      assert collection["rdfs:subClassOf"] == %{"@id" => "hydra:Collection"}
+
+      assert collection["hydra:memberAssertion"] == %{
+               "hydra:property" => %{"@id" => "rdf:type"},
+               "hydra:object" => %{"@id" => "#{@vocab}Step"}
+             }
+    end
+
+    test "a member assertion uses exactly two of subject, property and object" do
+      # The spec is normative here: "A memberAssertion MUST use two and only two
+      # of the subject, property and object predicates." `hydra:subject` is the
+      # third and stays absent — it names one specific parent record, which is
+      # an instance-level fact and wrong on a class.
+      assertion = declared("#{@vocab}RecipeSteps")["hydra:memberAssertion"]
+
+      assert map_size(assertion) == 2
+      refute Map.has_key?(assertion, "hydra:subject")
+    end
+
+    test "each to-many gets its own collection class" do
+      # Named per owning property rather than per member class: two properties
+      # may target the same class through different relationships, and a future
+      # assertion could distinguish them. Both Article and Document hold
+      # comments.
+      assert declared("#{@vocab}ArticleComments")
+      assert declared("#{@vocab}DocumentComments")
+
+      for iri <- ["#{@vocab}ArticleComments", "#{@vocab}DocumentComments"] do
+        assert declared(iri)["hydra:memberAssertion"]["hydra:object"] ==
+                 %{"@id" => "#{@vocab}Comment"}
+      end
     end
   end
 
   describe "the ah: vocabulary declares itself" do
-    test "targetKind and identity are annotations, not data properties" do
-      # Their subjects are *property* and *class* IRIs and their values are
-      # metadata. Typed as object or datatype properties they would assert data
-      # facts about entities being used as properties — a pun with no upside.
-      assert declared("ah:targetKind")["@type"] == "owl:AnnotationProperty"
+    test "identity is an annotation, not a data property" do
+      # Its subject is a *class* IRI and its value is metadata. Typed as an
+      # object or datatype property it would assert a data fact about an entity
+      # being used as a property — a pun with no upside.
       assert declared("ah:identity")["@type"] == "owl:AnnotationProperty"
+    end
+
+    test "targetKind is gone, replaced by two standard terms" do
+      # It said "this property is to-many" in a minted term, while the member
+      # class sat separately on `sh:class`. `rdfs:range` pointing at a
+      # `hydra:Collection` subclass with a `hydra:memberAssertion` says both,
+      # and says how they relate.
+      refute declared("ah:targetKind")
+      assert declared("#{@vocab}RecipeSteps")["rdfs:subClassOf"] == %{"@id" => "hydra:Collection"}
     end
 
     test "identity makes no owl:hasKey claim" do
@@ -210,7 +265,6 @@ defmodule AshHateoas.Hydra.OntologyTest do
       # that makes it so. Silently growing the vocabulary is not.
       known = ~w(
         ah:action
-        ah:targetKind
         ah:identity
         ah:SaveAction
         ah:RunAction

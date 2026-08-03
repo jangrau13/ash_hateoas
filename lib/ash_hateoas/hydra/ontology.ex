@@ -142,17 +142,7 @@ defmodule AshHateoas.Hydra.Ontology do
   # declared.
   defp ah_terms do
     [
-      # An annotation, not a fact about an individual. Its subject is a
-      # *property* IRI and its value is metadata ("Collection"). Typed as an
-      # object or datatype property it would assert a data fact about an entity
-      # being used as a property — a pun with no upside. Annotation properties
-      # are exempt from that machinery; that is what they are for.
-      %{
-        "@id" => "ah:targetKind",
-        "@type" => "owl:AnnotationProperty",
-        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
-      },
-      # Likewise an annotation — and deliberately **not** `rdfs:subPropertyOf
+      # An annotation — and deliberately **not** `rdfs:subPropertyOf
       # owl:hasKey`, which the `@context` claimed until now. Two reasons, both
       # fatal:
       #
@@ -342,30 +332,108 @@ defmodule AshHateoas.Hydra.Ontology do
       |> Enum.filter(&(&1.cardinality == :one and &1.name not in routed))
       |> Enum.map(& &1.name)
 
-    Enum.map(to_many ++ to_one, fn name ->
-      %{
-        "@id" => Context.property_iri(type, name),
-        "@type" => ["owl:ObjectProperty", "hydra:Link"],
-        "rdfs:domain" => %{"@id" => Context.class_iri(type)},
-        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
-      }
-      |> put_unless_nil("rdfs:range", relationship_range(resource, name))
-      |> put_unless_nil("rdfs:label", to_string(name))
-    end)
+    properties =
+      Enum.map(to_many ++ to_one, fn name ->
+        %{
+          "@id" => Context.property_iri(type, name),
+          "@type" => ["owl:ObjectProperty", "hydra:Link"],
+          "rdfs:domain" => %{"@id" => Context.class_iri(type)},
+          "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+        }
+        |> put_unless_nil("rdfs:range", relationship_range(resource, name, name in to_many))
+        |> put_unless_nil("rdfs:label", to_string(name))
+      end)
+
+    properties ++ Enum.flat_map(to_many, &collection_class(resource, type, &1))
   end
 
-  # The class a relationship points at. A destination carrying no type is not
-  # addressable as a node, so the property is declared without a range rather
-  # than with a bogus one — a consumer degrades to an untyped-but-followable
-  # link instead of resolving to nothing.
-  defp relationship_range(resource, name) do
+  # The class a relationship points at.
+  #
+  # For a to-one that is the destination class directly. For a to-many it is the
+  # property's own **collection class** — because the value of `model.stocks` is
+  # a `hydra:Collection`, not a Stock, and `rdfs:range` is an assertion about
+  # every value the property takes (rdfs3). Naming the member class here would
+  # assert that the collection *is* a Stock, which is false and would be
+  # materialised by any RDFS reasoner.
+  #
+  # A destination carrying no type is not addressable as a node, so the property
+  # is declared without a range rather than with a bogus one — a consumer
+  # degrades to an untyped-but-followable link instead of resolving to nothing.
+  defp relationship_range(resource, name, many?) do
     with %{destination: destination} <- Ash.Resource.Info.relationship(resource, name),
          destination_type when is_binary(destination_type) <-
            AshHateoas.Resource.Info.type(destination) do
-      %{"@id" => Context.class_iri(destination_type)}
+      if many? do
+        %{"@id" => collection_class_iri(resource, name)}
+      else
+        %{"@id" => Context.class_iri(destination_type)}
+      end
     else
       _ -> nil
     end
+  end
+
+  # A to-many's collection class: a `hydra:Collection` subclass that says what
+  # its members are.
+  #
+  # This is the spec's own pattern for a strongly typed collection, given at the
+  # API-documentation level:
+  #
+  #     "api:UserCollection": {
+  #       "subClassOf": "Collection",
+  #       "memberAssertion": {"property": "rdf:type", "object": "api:User"}}
+  #
+  # — "clients would understand that all members of collections which are
+  # instances of api:UserCollections would in fact have rdf:type api:User".
+  #
+  # It replaces `ah:targetKind: "Collection"`, which carried the same fact in a
+  # minted term. Two standard terms for one local one, and they say strictly
+  # more: `ah:targetKind` marked a property as to-many while the member class
+  # sat separately on `sh:class`, whereas this states the relation between them.
+  #
+  # Note the member class cannot simply be the property's `rdfs:range`: the
+  # value is the collection, so a range naming the member would assert the
+  # collection is one of its own members.
+  #
+  # The spec's normative constraint — "a memberAssertion MUST use two and only
+  # two of the subject, property and object predicates" — is met by the
+  # property/object pair. `hydra:subject` is the third and is deliberately
+  # absent; it would name one specific parent record, which is an instance-level
+  # fact and wrong on a class.
+  defp collection_class(resource, type, name) do
+    case Ash.Resource.Info.relationship(resource, name) do
+      %{destination: destination} ->
+        case AshHateoas.Resource.Info.type(destination) do
+          member when is_binary(member) ->
+            [
+              %{
+                "@id" => collection_class_iri(resource, name),
+                "@type" => ["owl:Class", "hydra:Class"],
+                "rdfs:subClassOf" => %{"@id" => "hydra:Collection"},
+                "hydra:memberAssertion" => %{
+                  "hydra:property" => %{"@id" => "rdf:type"},
+                  "hydra:object" => %{"@id" => Context.class_iri(member)}
+                },
+                "rdfs:label" => "#{type}/#{name} collection",
+                "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+              }
+            ]
+
+          _ ->
+            []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  # Named per owning property rather than per member class, because two
+  # properties may target the same class through different relationships and a
+  # future member assertion (a filter, a subject) could distinguish them.
+  defp collection_class_iri(resource, name) do
+    type = AshHateoas.Resource.Info.type(resource)
+    Context.vocab_iri("#{Macro.camelize(to_string(type))}#{Macro.camelize(to_string(name))}")
   end
 
   @doc """

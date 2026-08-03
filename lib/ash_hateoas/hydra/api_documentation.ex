@@ -338,10 +338,14 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     to_many ++ to_one
   end
 
-  # One `hydra:Link` property. `target_kind` is `"Collection"` for a to-many
-  # link (it resolves to a `hydra:Collection` of the destination) and `nil` for
-  # a to-one (it resolves to a single node of the destination class).
-  defp link_property(resource, type, name, target_kind) do
+  # One `hydra:Link` property.
+  #
+  # Cardinality is no longer marked here. It used to be `ah:targetKind:
+  # "Collection"` on the to-many, a minted term saying what the property's
+  # `rdfs:range` now says in the ontology: a to-many ranges over a
+  # `hydra:Collection` subclass carrying a `hydra:memberAssertion`, a to-one
+  # over the destination class itself. A client reads the range either way.
+  defp link_property(resource, type, name, _target_kind) do
     property =
       %{
         "@id" => Context.property_iri(type, name),
@@ -356,7 +360,6 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:readable" => true,
       "hydra:writeable" => false
     }
-    |> put_unless_nil("ah:targetKind", target_kind)
   end
 
   # The class IRI a relationship points at, from the destination's own declared
