@@ -23,7 +23,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   gates. The documentation is the stable catalogue; the node is the live offer.
   """
 
-  alias AshHateoas.Hydra.{Context, Renderer, TypeMapper}
+  alias AshHateoas.Hydra.{Context, Ontology, Renderer, TypeMapper}
   alias AshHateoas.{Index, Route}
 
   @doc """
@@ -45,6 +45,11 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     %{
       "@context" => Context.context(),
       "@type" => "ApiDocumentation",
+      # The vocabulary this document uses, declared in the document that uses
+      # it. `@included` puts these node objects' triples in the default graph
+      # while asserting nothing about the ApiDocumentation itself, so one fetch
+      # gets both the affordances and the ontology behind them.
+      "@included" => Ontology.build(domains),
       "hydra:supportedClass" => classes ++ validation_report(classes)
     }
     |> put_unless_nil("@id", Keyword.get(opts, :id))
@@ -141,22 +146,25 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   # (e.g. schema.org) type — a companion class keyed by that IRI too. A record
   # node is dual-typed `[vocab#Class, schema:Class]`, so a client indexing the
   # documentation by *either* IRI must find a fully-described class; the companion
-  # is that second entry. Both carry `owl:equivalentClass` pointing at the other,
-  # so they are declared genuinely equivalent, not merely duplicated.
+  # is that second entry.
+  #
+  # The companion is a *description* keyed by the well-known IRI, not a claim
+  # about it. It used to carry `owl:equivalentClass` back to the local class,
+  # which asserted the two are the same set — almost never true, since a local
+  # Person has an id, a tenant and domain rules `schema:Person` knows nothing
+  # of. Worse, equivalence licenses substitution both ways, so a reasoner could
+  # conclude things about schema.org's class from statements about ours.
+  #
+  # The honest relation is `rdfs:subClassOf`, and it is asserted once in the
+  # ontology block rather than twice here. See `AshHateoas.Hydra.Ontology`.
   defp supported_classes(resource, type) do
-    vocab_iri = Context.class_iri(type)
-
     case AshHateoas.Resource.Info.semantic_type(resource) do
       nil ->
         [supported_class(resource, type)]
 
       semantic_type ->
         primary = supported_class(resource, type)
-
-        companion =
-          primary
-          |> Map.put("@id", semantic_type)
-          |> Map.put("owl:equivalentClass", %{"@id" => vocab_iri})
+        companion = Map.put(primary, "@id", semantic_type)
 
         [primary, companion]
     end
@@ -174,7 +182,6 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     }
     |> put_unless_nil("hydra:description", description(resource))
     |> put_unless_nil("ah:identity", identities(resource))
-    |> put_equivalent_class(AshHateoas.Resource.Info.semantic_type(resource))
   end
 
   # Which properties identify a record, besides its primary key.
@@ -205,16 +212,22 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   #     `csvw:Schema`/`csvw:Row`, so putting it on a `hydra:Class` misuses it.
   #   * `dash:PrimaryKeyConstraintComponent` implies a URI-construction policy
   #     (`dash:uriStart`) this says nothing about.
-  #   * `owl:hasKey` states the right fact — no two named instances of a class
+  #   * `owl:hasKey` states a nearby fact — no two named instances of a class
   #     coincide on these properties — but as a *reasoning axiom*: it licenses
   #     an inference engine to conclude two records are the same individual and
   #     merge them. A client needs "match the record with this name", which is
   #     nearly the opposite.
   #
-  # So the term is declared here, as `ah:targetKind` is, and the `@context`
-  # relates it to `owl:hasKey` with `rdfs:subPropertyOf` — the narrower,
-  # actionable statement, with the valid weaker inference still available to
-  # anything reasoning over the document.
+  # So the term is declared in `AshHateoas.Hydra.Ontology` as an
+  # `owl:AnnotationProperty`, deliberately **not** a subproperty of
+  # `owl:hasKey`. It was one until this change, and the claim was unsound twice
+  # over: `owl:hasKey` is a class axiom taking an `rdf:List`, so it cannot sit
+  # on a property node at all; and since `ah:identity` names a *business* key, a
+  # domain where two records legitimately share a name would have them merged
+  # and their properties unioned — the corruption the term exists to prevent.
+  #
+  # What it actually means is "unique within its parent" — scoped uniqueness,
+  # which OWL cannot express.
   #
   # A composite identity keys on several properties at once, so each entry is
   # itself a list.
@@ -244,15 +257,6 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         _ -> true
       end
     end)
-  end
-
-  # A declared well-known type (e.g. schema.org) is advertised as an
-  # `owl:equivalentClass`, so a client that knows that vocabulary can treat this
-  # class as the well-known one.
-  defp put_equivalent_class(class, nil), do: class
-
-  defp put_equivalent_class(class, semantic_type) do
-    Map.put(class, "owl:equivalentClass", %{"@id" => semantic_type})
   end
 
   @doc """

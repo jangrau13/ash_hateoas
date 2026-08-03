@@ -55,47 +55,57 @@ defmodule AshHateoas.Hydra.Context do
         # `ah:identity` names the properties that key a class — what a client
         # matches on when it edits an existing record. No published vocabulary
         # says that without dragging something else along, so the term is
-        # declared here and related to the nearest standard one.
+        # declared in `AshHateoas.Hydra.Ontology` as an annotation property.
         #
-        # `owl:hasKey` states the same fact ("no two named instances of this
-        # class coincide on these properties") but as a reasoning axiom: it
-        # licenses an engine to conclude two records are the same individual.
-        # Declaring `ah:identity` a subproperty gives that weaker inference to
-        # anything reasoning over the document, while a client reads the
-        # narrower, actionable term.
+        # It used to be declared here as `rdfs:subPropertyOf owl:hasKey`, and
+        # that was unsound twice over. `owl:hasKey` is a *class* axiom, taking a
+        # class expression and an `rdf:List` of properties — it cannot sit on a
+        # property node, and the nested-array value here is not an `rdf:List`
+        # anyway. And it licenses a reasoner to infer `owl:sameAs` between
+        # individuals sharing key values, which for a *business* key like a name
+        # means two legitimately distinct records get merged and their
+        # properties unioned. That is the data corruption the term exists to
+        # prevent, arrived at by declaring the term.
+        #
         # The value is a list of identities, each itself a list of properties,
         # since a composite key names several at once. That nesting is left as
         # plain JSON rather than declared with `@container`, which cannot
         # express a list of lists.
-        "ah:identity" => %{"rdfs:subPropertyOf" => %{"@id" => "owl:hasKey"}},
-        # Two operation roles schema.org cannot express, each related to the
-        # nearest published term so a client that speaks only schema.org still
-        # learns something true.
         #
-        # `ah:SaveAction` — writing a whole document, rather than one record.
-        # `schema:UpdateAction` describes the act correctly but is also what
-        # this package infers for *any* PATCH, so declaring it would make a
-        # document save indistinguishable from an ordinary record update. The
-        # subclass says "this writes" to a generic reader and "this writes a
-        # document" to one that knows the term.
+        # ## Why no `ah:` term is defined here any more
         #
-        # `ah:RunAction` — executing a resource. schema.org has no term for it:
-        # `ControlAction` and `ActivateAction` are device control, and
-        # `AchieveAction`'s subtypes are Win/Lose/Tie. `schema:Action` is the
-        # only honest parent — it says an agent does something, which is all
-        # that is shared.
-        "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}},
-        "ah:RunAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:Action"}},
-        # What a document action gives back: a verdict and, when it is negative,
-        # one entry per problem. It is not the resource — a validate writes
-        # nothing and has no record to return, and a save reports failures the
-        # same way rather than returning the aggregate it did not write.
+        # This map used to carry four entries of the form
         #
-        # Declared because the alternative is a client hardcoding the shape from
-        # having read the source, which is what both consumers do today.
-        "ah:ValidationReport" => %{"rdfs:subClassOf" => %{"@id" => "hydra:Resource"}},
-        "ah:ValidationError" => %{"rdfs:subClassOf" => %{"@id" => "hydra:Resource"}},
-        "rdfs" => "http://www.w3.org/2000/01/rdf-schema#"
+        #     "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}}
+        #
+        # — `ah:SaveAction`, `ah:RunAction`, `ah:ValidationReport` and
+        # `ah:ValidationError`, each stating a superclass. They looked harmless
+        # and they broke the entire document.
+        #
+        # A `@context` maps *terms to IRIs*. A term definition's value may be a
+        # string, or an object built from JSON-LD keywords (`@id`, `@type`,
+        # `@container`, …) — it may **not** carry arbitrary RDF. `rdfs:subClassOf`
+        # is not a keyword, so each of these is an **invalid term definition**,
+        # and a conformant JSON-LD 1.1 processor does not skip it: it raises and
+        # refuses the whole document. Verified with `pyld` — every emitted
+        # ApiDocumentation failed to expand, so nothing downstream of an
+        # expansion step ever saw a single triple.
+        #
+        # It went unseen because every test asserted on the raw JSON, where the
+        # entries look fine and the keys are present. That is exactly why the
+        # ontology's own tests assert on expanded N-Quads instead.
+        #
+        # The axioms themselves were worth stating; only the location was wrong.
+        # They now live in `AshHateoas.Hydra.Ontology`, in the `@included` block,
+        # where a superclass is an ordinary triple rather than a malformed
+        # mapping.
+        "rdfs" => "http://www.w3.org/2000/01/rdf-schema#",
+        # Needed by the ontology block: a union-typed property is declared a
+        # bare `rdf:Property`, since OWL keeps object and datatype properties
+        # strictly apart and picking one would be a guess. An unbound prefix is
+        # *silently dropped* by a JSON-LD processor, so this binding is what
+        # keeps those declarations from vanishing without an error.
+        "rdf" => "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
       }
       |> put_semantic_vocab()
     ]

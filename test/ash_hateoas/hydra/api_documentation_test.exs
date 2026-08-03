@@ -69,9 +69,19 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     assert vocab, "expected the vocab# Person class"
     assert companion, "expected a schema.org Person companion class"
 
-    # each declares the other its equivalent
-    assert vocab["owl:equivalentClass"] == %{"@id" => "https://schema.org/Person"}
-    assert companion["owl:equivalentClass"] == %{"@id" => "https://ash-hateoas.org/vocab#Person"}
+    # Neither claims equivalence. The companion is a *description* keyed by the
+    # well-known IRI so a client indexing by it finds a described class — not an
+    # assertion that the two classes are the same set, which is what
+    # `owl:equivalentClass` meant and which is almost never true.
+    refute Map.has_key?(vocab, "owl:equivalentClass")
+    refute Map.has_key?(companion, "owl:equivalentClass")
+
+    # The relation is stated once, in the ontology, and only in the direction
+    # that holds: a local Person is a schema.org Person.
+    declared =
+      Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#Person"))
+
+    assert declared["rdfs:subClassOf"] == %{"@id" => "https://schema.org/Person"}
 
     # the companion is fully described, not a stub — it carries the operations
     assert is_list(companion["hydra:supportedOperation"])
@@ -257,15 +267,28 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     test "the vocabulary relates both new terms to the nearest published one" do
       # So a client speaking only schema.org still learns something true: that
       # a save writes, and that a run is an action an agent performs.
-      terms =
-        AshHateoas.Hydra.Context.context()
-        |> Enum.find(&is_map/1)
+      #
+      # The axioms live in the ontology block, not in the `@context`. They were
+      # in the context until the ontology work, as
+      # `"ah:SaveAction" => %{"rdfs:subClassOf" => …}`, and that is an **invalid
+      # term definition**: a context maps terms to IRIs and its object form
+      # admits only JSON-LD keywords, so a conformant processor rejects the
+      # whole document rather than skipping the entry. Every emitted
+      # ApiDocumentation failed to expand.
+      terms = Enum.find(AshHateoas.Hydra.Context.context(), &is_map/1)
+      refute Map.has_key?(terms, "ah:SaveAction")
+      refute Map.has_key?(terms, "ah:RunAction")
 
-      assert terms["ah:SaveAction"] == %{
-               "rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}
-             }
+      included = ApiDocumentation.build([AshHateoas.Test.Domain])["@included"]
+      declared = fn id -> Enum.find(included, &(&1["@id"] == id)) end
 
-      assert terms["ah:RunAction"] == %{"rdfs:subClassOf" => %{"@id" => "schema:Action"}}
+      assert declared.("ah:SaveAction")["rdfs:subClassOf"] == %{"@id" => "schema:UpdateAction"}
+      assert declared.("ah:RunAction")["rdfs:subClassOf"] == %{"@id" => "schema:Action"}
+
+      # And declared as classes, so the subclass axioms are load-bearing rather
+      # than decorative — OWL 2 §5.8.2.
+      assert declared.("ah:SaveAction")["@type"] == "owl:Class"
+      assert declared.("ah:RunAction")["@type"] == "owl:Class"
     end
 
     test "the POSTs are told apart by role, not only by name" do
@@ -486,17 +509,26 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       refute Map.has_key?(comment, "ah:identity")
     end
 
-    test "the term is related to owl:hasKey in the context" do
+    test "the term is declared, and is deliberately not a subproperty of owl:hasKey" do
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])
       terms = Enum.find(doc["@context"], &is_map/1)
 
-      # `owl:hasKey` states the same fact but as a reasoning axiom — it
-      # licenses an engine to conclude two records are the same individual,
-      # where a client needs "match the record with this name". Declaring the
-      # narrower term a subproperty keeps the weaker inference available
-      # without asking a client to act on it.
-      assert terms["ah:identity"]["rdfs:subPropertyOf"] == %{"@id" => "owl:hasKey"}
+      # It was one until the ontology work, and the claim was unsound twice
+      # over. `owl:hasKey` is a *class* axiom taking a class expression and an
+      # `rdf:List` of properties, so it cannot sit on a property node at all.
+      # And it licenses a reasoner to infer `owl:sameAs` between individuals
+      # sharing key values — for a business key like a name, that merges two
+      # legitimately distinct records and unions their properties, which is the
+      # corruption the term exists to prevent.
+      refute get_in(terms, ["ah:identity", "rdfs:subPropertyOf"])
       assert terms["rdfs"] == "http://www.w3.org/2000/01/rdf-schema#"
+
+      # Declared as what it is: an annotation. Its value is metadata about a
+      # class, not a fact about an individual.
+      identity =
+        Enum.find(doc["@included"], &(&1["@id"] == "ah:identity"))
+
+      assert identity["@type"] == "owl:AnnotationProperty"
     end
   end
 

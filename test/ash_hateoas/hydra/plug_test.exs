@@ -581,7 +581,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert context_terms["additional_name"] == "https://schema.org/additionalName"
     end
 
-    test "the ApiDocumentation advertises the equivalence" do
+    test "the ApiDocumentation advertises the subclass relation, not equivalence" do
       doc = body(get("/doc", @admin))
 
       person_class =
@@ -590,7 +590,20 @@ defmodule AshHateoas.Hydra.PlugTest do
           &(&1["@id"] == "https://ash-hateoas.org/vocab#Person")
         )
 
-      assert person_class["owl:equivalentClass"] == %{"@id" => "https://schema.org/Person"}
+      # Not `owl:equivalentClass`, which asserts the two are the same set. A
+      # local Person has an id, a tenant and domain rules `schema:Person` knows
+      # nothing of — and equivalence licenses substitution in *both*
+      # directions, so a reasoner could conclude things about schema.org's
+      # class from statements about ours.
+      refute Map.has_key?(person_class, "owl:equivalentClass")
+
+      # The honest claim, asserted once in the ontology: a local Person *is a*
+      # schema.org Person, without the converse.
+      declared =
+        Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#Person"))
+
+      assert declared["rdfs:subClassOf"] == %{"@id" => "https://schema.org/Person"}
+      assert declared["@type"] == ["owl:Class", "hydra:Class"]
 
       # the mapped property advertises the schema.org IRI directly
       property_ids =

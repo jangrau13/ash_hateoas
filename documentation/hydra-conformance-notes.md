@@ -104,26 +104,34 @@ stays honest.
 The normative value is a **Class reference** — `{"@id": <class-iri>}`, which is
 what `rangeIncludes` above establishes.
 
-**On `owl:Nothing` for a destroy — our choice, not the spec's.** An earlier
-revision of this file attributed `"returns": "…owl#Nothing"` to the
-specification's examples. That citation does not hold up: re-verified against
-the current sources, the token `Nothing` occurs **zero** times in the spec prose
-(864 KB), zero times in `core.jsonld`, and zero times in the published
-vocabulary at `http://www.w3.org/ns/hydra/core`. The only `owl` mentions in any
-of them are the prefix declaration and `owl:Ontology` on the vocabulary document
-itself — Hydra says nothing about OWL anywhere.
+**On `owl:Nothing` for a destroy — dropped, and the citation behind it was
+wrong anyway.** An earlier revision of this file attributed
+`"returns": "…owl#Nothing"` to the specification's examples. That citation does
+not hold up: re-verified against the current sources, the token `Nothing` occurs
+**zero** times in the spec prose (864 KB), zero times in `core.jsonld`, and zero
+times in the published vocabulary at `http://www.w3.org/ns/hydra/core`. The only
+`owl` mentions in any of them are the prefix declaration and `owl:Ontology` on
+the vocabulary document itself — Hydra says nothing about OWL anywhere.
 
-The practice is kept, on its own merits rather than on borrowed authority:
-`owl:Nothing` is the empty class, so "this operation returns no thing" is a
-truthful reading, and it satisfies `rangeIncludes rdfs:Class` because
-`owl:Nothing` is one. But it is **this package's decision**, and it is the one
-place we import an OWL term without Hydra's backing.
+The practice went with it, for a better reason than provenance: **a destroy now
+returns the record it destroyed**, so there is a class to name. Ash hands the
+record back for the asking (`return_destroyed?: true`), and returning it saves a
+client that wants to show what it deleted from having to GET first and hold the
+result across the delete. `hydra:returns` names the resource's own class, like
+every other operation that yields a record.
+
+`owl:Nothing` survives only where a destroy action genuinely yields no record,
+which sends no body at all. Had it been kept for the ordinary case it would
+still have been defensible — it is the empty class, so "an instance of this is
+returned" is unsatisfiable, which is the honest reading of "no body" — but it is
+now the narrow case rather than the rule.
 
 - An **inline class node with an `@id`** (carrying `supportedProperty`) is
   *permitted* — it is still a class reference, just an expanded one — but the
   minimal conformant form is the bare `{"@id"}` reference.
 - **Previous gap:** `hydra:returns` was never emitted. It should be present:
-  the resource's own class IRI for read/create/update, `owl:Nothing` for destroy.
+  the resource's own class IRI for read/create/update, and for destroy too —
+  it returns the record it destroyed.
 - **Previous nit:** the `hydra:expects` class was an **anonymous blank node**
   (no `@id`) — a client cannot reference or dedupe it. Giving it an `@id`
   (`<class>/<action>Input`) makes it a real, referenceable class.
@@ -146,7 +154,7 @@ alone is sufficient for a generic Hydra client to navigate the API.
 | 2 | `hydra:collection` key | already correct | keep |
 | 3 | `{href, rel}` link values | **non-conformant** (not Hydra terms) | → `{"@id", "@type"}` node refs |
 | 4 | `hydra:property` datatype-typed node | **wrong** (`@type` mistypes the property) | → `{"@id"}` ref; datatype to standard ontology term (`sh:datatype` etc.) |
-| 5 | missing `hydra:returns` | **incomplete** | emit `returns` (class IRI / `owl:Nothing`) |
+| 5 | missing `hydra:returns` | **incomplete** | emit `returns` (the class IRI; a destroy returns its record) |
 | 5 | anonymous `hydra:expects` class | nit (blank node) | give it an `@id` |
 | 6 | `"@type": "EntryPoint"` | **non-conformant** (undefined term) | → `ah:EntryPoint` |
 
