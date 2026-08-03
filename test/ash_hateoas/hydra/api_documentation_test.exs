@@ -341,6 +341,17 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       assert length(document_property("save")["sh:class"]) == length(managed)
     end
 
+    test "a non-public relationship's class is not named" do
+      # `public?` means "appears in public interfaces" and defaults to false.
+      # `Recipe.audits` is private, so a client must not be told it may write
+      # `recipe_audit` elements — and since `on_missing/2` destroys what an
+      # owned `has_many` omits, being told so would let a document delete rows
+      # it was never shown.
+      iris = document_property("save")["sh:class"] |> Enum.map(& &1["@id"])
+
+      refute "https://ash-hateoas.org/vocab#RecipeAudit" in iris
+    end
+
     test "validate describes the same document as save" do
       # They take the same argument; a client checking against one and saving
       # against the other must not find them disagreeing.

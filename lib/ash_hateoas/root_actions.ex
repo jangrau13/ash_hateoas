@@ -451,7 +451,21 @@ defmodule AshHateoas.RootActions do
       |> Enum.reject(&is_nil/1)
       |> MapSet.new()
 
-    Enum.reject(relationships, &MapSet.member?(joins, &1.name))
+    relationships
+    |> Enum.reject(&MapSet.member?(joins, &1.name))
+    # `public?` is Ash's own word for "appears in public interfaces", and it
+    # defaults to `false`. Every other path here honours it — routes, the
+    # documentation's properties, the ontology — and this one did not, so a
+    # relationship nobody opted in was advertised as an element kind by
+    # `element_classes/1` and *managed* by a save. Since `on_missing/2` returns
+    # `:destroy` for an owned `has_many`, a document that merely omitted those
+    # elements deleted them.
+    #
+    # Filtered **after** the joins are collected, deliberately: a join
+    # relationship is usually not public, so filtering first would remove it
+    # from `relationships` before the name-rejection above could see it — and
+    # it would then be neither rejected nor excluded.
+    |> Enum.filter(& &1.public?)
   end
 
   @doc """
@@ -553,7 +567,13 @@ defmodule AshHateoas.RootActions do
         attributes = authorable(element, resource, root)
         Map.update(acc, relationship, [attributes], &(&1 ++ [attributes]))
       else
-        _ -> acc
+        # Unreachable, and deliberately loud rather than silent. `index_for/1`
+        # is built from the same relationships as `by_destination`, so a miss
+        # here means the two have diverged — and the previous `_ -> acc` turned
+        # exactly that into a 200 with an element quietly missing from the
+        # saved document. Losing data is worse than crashing.
+        _ ->
+          raise "unreachable: #{inspect(element["kind"])} is indexed but has no managed relationship"
       end
     end)
   end
@@ -597,11 +617,30 @@ defmodule AshHateoas.RootActions do
 
   defp document_of(input), do: Map.get(input.arguments, :document, [])
 
+  # The kinds a document may name: exactly the destinations a save manages.
+  #
+  # Scoped to the root's own relationships rather than to its domain. Building
+  # from the domain indexed every extension-carrying resource in it, so a kind
+  # could be known to validation and unreachable to persistence — validation
+  # cast the element against a resource this root cannot hold, reporting that
+  # resource's own required fields, while `group_by_relationship/2` found no
+  # relationship and dropped it through an `else` clause. A 200, and an element
+  # gone.
+  #
+  # This is also the set the wire advertises: `element_classes/1` reads the same
+  # relationships, so the document a client is told it may send is now the
+  # document both paths accept.
   defp index_for(root) do
     root
-    |> Ash.Resource.Info.domain()
-    |> List.wrap()
-    |> Index.build()
+    |> managed_relationships()
+    |> Enum.map(& &1.destination)
+    |> Enum.filter(&AshHateoas.Resource.Info.extension?/1)
+    |> Enum.reduce(%{}, fn resource, acc ->
+      case AshHateoas.Resource.Info.type(resource) do
+        nil -> acc
+        type -> Map.put(acc, to_string(type), resource)
+      end
+    end)
   end
 
   defp name_of(element) when is_map(element), do: element["name"] || element[:name]

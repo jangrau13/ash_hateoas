@@ -233,5 +233,6 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.HandValidated)
     resource(AshHateoas.Test.Technique)
     resource(AshHateoas.Test.RecipeTechnique)
+    resource(AshHateoas.Test.RecipeAudit)
   end
 end

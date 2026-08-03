@@ -566,6 +566,101 @@ defmodule AshHateoas.RootActionsTest do
     end
   end
 
+  describe "a relationship that is not public" do
+    # `public?` defaults to `false` in Ash and means "appears in public
+    # interfaces". Routes, the documentation's properties and the ontology all
+    # honour it; `managed_relationships/1` did not — so a relationship nobody
+    # opted in was advertised as an authorable element kind, and because
+    # `on_missing/2` returns `:destroy` for an owned `has_many`, a document that
+    # merely omitted those rows deleted them.
+    #
+    # `Recipe.audits` is the case: a private `has_many` to `RecipeAudit`.
+
+    test "is not managed, so it is neither authorable nor destroyable" do
+      names =
+        Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.name)
+
+      refute :audits in names
+      assert Enum.sort(names) == [:ingredients, :steps, :techniques]
+    end
+
+    test "the join is rejected by name even though it is itself not public" do
+      # The ordering trap, pinned. Ash generates `techniques_join_assoc` for the
+      # `many_to_many` and leaves it at the default `public?: false`. Filtering
+      # public *before* collecting the join names would drop it from the list
+      # the rejection reads, so it would be neither rejected nor filtered — and
+      # the join table would be synced twice and advertised as an element kind.
+      join = Ash.Resource.Info.relationship(Recipe, :techniques).join_relationship
+      refute Ash.Resource.Info.relationship(Recipe, join).public?
+
+      names =
+        Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.name)
+
+      refute join in names
+      assert :techniques in names
+    end
+
+    test "its kind is rejected as unknown" do
+      result = validate([%{"kind" => "recipe_audit", "note" => "written by a client"}])
+
+      refute result["valid?"]
+      assert "kind" in fields(result)
+
+      assert Enum.any?(result["errors"], fn error ->
+               error["field"] == "kind" and error["message"] =~ "unknown element kind"
+             end)
+    end
+
+    test "omitting it from a document does not delete it" do
+      recipe = recipe!()
+
+      audit =
+        AshHateoas.Test.RecipeAudit
+        |> Ash.Changeset.for_create(:create, %{note: "seeded", recipe_id: recipe.id})
+        |> Ash.create!(authorize?: false)
+
+      # A document that says nothing about audits at all.
+      {:ok, result} = save([%{"kind" => "step", "name" => "Mix"}], %{id: recipe.id})
+
+      assert result["valid?"]
+
+      assert Ash.get!(AshHateoas.Test.RecipeAudit, audit.id, authorize?: false).note ==
+               "seeded"
+    end
+  end
+
+  describe "an element no relationship points at" do
+    # `Index.build/1` indexes every extension-carrying resource in the root's
+    # *domain*, not only the destinations a save manages. So a kind can be known
+    # to validation and unreachable to persistence — and the two disagreed:
+    # `element_error/4` accepted it, then `group_by_relationship/2` folded it
+    # into an `else _ -> acc` clause that dropped it without a word.
+    #
+    # `Comment` is the case: a `hateoas` resource in `Recipe`'s domain that
+    # `Recipe` has no relationship to.
+
+    test "is rejected rather than silently dropped" do
+      result = validate([%{"kind" => "comment", "name" => "Nope"}])
+
+      refute result["valid?"]
+      assert fields(result) == ["kind"]
+    end
+
+    test "does not persist, and does not report success" do
+      recipe = recipe!()
+
+      {:ok, result} = save([%{"kind" => "comment", "name" => "Nope"}], %{id: recipe.id})
+
+      # The failure this test exists for: a 200 whose document lost an element.
+      refute result["valid?"]
+      assert Ash.read!(AshHateoas.Test.Comment, authorize?: false) == []
+    end
+  end
+
   describe "a key that would vanish silently" do
     test "a non-string value under an unknown key is reported" do
       # The gap between the two existing checks: `authorable/3` drops what the

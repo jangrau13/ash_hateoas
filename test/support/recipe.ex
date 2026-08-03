@@ -61,6 +61,13 @@ defmodule AshHateoas.Test.Recipe do
       source_attribute_on_join_resource(:recipe_id)
       destination_attribute_on_join_resource(:technique_id)
     end
+
+    # Deliberately NOT public — Ash's default, written out so the intent is
+    # unmistakable. A document must neither be able to author these nor delete
+    # them by omission. See `AshHateoas.Test.RecipeAudit`.
+    has_many :audits, AshHateoas.Test.RecipeAudit do
+      public?(false)
+    end
   end
 
   actions do
