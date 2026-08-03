@@ -23,7 +23,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   gates. The documentation is the stable catalogue; the node is the live offer.
   """
 
-  alias AshHateoas.Hydra.{Context, Ontology, Renderer, TypeMapper}
+  alias AshHateoas.Hydra.{Context, Ontology, Renderer}
   alias AshHateoas.{Index, Route}
 
   @doc """
@@ -284,20 +284,29 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         property_id =
           Map.get(semantic, attribute.name) || Context.property_iri(type, attribute.name)
 
-        wire = AshHateoas.TypeMapper.to_wire(attribute.type)
-
         %{
           "@type" => "SupportedProperty",
-          # `hydra:property` ranges over rdf:Property — a reference to the
-          # property. The value's type is a fact about the property, carried
-          # alongside under a standard ontology term.
+          # `hydra:property` ranges over rdf:Property, so this is a reference to
+          # the property — and only a reference.
+          #
+          # The value's type used to travel alongside it here, as `sh:datatype`
+          # / `sh:nodeKind` / `rdfs:range`. It is a fact about the *property*,
+          # so it now lives on the property's own declaration in the ontology,
+          # stated once instead of at every site the property is used. A
+          # consumer follows the `@id`.
+          #
+          # Note the same keys survive on an operation's **input** properties
+          # (`Renderer.put_type_info/2`), and must: an argument is not a
+          # property of any class, so the ontology declares none, and stripping
+          # them there would leave every input field untyped. Measured — it
+          # collapses boolean, integer and ref to string, which is precisely the
+          # bug that typed every MCP field `"string"`.
           "hydra:property" => %{"@id" => property_id},
           "hydra:title" => to_string(attribute.name),
           "hydra:required" => not Map.get(attribute, :allow_nil?, true),
           "hydra:readable" => true,
           "hydra:writeable" => Map.get(attribute, :writable?, true)
         }
-        |> put_type_info(wire)
         |> put_unless_nil("hydra:description", Map.get(attribute, :description))
       end)
 
@@ -345,13 +354,20 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   # `rdfs:range` now says in the ontology: a to-many ranges over a
   # `hydra:Collection` subclass carrying a `hydra:memberAssertion`, a to-one
   # over the destination class itself. A client reads the range either way.
-  defp link_property(resource, type, name, _target_kind) do
-    property =
-      %{
-        "@id" => Context.property_iri(type, name),
-        "@type" => "hydra:Link"
-      }
-      |> put_unless_nil("sh:class", link_target_class(resource, name))
+  defp link_property(_resource, type, name, _target_kind) do
+    # A bare reference. What the link points AT used to travel here as
+    # `sh:class` — a per-usage constraint restating the same target wherever the
+    # property appeared — and is now `rdfs:range` on the property's own
+    # declaration in the ontology, said once.
+    #
+    # `sh:class` survives on an operation's **input** properties, where it names
+    # the classes a document may contain. That is a different statement: the
+    # save operation's `document` argument is a genuine per-usage constraint
+    # over a heterogeneous array, and no declared property range could carry it.
+    property = %{
+      "@id" => Context.property_iri(type, name),
+      "@type" => "hydra:Link"
+    }
 
     %{
       "@type" => "SupportedProperty",
@@ -360,20 +376,6 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:readable" => true,
       "hydra:writeable" => false
     }
-  end
-
-  # The class IRI a relationship points at, from the destination's own declared
-  # type. A destination without a type is not addressable as a node, so the link
-  # is emitted without `sh:class` rather than with a bogus one — a consumer then
-  # degrades to an untyped link instead of resolving to nothing.
-  defp link_target_class(resource, name) do
-    with %{destination: destination} <- Ash.Resource.Info.relationship(resource, name),
-         destination_type when is_binary(destination_type) <-
-           AshHateoas.Resource.Info.type(destination) do
-      Context.class_iri(destination_type)
-    else
-      _ -> nil
-    end
   end
 
   @doc """
@@ -498,16 +500,6 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     Ash.Resource.Info.description(resource)
   rescue
     _ -> nil
-  end
-
-  defp put_type_info(map, wire) do
-    case TypeMapper.type_info(wire) do
-      {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)
-      {:sh_node_kind, kind} -> Map.put(map, "sh:nodeKind", kind)
-      {:rdfs_range, iri} -> Map.put(map, "rdfs:range", %{"@id" => iri})
-      :union -> map
-      :none -> map
-    end
   end
 
   defp put_unless_nil(map, _key, nil), do: map

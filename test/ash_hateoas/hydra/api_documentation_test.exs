@@ -139,10 +139,11 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
 
     # Without a target class a link says only "followable", never "-> what",
     # which is not enough for a client to resolve the reference to a described
-    # class. `article.comments` points at Comment.
-    assert link["hydra:property"]["sh:class"] == "https://ash-hateoas.org/vocab#Comment"
+    # class. `article.comments` points at Comment — said once, on the property's
+    # own declaration, rather than restated at every usage as `sh:class`.
+    refute Map.has_key?(link["hydra:property"], "sh:class")
 
-    # Cardinality is no longer marked here. `ah:targetKind: "Collection"` said
+    # Cardinality is no longer marked here either. `ah:targetKind: "Collection"` said
     # in a minted term what the ontology's `rdfs:range` now says with two
     # standard ones: the property ranges over a `hydra:Collection` subclass
     # whose `hydra:memberAssertion` names the member class.
@@ -177,7 +178,14 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     # and invisible to any client deriving structure from the documentation.
     assert link, "expected a document link property for the belongs_to"
     assert link["hydra:property"]["@type"] == "hydra:Link"
-    assert link["hydra:property"]["sh:class"] == "https://ash-hateoas.org/vocab#Document"
+
+    # The target is the property's declared range, not a per-usage constraint.
+    refute Map.has_key?(link["hydra:property"], "sh:class")
+
+    declared =
+      Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#comment/document"))
+
+    assert declared["rdfs:range"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
 
     # A to-one resolves to a single node, so it carries no collection marker.
     refute Map.has_key?(link, "ah:targetKind")
@@ -579,9 +587,45 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
         &(&1["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#document/title")
       )
 
-    # hydra:property is a reference node (rdf:Property range), datatype rides on ah:
+    # `hydra:property` ranges over `rdf:Property`, so the value is a bare
+    # reference to the property — and now *only* that.
     assert title["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/title"}
-    assert title["sh:datatype"] == "xsd:string"
+
+    # The datatype used to ride alongside as `sh:datatype`, restated at every
+    # site the property appeared. It is a fact about the property, so it is
+    # declared once on the property itself and a consumer follows the `@id`.
+    refute Map.has_key?(title, "sh:datatype")
+
+    declared =
+      Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#document/title"))
+
+    assert declared["@type"] == "owl:DatatypeProperty"
+    assert declared["rdfs:range"] == %{"@id" => "xsd:string"}
+  end
+
+  test "an operation's input still carries its own datatype" do
+    doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+    document =
+      Enum.find(
+        doc["hydra:supportedClass"],
+        &(&1["@id"] == "https://ash-hateoas.org/vocab#Document")
+      )
+
+    input =
+      document["hydra:supportedOperation"]
+      |> Enum.find(&(&1["hydra:method"] == "POST"))
+      |> get_in(["hydra:expects", "hydra:supportedProperty"])
+      |> Enum.find(&(&1["hydra:title"] == "title"))
+
+    # An argument is not a property of a class — `approve` takes a `note`, but a
+    # Document does not have one — so the ontology declares none, and there is
+    # no declaration for a consumer to follow. The key must stay here.
+    #
+    # Measured rather than assumed: stripping these collapses boolean, integer
+    # and ref to string, which is exactly the bug that typed every MCP field
+    # `"string"`.
+    assert input["sh:datatype"] == "xsd:string"
   end
 
   test "the whole document is JSON-encodable" do
