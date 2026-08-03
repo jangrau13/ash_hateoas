@@ -64,10 +64,10 @@ defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
   ## On the `document` argument's type
 
   `{:array, :map}` describes the argument as an array of *something*:
-  `AshHateoas.TypeMapper.to_wire/1` has no inner type to report. `hateoas2dsl`
-  does not need one — it derived the document's shape from the same API
-  documentation — but a client reading only the wire cannot construct a call
-  from this description.
+  `AshHateoas.TypeMapper.to_wire/1` has no inner type to report. A client that
+  derives the document's shape from the same API documentation does not need
+  one — it already knows which classes are elements — but a client reading only
+  the wire cannot construct a call from this description.
 
   Typing it as a generated embedded-resource tree would fix that, since an
   embedded resource has real attributes for `AshHateoas.Descriptor` to walk.

@@ -183,9 +183,9 @@ defmodule AshHateoas.Hydra.Context do
   @doc """
   Adds `@base` to a context, so relative `@id`s resolve against this API.
 
-  A node may legitimately carry a relative `@id` — `base_url` is optional, and
-  `svc_simulation` serves `/simulation/model/<id>` today. But a relative IRI has
-  to resolve against *something*, and with no `@base` declared a processor falls
+  A node may legitimately carry a relative `@id`, since `base_url` is optional
+  and a deployment behind a proxy may prefer them. But a relative IRI has to
+  resolve against *something*, and with no `@base` declared a processor falls
   back to the document's own location. For a document parsed from a string that
   is the last remote context it loaded, which here is Hydra's:
 

@@ -3,9 +3,9 @@ defmodule AshHateoas.Hydra.Ontology do
   Declares the vocabulary the `ApiDocumentation` uses.
 
   The documentation mints a property IRI for every attribute and relationship
-  (`…#flow/model`, `…#converter/name`) and, until this module, said nothing
+  (`…#article/author`, `…#comment/body`) and, until this module, said nothing
   about any of them. Every occurrence was a *reference*: a client could see that
-  `flow/model` was used, and had nowhere to learn what it was.
+  `article/author` was used, and had nowhere to learn what it was.
 
   This module emits the missing half — one declaration per class and per
   property, carried in the same document under `@included`, so one fetch still
@@ -350,10 +350,10 @@ defmodule AshHateoas.Hydra.Ontology do
   # The class a relationship points at.
   #
   # For a to-one that is the destination class directly. For a to-many it is the
-  # property's own **collection class** — because the value of `model.stocks` is
-  # a `hydra:Collection`, not a Stock, and `rdfs:range` is an assertion about
-  # every value the property takes (rdfs3). Naming the member class here would
-  # assert that the collection *is* a Stock, which is false and would be
+  # property's own **collection class** — because the value of `article.comments`
+  # is a `hydra:Collection`, not a Comment, and `rdfs:range` is an assertion
+  # about every value the property takes (rdfs3). Naming the member class here
+  # would assert that the collection *is* a Comment, which is false and would be
   # materialised by any RDFS reasoner.
   #
   # A destination carrying no type is not addressable as a node, so the property
