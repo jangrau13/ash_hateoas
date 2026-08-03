@@ -221,6 +221,13 @@ defmodule AshHateoas.Hydra.Renderer do
   # `hydra:returns` ranges over a Class. A read/create/update returns the
   # resource's own class; a destroy returns nothing (`owl:Nothing`). Without a
   # known type we cannot name the class, so we omit it rather than guess.
+  #
+  # `owl:Nothing` here is **this package's choice, not Hydra's**. Hydra mentions
+  # OWL nowhere — verified against the vocabulary, `core.jsonld` and the spec
+  # prose, all of which contain the token `Nothing` zero times. It is kept
+  # because it is truthful (the empty class: this returns no thing) and because
+  # `hydra:returns` accepts any `rdfs:Class`, which `owl:Nothing` is. See
+  # `documentation/hydra-conformance-notes.md` §5.
   defp put_returns(op, %Affordance{method: :delete}, _opts) do
     Map.put(op, "hydra:returns", %{"@id" => "owl:Nothing"})
   end

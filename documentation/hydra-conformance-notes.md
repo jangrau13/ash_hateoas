@@ -12,7 +12,19 @@ artifact.
   `https://raw.githubusercontent.com/HydraCG/Specifications/master/spec/latest/core/core.jsonld`
   — the RDF definitions of every Hydra term (each term's `@type`, `range`,
   `domain`).
-- **JSON-LD `@context` (normative for term expansion):*o `"collection"` and `"hydra:collection"` are **identical after JSON-LD
+- **JSON-LD `@context` (normative for term expansion):**
+  `http://www.w3.org/ns/hydra/context.jsonld`
+  — the term-to-IRI mapping a client applies when expanding a document.
+- **Published vocabulary:** `http://www.w3.org/ns/hydra/core` — the same
+  definitions, served from the namespace IRI itself.
+
+Re-verified against all three on 2026-08-03. Note every Hydra term quoted here
+carries `vs:term_status: "testing"`, and the specification is a Community Group
+editor's draft rather than a W3C Recommendation — these definitions can change.
+
+### 1. Bare terms vs. `hydra:`-prefixed keys — cosmetic
+
+Both `"collection"` and `"hydra:collection"` are **identical after JSON-LD
 expansion**. The spec text confirms there is *no normative preference*: term
 formatting is purely a `@context` concern; the only requirement is that terms
 resolve to the correct IRI.
@@ -89,10 +101,23 @@ stays honest.
   "rangeIncludes": ["rdfs:Resource","hydra:Resource","rdfs:Class","hydra:Class"] }
 ```
 
-The normative value is a **Class reference** — `{"@id": <class-iri>}`. The spec's
-examples show `"expects": "…/vocab#Comment"` and
-`"returns": "http://www.w3.org/2002/07/owl#Nothing"` (a `DELETE` returns
-nothing → `owl:Nothing`).
+The normative value is a **Class reference** — `{"@id": <class-iri>}`, which is
+what `rangeIncludes` above establishes.
+
+**On `owl:Nothing` for a destroy — our choice, not the spec's.** An earlier
+revision of this file attributed `"returns": "…owl#Nothing"` to the
+specification's examples. That citation does not hold up: re-verified against
+the current sources, the token `Nothing` occurs **zero** times in the spec prose
+(864 KB), zero times in `core.jsonld`, and zero times in the published
+vocabulary at `http://www.w3.org/ns/hydra/core`. The only `owl` mentions in any
+of them are the prefix declaration and `owl:Ontology` on the vocabulary document
+itself — Hydra says nothing about OWL anywhere.
+
+The practice is kept, on its own merits rather than on borrowed authority:
+`owl:Nothing` is the empty class, so "this operation returns no thing" is a
+truthful reading, and it satisfies `rangeIncludes rdfs:Class` because
+`owl:Nothing` is one. But it is **this package's decision**, and it is the one
+place we import an OWL term without Hydra's backing.
 
 - An **inline class node with an `@id`** (carrying `supportedProperty`) is
   *permitted* — it is still a class reference, just an expanded one — but the
