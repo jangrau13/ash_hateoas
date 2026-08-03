@@ -37,6 +37,54 @@ happen to use bare terms, but that is style, not conformance.
 **Decision for this package:** keep the `hydra:`-prefixed keys the server already
 emits. They are equally conformant and do not break existing raw-JSON consumers.
 
+**This applies to Hydra terms only, and the distinction is load-bearing.** A
+bare `collection` is safe because the referenced Hydra context defines it. A
+bare key the context does *not* define is a different thing entirely, and a
+record node's keys are exactly that — `title`, `comments`, `name` are the
+resource's own vocabulary, not Hydra's. Two ways it goes wrong, both measured on
+emitted nodes:
+
+- **Undefined → silently dropped.** A processor discards a key no term resolves,
+  so `comments` — a relationship link — produced **no triple at all**. The link
+  was in the JSON and absent from the graph.
+- **Defined by Hydra → captured.** `title` and `name` *are* Hydra terms, so a
+  record's own `name` expanded to `hydra:name` ("the name of the link"). Not a
+  drop but a **wrong** triple, which a reasoner consumes without complaint.
+
+So the rule is narrower than section 1 states on its own: a bare key is cosmetic
+when the context defines it *as the term you mean*. Every other key must be
+bound, which is what `Context.context_for/1` now does — each of a node's keys to
+the property IRI the ApiDocumentation declares for it.
+
+### 1a. A relative `@id` needs `@base`
+
+`base_url` is optional, so a node may legitimately carry `"@id": "/articles/1"`.
+A relative IRI still has to resolve against something, and JSON-LD resolves it
+against the document's location. For a document parsed from a string there is no
+location, and a processor falls back to the last context it loaded — Hydra's.
+
+Measured: every record in the API expanded to an identity under
+**`http://www.w3.org/`**, colliding with any other API's records resolved the
+same way. The `@id` reads exactly as intended in the JSON.
+
+`@base` is the term for stating what relative IRIs resolve against, and the
+request already knows the origin. It is emitted on every document and is inert
+when `base_url` makes the hrefs absolute.
+
+### 1b. Why these were found late
+
+Sections 1, 1a and the `@context` term-definition bug (see
+`AshHateoas.Hydra.Context`) share one cause: **every test asserted on raw JSON**,
+where all three are invisible. A key bound to nothing, a key bound to the wrong
+IRI, and an identity resolved against the wrong base all produce byte-identical
+documents.
+
+The package's claim is that a client can read meaning off the wire, and meaning
+is what a *processor* extracts. So `json_ld` is a test dependency and
+`AshHateoas.Test.JsonLd` expands documents before asserting on them. Hand-rolling
+term resolution would only re-encode the emitter's assumptions and agree with
+itself.
+
 ### 2. `hydra:collection` is a real term — the key was already correct
 
 The normative vocabulary defines it:
@@ -150,7 +198,9 @@ alone is sufficient for a generic Hydra client to navigate the API.
 
 | # | Item | Verdict | Action |
 |---|---|---|---|
-| 1 | bare vs `hydra:` keys | **cosmetic** — both expand identically | keep existing `hydra:` keys; no wire change |
+| 1 | bare vs `hydra:` keys, **for Hydra terms** | **cosmetic** — both expand identically | keep existing `hydra:` keys; no wire change |
+| 1 | bare keys for a **resource's own** properties | **non-conformant** — dropped, or captured by the Hydra context | bind every node key to its declared property IRI |
+| 1a | relative `@id` with no `@base` | **wrong** — identities resolved under `w3.org` | emit `@base` from `base_url` or the request origin |
 | 2 | `hydra:collection` key | already correct | keep |
 | 3 | `{href, rel}` link values | **non-conformant** (not Hydra terms) | → `{"@id", "@type"}` node refs |
 | 4 | `hydra:property` datatype-typed node | **wrong** (`@type` mistypes the property) | → `{"@id"}` ref; datatype to standard ontology term (`sh:datatype` etc.) |
@@ -158,6 +208,10 @@ alone is sufficient for a generic Hydra client to navigate the API.
 | 5 | anonymous `hydra:expects` class | nit (blank node) | give it an `@id` |
 | 6 | `"@type": "EntryPoint"` | **non-conformant** (undefined term) | → `ah:EntryPoint` |
 
-Only rows 3–6 change the wire; row 1 (the bare-terms rename) is intentionally
-**not** done, because it is cosmetic and would break raw-JSON consumers for no
-conformance gain.
+Rows 3–6 change the wire, as do the two rows added later (a resource's own bare
+keys, and `@base`). Renaming *Hydra* keys is intentionally **not** done: it is
+cosmetic and would break raw-JSON consumers for no conformance gain.
+
+Note the two later rows change only the `@context`, not the keys themselves — a
+raw-JSON consumer sees the same document, while a JSON-LD consumer finally sees
+the triples it always should have.

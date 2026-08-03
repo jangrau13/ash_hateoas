@@ -82,6 +82,20 @@ defmodule AshHateoas.MixProject do
       # Ash.Policy.Authorizer needs a SAT solver to reason about policy
       # combinations. Consumers supply their own; the test suite needs one.
       {:simple_sat, "~> 0.1", only: [:dev, :test]},
+      # A real JSON-LD processor, for the tests only.
+      #
+      # This package's whole claim is that a client can read meaning off the
+      # wire, and meaning is what a *processor* extracts — not what the JSON
+      # looks like. Two defects proved the difference and both were invisible to
+      # assertions on raw JSON: four malformed `@context` term definitions that
+      # made every emitted document fail to expand, and record nodes whose keys
+      # were bound to nothing at all, so relationship links produced no triples
+      # and `title` expanded to `hydra:title`.
+      #
+      # Hand-rolling term resolution in the test would only encode the same
+      # assumptions the emitter makes, and agree with itself. Expanding with an
+      # independent implementation is what makes these tests evidence.
+      {:json_ld, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.34", only: [:dev], runtime: false}
     ]
   end

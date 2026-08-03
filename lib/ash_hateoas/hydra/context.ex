@@ -121,21 +121,140 @@ defmodule AshHateoas.Hydra.Context do
   end
 
   @doc """
-  The `@context` for a resource node, extended with its `semantic_property`
-  mappings.
+  The `@context` for a record node: the base context plus a term binding for
+  every key the node emits.
 
-  Each mapped attribute's flat key is bound to its well-known property IRI, so a
-  client reading the node sees the value as that property (e.g.
-  `"additional_name"` resolving to `https://schema.org/additionalName`). With no
-  mappings this is the base `context/0`.
+  A node's keys are flat — `"title"`, `"comments"` — while the ontology declares
+  `vocab#article/title` and `vocab#article/comments`. Something has to join the
+  two, and that is what this does: each key is bound to the property IRI the
+  ApiDocumentation declares for it, so a node's data expands to the very
+  properties the ontology describes.
+
+  ## Why every key, not only the mapped ones
+
+  This used to bind *only* `semantic_property` mappings, and the result was that
+  instance data and vocabulary never met. Measured by expanding a real node with
+  a JSON-LD 1.1 processor — the raw JSON looks fine either way, which is why it
+  went unseen:
+
+  | key | before | after |
+  |---|---|---|
+  | `comments` | **no triple at all** | `vocab#article/comments` |
+  | `id` | **no triple at all** | `vocab#article/id` |
+  | `title` | `hydra:title` | `vocab#article/title` |
+  | `name` | `hydra:name` | `vocab#person/name` |
+
+  Two distinct failures, and the second is the worse one. An **unbound** key is
+  *silently dropped* — a JSON-LD processor discards what it cannot resolve, so
+  every relationship link on every record node produced zero triples. A key the
+  referenced Hydra context happens to define is **captured**: `title` and `name`
+  are Hydra terms, so a record's own `name` expanded to `hydra:name` — "the name
+  of the link" — which is not a drop but a wrong triple a reasoner will consume.
+
+  The `@context` array is ordered and later entries win, so these bindings
+  override the Hydra context for the node's own keys while leaving the Hydra
+  terms the node genuinely uses (`hydra:operation`, `hydra:collection`, already
+  prefixed) untouched.
+
+  ## The IRIs are the documentation's, by construction
+
+  The selection rules mirror `Ontology.property_nodes/2` exactly — same
+  attributes, same relationships, and the same `semantic || property_iri` rule
+  `ApiDocumentation.supported_properties/2` applies. A key bound here to an IRI
+  the ontology does not declare would be a dangling reference, which is the
+  defect that module exists to remove; `ontology_test.exs` asserts the two agree.
   """
-  @spec context_for(%{atom() => String.t()}) :: [String.t() | map()]
+  @spec context_for(module() | %{atom() => String.t()}) :: [String.t() | map()]
+  def context_for(resource) when is_atom(resource) and not is_nil(resource) do
+    case node_terms(resource) do
+      terms when map_size(terms) == 0 -> context()
+      terms -> context() ++ [terms]
+    end
+  end
+
   def context_for(semantic_properties) when map_size(semantic_properties) == 0, do: context()
 
   def context_for(semantic_properties) do
     terms = Map.new(semantic_properties, fn {attribute, iri} -> {to_string(attribute), iri} end)
 
     context() ++ [terms]
+  end
+
+  @doc """
+  Adds `@base` to a context, so relative `@id`s resolve against this API.
+
+  A node may legitimately carry a relative `@id` — `base_url` is optional, and
+  `svc_simulation` serves `/simulation/model/<id>` today. But a relative IRI has
+  to resolve against *something*, and with no `@base` declared a processor falls
+  back to the document's own location. For a document parsed from a string that
+  is the last remote context it loaded, which here is Hydra's:
+
+      "@id": "/articles/1"  →  http://www.w3.org/articles/1
+
+  Every record in the API then has an identity under **`w3.org`** — not merely
+  wrong but wrong in a way that collides with everyone else's records resolved
+  the same way. It is invisible in the JSON, where the `@id` reads exactly as
+  intended, and it is why `AshHateoas.Test.JsonLd` exists.
+
+  Declaring `@base` states what the author meant. With `base_url` configured the
+  `@id`s are already absolute and this changes nothing — `@base` only ever
+  applies to relative IRIs.
+  """
+  @spec put_base([String.t() | map()], String.t() | nil) :: [String.t() | map()]
+  def put_base(context, nil), do: context
+  def put_base(context, ""), do: context
+
+  def put_base(context, base) when is_binary(base) do
+    context ++ [%{"@base" => String.trim_trailing(base, "/") <> "/"}]
+  end
+
+  @doc """
+  The term bindings for a resource's node keys: flat key → property IRI.
+
+  Public because both the member node and the nodes embedded in a collection
+  need them, and they must be identical — a member read on its own and the same
+  member read inside its collection cannot expand to different triples.
+  """
+  @spec node_terms(module()) :: %{String.t() => String.t()}
+  def node_terms(resource) do
+    with type when is_binary(type) <- AshHateoas.Resource.Info.type(resource) do
+      semantic = AshHateoas.Resource.Info.semantic_properties(resource)
+
+      Map.merge(
+        attribute_terms(resource, type, semantic),
+        relationship_terms(resource, type)
+      )
+    else
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  # A mapped attribute binds to the well-known IRI it declares, matching what the
+  # documentation advertises for it; everything else binds to ours.
+  defp attribute_terms(resource, type, semantic) do
+    resource
+    |> Ash.Resource.Info.public_attributes()
+    |> Map.new(fn attribute ->
+      {to_string(attribute.name),
+       Map.get(semantic, attribute.name) || property_iri(type, attribute.name)}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  # Only the to-many relationships a node actually emits a key for — the
+  # `:related` routes `Plug.merge_relationship_links/4` folds in. A to-one is
+  # declared in the ontology but never appears as a node key, so binding it here
+  # would define a term nothing uses.
+  defp relationship_terms(resource, type) do
+    resource
+    |> AshHateoas.Resource.Info.routes()
+    |> Enum.filter(&(&1.type == :related))
+    |> Map.new(&{to_string(&1.relationship), property_iri(type, &1.relationship)})
+  rescue
+    _ -> %{}
   end
 
   @doc """

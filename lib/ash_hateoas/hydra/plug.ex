@@ -31,6 +31,12 @@ defmodule AshHateoas.Hydra.Plug do
       one), and cross-service links and generic clients can follow every `@id`
       without knowing the mount point out of band.
 
+      Leaving it unset keeps the hrefs relative, which is supported: every
+      document declares `@base`, so a relative `@id` still resolves to a real
+      identity. Without `base_url` that base is the **request's** origin, which
+      is wrong behind a proxy that rewrites the host — so set it in production
+      and let the request supply it in development.
+
   ## What it serves
 
   | request | response |
@@ -93,7 +99,7 @@ defmodule AshHateoas.Hydra.Plug do
       |> Map.new(fn {type, link} -> {type, nav_ref(link)} end)
 
     document = %{
-      "@context" => Context.context(),
+      "@context" => document_context(conn, opts),
       "hydra:collection" => collections
     }
 
@@ -151,7 +157,7 @@ defmodule AshHateoas.Hydra.Plug do
       record ->
         node = node(record, type, resource, id, actor, tenant, opts)
         node = maybe_project_observed(node, conn, resource)
-        context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
+        context = document_context(conn, opts, resource)
         send_json(conn, 200, Map.put(node, "@context", context))
     end
   end
@@ -220,7 +226,12 @@ defmodule AshHateoas.Hydra.Plug do
             operations: operations,
             view_map: view_map
           )
-          |> Map.put("@context", Context.context())
+          # The members are nodes of this resource and carry its flat keys, so
+          # the collection needs the same term bindings a member read on its own
+          # would get. Without them a member expands to different triples inside
+          # its collection than outside it — and `title` would land on
+          # `hydra:title` here while resolving correctly one URL away.
+          |> Map.put("@context", document_context(conn, opts, resource))
 
         send_json(conn, 200, document)
 
@@ -273,7 +284,11 @@ defmodule AshHateoas.Hydra.Plug do
           id: related_href(resource, definition, id, opts),
           total_items: length(members)
         )
-        |> Map.put("@context", Context.context())
+        # The DESTINATION's bindings, not the source's — the members are
+        # comments. Same rule as the destination's own collection, which is what
+        # makes "the same node shape either way" true of the triples and not
+        # only of the JSON.
+        |> Map.put("@context", document_context(conn, opts, destination))
 
       send_json(conn, 200, document)
     else
@@ -435,7 +450,7 @@ defmodule AshHateoas.Hydra.Plug do
           )
           |> Ash.run_action(authorize?: true)
         end)
-        |> respond_generic(conn)
+        |> respond_generic(conn, opts)
     end
   end
 
@@ -452,7 +467,7 @@ defmodule AshHateoas.Hydra.Plug do
   defp respond_write({:ok, record}, conn, resource, type, actor, tenant, opts, write_opts) do
     id = record_id(record)
     node = node(record, type, resource, id, actor, tenant, opts)
-    context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
+    context = document_context(conn, opts, resource)
     status = if Keyword.get(write_opts, :created, false), do: 201, else: 200
     send_json(conn, status, Map.put(node, "@context", context))
   end
@@ -479,7 +494,7 @@ defmodule AshHateoas.Hydra.Plug do
   defp respond_destroy({:ok, record}, conn, resource, type, actor, tenant, opts) do
     id = record_id(record)
     node = node(record, type, resource, id, actor, tenant, opts)
-    context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
+    context = document_context(conn, opts, resource)
 
     send_json(
       conn,
@@ -501,7 +516,7 @@ defmodule AshHateoas.Hydra.Plug do
 
   # A generic action returns whatever it returns; wrap non-resource results so a
   # client always receives a JSON-LD document.
-  defp respond_generic({:ok, result}, conn) do
+  defp respond_generic({:ok, result}, conn, opts) do
     body =
       case result do
         %{__struct__: _} = struct when is_struct(struct) ->
@@ -511,11 +526,11 @@ defmodule AshHateoas.Hydra.Plug do
           %{"@type" => "Result", "schema:result" => encodable(other)}
       end
 
-    send_json(conn, 200, Map.put(body, "@context", Context.context()))
+    send_json(conn, 200, Map.put(body, "@context", document_context(conn, opts)))
   end
 
-  defp respond_generic(:ok, conn), do: send_json(conn, 200, %{"@type" => "Result"})
-  defp respond_generic({:error, error}, conn), do: send_ash_error(conn, error)
+  defp respond_generic(:ok, conn, _opts), do: send_json(conn, 200, %{"@type" => "Result"})
+  defp respond_generic({:error, error}, conn, _opts), do: send_ash_error(conn, error)
 
   # ── Node building ─────────────────────────────────────────────────────────
 
@@ -915,6 +930,43 @@ defmodule AshHateoas.Hydra.Plug do
 
   # The full prefix for a rendered href: the public base plus any mount prefix.
   defp href_prefix(opts), do: base_url(opts) <> prefix(opts)
+
+  # What a relative `@id` resolves against, declared as `@base` on every emitted
+  # document.
+  #
+  # With `base_url` configured the hrefs are already absolute and `@base` is
+  # inert — it applies only to relative IRIs. Without it they are relative, and a
+  # JSON-LD processor resolves them against the document's location; for a
+  # document parsed from a string that is the last remote context loaded, so
+  # `/articles/1` became `http://www.w3.org/articles/1`. The request states the
+  # true origin, so it is used when nothing else says otherwise.
+  defp document_base(conn, opts) do
+    case base_url(opts) do
+      "" -> request_origin(conn)
+      url -> url
+    end
+  end
+
+  defp request_origin(%Plug.Conn{} = conn) do
+    case conn.host do
+      nil -> nil
+      "" -> nil
+      host -> "#{conn.scheme}://#{host}#{origin_port(conn)}"
+    end
+  end
+
+  defp origin_port(%{scheme: :http, port: 80}), do: ""
+  defp origin_port(%{scheme: :https, port: 443}), do: ""
+  defp origin_port(%{port: port}) when is_integer(port), do: ":#{port}"
+  defp origin_port(_conn), do: ""
+
+  # A document's `@context`, with the base every relative `@id` in it resolves
+  # against. Every send site goes through here so none can drift — an `@id` is
+  # only as good as the base it resolves under.
+  defp document_context(conn, opts), do: Context.put_base(Context.context(), document_base(conn, opts))
+
+  defp document_context(conn, opts, resource),
+    do: Context.put_base(Context.context_for(resource), document_base(conn, opts))
 
   defp doc_segments(opts) do
     opts[:doc_path] |> String.split("/", trim: true)
