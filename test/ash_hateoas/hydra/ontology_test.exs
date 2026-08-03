@@ -2,16 +2,20 @@ defmodule AshHateoas.Hydra.OntologyTest do
   @moduledoc """
   The `@included` block declares the vocabulary the documentation references.
 
-  These assertions are on the emitted JSON. The stronger checks — that the
-  document expands to the triples intended, that the round-trip is idempotent,
-  and that a DL reasoner loads it without an unsatisfiable class — need a
-  JSON-LD 1.1 processor and an OWL reasoner, neither of which is a dependency
-  here; they are recorded in `documentation/hydra-conformance-notes.md`.
+  Most assertions here read the emitted JSON, which is the convenient way to say
+  "this node declares that superclass". The last section does **not**: it expands
+  the document with a real processor (`AshHateoas.Test.JsonLd`), because a whole
+  class of defect is invisible to the first kind and has shipped twice.
+
+  A DL reasoner is still not a dependency, so "loads without an unsatisfiable
+  class" remains recorded in `documentation/hydra-conformance-notes.md` rather
+  than asserted.
   """
 
   use ExUnit.Case, async: true
 
   alias AshHateoas.Hydra.ApiDocumentation
+  alias AshHateoas.Test.JsonLd
 
   @vocab "https://ash-hateoas.org/vocab#"
 
@@ -339,4 +343,100 @@ defmodule AshHateoas.Hydra.OntologyTest do
       end
     end
   end
+
+  describe "the ontology survives a real processor" do
+    # Everything above reads the JSON. These read the graph, and the difference
+    # is not academic: the two defects this package has shipped in this area —
+    # four malformed `@context` term definitions, and record nodes binding no
+    # terms — were both invisible to key-based assertions and both obvious after
+    # one expansion.
+
+    test "the document expands" do
+      # The whole-document check the malformed term definitions failed for the
+      # entire life of the package, while every assertion above passed.
+      assert [_ | _] = JsonLd.expand(document())
+    end
+
+    test "expanding is idempotent" do
+      # Catches `@list` coercion errors: a bare array where an `rdf:List` is
+      # required expands to different, wrong triples — independent
+      # `rdf:first`/`rdf:rest` statements instead of a chain. `owl:unionOf` and
+      # `sh:in` both depend on this.
+      once = JsonLd.expand(document())
+
+      assert JsonLd.expand(%{"@context" => document()["@context"], "@graph" => once}) == once
+    end
+
+    test "every declared class really is typed owl:Class in the graph" do
+      # The assertion above reads `"@type" => ["owl:Class", "hydra:Class"]` from
+      # the JSON. That is a *string* until a processor resolves the `owl:`
+      # prefix — and an unbound prefix is dropped in silence, taking the entire
+      # OWL layer with it while the JSON still reads correctly.
+      types =
+        document()
+        |> JsonLd.nodes()
+        |> Enum.filter(&(&1["@id"] == "#{@vocab}Recipe"))
+        |> Enum.flat_map(&List.wrap(&1["@type"]))
+
+      assert "http://www.w3.org/2002/07/owl#Class" in types
+      assert "http://www.w3.org/ns/hydra/core#Class" in types
+    end
+
+    test "a declared property carries a resolved domain and range" do
+      # The JSON says `"rdfs:range" => %{"@id" => "xsd:string"}`. Both of those
+      # are *strings* until a processor resolves the prefixes — and an unbound
+      # prefix is dropped in silence, so this is what proves the declaration
+      # became a triple rather than merely reading like one.
+      # The same IRI also appears as a bare `{"@id"}` reference wherever the
+      # property is *used* — that is the point of declaring it once. Take the
+      # node that carries the declaration.
+      property =
+        document()
+        |> JsonLd.nodes()
+        |> Enum.find(&(&1["@id"] == "#{@vocab}recipe/title" and map_size(&1) > 1))
+
+      assert JsonLd.values(property, "http://www.w3.org/2000/01/rdf-schema#domain") ==
+               ["#{@vocab}Recipe"]
+
+      assert JsonLd.values(property, "http://www.w3.org/2000/01/rdf-schema#range") ==
+               ["http://www.w3.org/2001/XMLSchema#string"]
+    end
+
+    test "no CLASS property the documentation references is undeclared" do
+      # The dangling-IRI check, made on the graph rather than the JSON: it is
+      # what proves the declarations actually became triples.
+      #
+      # Scoped to `supportedClass` deliberately. An operation's **input**
+      # properties are minted under our vocab and declared nowhere, and that is
+      # the standing decision from the ontology work: an argument is not a
+      # property of any class — `approve` takes a `note`, a Document does not
+      # *have* one — so there is nothing true to declare about it. Those keep
+      # their `sh:datatype` for exactly this reason. Measured: every undeclared
+      # property IRI in the document sits under `hydra:expects`.
+      nodes = JsonLd.nodes(document())
+
+      declared =
+        nodes
+        |> Enum.filter(&(&1["@id"] && String.starts_with?(&1["@id"], @vocab) && &1["@type"]))
+        |> MapSet.new(& &1["@id"])
+
+      referenced =
+        document()
+        |> Map.get("hydra:supportedClass")
+        |> List.wrap()
+        |> Enum.flat_map(&List.wrap(&1["hydra:supportedProperty"]))
+        |> Enum.map(&get_in(&1, ["hydra:property", "@id"]))
+        |> Enum.filter(&(is_binary(&1) and String.starts_with?(&1, @vocab)))
+        |> MapSet.new()
+
+      assert MapSet.size(referenced) > 0, "found no class properties to check"
+
+      dangling = MapSet.difference(referenced, declared)
+
+      assert MapSet.size(dangling) == 0,
+             "referenced by a supportedClass but never declared: #{inspect(MapSet.to_list(dangling))}"
+    end
+  end
+
+  defp document, do: ApiDocumentation.build([AshHateoas.Test.Domain])
 end
