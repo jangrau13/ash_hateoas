@@ -225,10 +225,35 @@ defmodule AshHateoas.Hydra.Renderer do
     Map.put(op, "hydra:returns", %{"@id" => "owl:Nothing"})
   end
 
-  defp put_returns(op, %Affordance{} = _affordance, opts) do
-    case Keyword.get(opts, :type) do
-      nil -> op
-      type -> Map.put(op, "hydra:returns", %{"@id" => Context.class_iri(type)})
+  defp put_returns(op, %Affordance{} = affordance, opts) do
+    cond do
+      # A document action returns a verdict, not the resource. Naming the
+      # resource's class here was simply wrong: a validate writes nothing and
+      # has no record to give back, and a save reports failures the same way
+      # rather than returning an aggregate it did not write. Both consumers
+      # hardcode the envelope's shape today because the wire never stated it.
+      document_action?(affordance, opts) ->
+        Map.put(op, "hydra:returns", %{"@id" => Context.vocab_iri("ValidationReport")})
+
+      true ->
+        case Keyword.get(opts, :type) do
+          nil -> op
+          type -> Map.put(op, "hydra:returns", %{"@id" => Context.class_iri(type)})
+        end
+    end
+  end
+
+  # Read from the action's *declared role*, never from its name. `validate` and
+  # `save` are the names this package happens to generate; a domain may rename
+  # either, and a client is told what an operation is for by the type on its
+  # `schema:potentialAction`. So the same statement that tells a client decides
+  # this, and a hand-written action carrying the role is treated identically.
+  @document_roles ["https://schema.org/CheckAction", "SaveAction"]
+
+  defp document_action?(%Affordance{name: name}, opts) do
+    case Keyword.get(opts, :semantic_actions, %{})[name] do
+      iri when is_binary(iri) -> Enum.any?(@document_roles, &String.ends_with?(iri, &1))
+      _ -> false
     end
   end
 

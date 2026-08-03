@@ -45,10 +45,96 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
     %{
       "@context" => Context.context(),
       "@type" => "ApiDocumentation",
-      "hydra:supportedClass" => classes
+      "hydra:supportedClass" => classes ++ validation_report(classes)
     }
     |> put_unless_nil("@id", Keyword.get(opts, :id))
     |> put_unless_nil("hydra:entrypoint", Keyword.get(opts, :entrypoint))
+  end
+
+  # The class a document action returns, described rather than merely named.
+  #
+  # Not derived from a resource, because it is not one: it has no table, no
+  # identity and no routes — it is the shape of a response. But naming a class
+  # in `hydra:returns` and describing it nowhere is the same defect this
+  # documentation has for properties, so it is described here.
+  #
+  # Emitted only when something returns it. A domain with no document action has
+  # no use for the term, and a class nothing references is noise.
+  defp validation_report(classes) do
+    if Enum.any?(classes, &returns_report?/1) do
+      [
+        %{
+          "@id" => Context.vocab_iri("ValidationReport"),
+          "@type" => "Class",
+          "hydra:title" => "ValidationReport",
+          "hydra:description" =>
+            "The result of checking a document: whether it is valid, and one entry per problem found.",
+          "hydra:supportedProperty" => [
+            report_property("valid?", "validationReport", "xsd:boolean", nil, [
+              "Whether the document passed every check."
+            ]),
+            # `sh:class` names the member class, the same term a link property
+            # uses for its target. `rdfs:range` alone would say "an array" and
+            # stop there, leaving the entry shape to be read from prose — which
+            # is the defect this documentation exists to remove, one level down.
+            report_property(
+              "errors",
+              "validationReport",
+              "jsonschema:ArraySchema",
+              Context.vocab_iri("ValidationError"),
+              ["One entry per problem. Empty when valid."]
+            )
+          ]
+        },
+        %{
+          "@id" => Context.vocab_iri("ValidationError"),
+          "@type" => "Class",
+          "hydra:title" => "ValidationError",
+          "hydra:description" => "One problem found in a document.",
+          "hydra:supportedProperty" => [
+            report_property("index", "validationError", "xsd:integer", nil, [
+              "Position of the offending element in the submitted document. ",
+              "Null for a problem belonging to the document as a whole."
+            ]),
+            report_property("kind", "validationError", "xsd:string", nil, [
+              "The element's declared kind, as submitted. Null when it named none."
+            ]),
+            report_property("name", "validationError", "xsd:string", nil, [
+              "The element's name, so a client can locate it when positions have shifted."
+            ]),
+            report_property("field", "validationError", "xsd:string", nil, [
+              "The property the problem concerns. Null for a problem belonging to ",
+              "the whole element."
+            ]),
+            report_property("message", "validationError", "xsd:string", nil, [
+              "A human-readable description of the problem. Always present."
+            ])
+          ]
+        }
+      ]
+    else
+      []
+    end
+  end
+
+  defp returns_report?(class) do
+    class
+    |> Map.get("hydra:supportedOperation", [])
+    |> List.wrap()
+    |> Enum.any?(&(get_in(&1, ["hydra:returns", "@id"]) == Context.vocab_iri("ValidationReport")))
+  end
+
+  defp report_property(name, owner, range, member_class, description) do
+    %{
+      "@type" => "SupportedProperty",
+      "hydra:property" => %{"@id" => Context.property_iri(owner, name)},
+      "hydra:title" => name,
+      "hydra:description" => Enum.join(description),
+      "hydra:readable" => true,
+      "hydra:writeable" => false,
+      "rdfs:range" => %{"@id" => range}
+    }
+    |> put_unless_nil("sh:class", member_class && %{"@id" => member_class})
   end
 
   # A resource yields its own `vocab#` class, and — when it declares a well-known

@@ -297,6 +297,94 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     end
   end
 
+  describe "a document action returns a verdict, not the resource" do
+    defp recipe_returns(action) do
+      recipe_operation(action)["hydra:returns"]["@id"]
+    end
+
+    defp report_class do
+      [AshHateoas.Test.Domain]
+      |> ApiDocumentation.build()
+      |> Map.get("hydra:supportedClass")
+      |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#ValidationReport"))
+    end
+
+    test "validate and save return a ValidationReport" do
+      # They return `%{"valid?" => …, "errors" => […]}`. Naming the resource's
+      # own class was wrong twice: a validate writes nothing and has no record
+      # to give back, and a save reports failures the same way rather than
+      # returning an aggregate it did not write.
+      assert recipe_returns("validate") == "https://ash-hateoas.org/vocab#ValidationReport"
+      assert recipe_returns("save") == "https://ash-hateoas.org/vocab#ValidationReport"
+    end
+
+    test "an ordinary action still returns the resource's class" do
+      assert recipe_returns("create") == "https://ash-hateoas.org/vocab#Recipe"
+      assert recipe_returns("update") == "https://ash-hateoas.org/vocab#Recipe"
+      assert recipe_returns("cook") == "https://ash-hateoas.org/vocab#Recipe"
+    end
+
+    test "the class it names is described, not merely referenced" do
+      # The defect this whole part exists to remove: an IRI that is referenced
+      # and never declared. Naming a return class the document does not describe
+      # would repeat it.
+      report = report_class()
+
+      assert report
+      assert report["@type"] == "Class"
+
+      titles = Enum.map(report["hydra:supportedProperty"], & &1["hydra:title"])
+      assert Enum.sort(titles) == ["errors", "valid?"]
+    end
+
+    test "its properties carry ranges, so a client need not guess" do
+      report = report_class()
+
+      ranges =
+        Map.new(report["hydra:supportedProperty"], fn property ->
+          {property["hydra:title"], property["rdfs:range"]["@id"]}
+        end)
+
+      assert ranges["valid?"] == "xsd:boolean"
+      assert ranges["errors"] == "jsonschema:ArraySchema"
+    end
+
+    test "a domain with no document action does not carry the term" do
+      # A class nothing references is noise, so the term is emitted only where
+      # something returns it. `SilentDomain` carries no DslRoot.
+      classes =
+        [AshHateoas.Test.SilentDomain]
+        |> ApiDocumentation.build()
+        |> Map.get("hydra:supportedClass")
+        |> Enum.map(& &1["@id"])
+
+      refute "https://ash-hateoas.org/vocab#ValidationReport" in classes
+    end
+
+    test "the error entry is described too" do
+      # `rdfs:range` alone says "an array" and stops. Without this, the entry
+      # shape lives only in prose — which is what a client would then hardcode.
+      error =
+        [AshHateoas.Test.Domain]
+        |> ApiDocumentation.build()
+        |> Map.get("hydra:supportedClass")
+        |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#ValidationError"))
+
+      assert error
+
+      titles = Enum.map(error["hydra:supportedProperty"], & &1["hydra:title"])
+      assert Enum.sort(titles) == ["field", "index", "kind", "message", "name"]
+    end
+
+    test "errors names its member class, not merely 'an array'" do
+      errors =
+        report_class()["hydra:supportedProperty"]
+        |> Enum.find(&(&1["hydra:title"] == "errors"))
+
+      assert errors["sh:class"]["@id"] == "https://ash-hateoas.org/vocab#ValidationError"
+    end
+  end
+
   describe "a document names the classes it holds" do
     defp document_property(action) do
       [AshHateoas.Test.Domain]

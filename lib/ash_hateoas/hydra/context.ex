@@ -86,6 +86,15 @@ defmodule AshHateoas.Hydra.Context do
         # that is shared.
         "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}},
         "ah:RunAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:Action"}},
+        # What a document action gives back: a verdict and, when it is negative,
+        # one entry per problem. It is not the resource — a validate writes
+        # nothing and has no record to return, and a save reports failures the
+        # same way rather than returning the aggregate it did not write.
+        #
+        # Declared because the alternative is a client hardcoding the shape from
+        # having read the source, which is what both consumers do today.
+        "ah:ValidationReport" => %{"rdfs:subClassOf" => %{"@id" => "hydra:Resource"}},
+        "ah:ValidationError" => %{"rdfs:subClassOf" => %{"@id" => "hydra:Resource"}},
         "rdfs" => "http://www.w3.org/2000/01/rdf-schema#"
       }
       |> put_semantic_vocab()
