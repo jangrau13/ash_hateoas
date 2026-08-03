@@ -676,4 +676,83 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     doc = ApiDocumentation.build([AshHateoas.Test.Domain], entrypoint: "/api")
     assert {:ok, _} = Jason.encode(doc)
   end
+
+  describe "every IriTemplate names a URL a client can build" do
+    # An `IriTemplate` exists to say *which URL to construct*. Every one the
+    # documentation emitted said only how to spell the query string — the
+    # operations are built from the route table, and the route was not passed
+    # to the descriptor, so `href` was `nil` and the template collapsed to a
+    # bare `{?label}`.
+    #
+    # The unit tests could not catch it: they hand the renderer an affordance
+    # with an href already set, which is exactly the input the documentation
+    # was failing to produce. So the assertion belongs here, on the document.
+
+    defp templates do
+      collect = fn collect, node, acc ->
+        cond do
+          is_map(node) ->
+            acc = if node["@type"] == "IriTemplate", do: [node | acc], else: acc
+            Enum.reduce(Map.values(node), acc, &collect.(collect, &1, &2))
+
+          is_list(node) ->
+            Enum.reduce(node, acc, &collect.(collect, &1, &2))
+
+          true ->
+            acc
+        end
+      end
+
+      collect.(collect, ApiDocumentation.build([AshHateoas.Test.Domain]), [])
+    end
+
+    test "the fixture domain emits some, so this asserts on something" do
+      assert templates() != []
+    end
+
+    test "none is a bare query fragment" do
+      bare = for t <- templates(), String.starts_with?(t["hydra:template"], "{"), do: t
+
+      assert bare == [],
+             """
+             a template with no path expands to a query string alone:
+
+             #{Enum.map_join(bare, "\n", &"  #{&1["hydra:template"]}")}
+             """
+    end
+
+    test "none leaves a router placeholder in the path" do
+      # `:id` is Plug's spelling. A client expanding this gets a literal `:id`
+      # in the URL — confirmed against a URI Template expander.
+      leaked = for t <- templates(), String.contains?(t["hydra:template"], ":"), do: t
+
+      assert leaked == [],
+             """
+             a router placeholder survived into a template:
+
+             #{Enum.map_join(leaked, "\n", &"  #{&1["hydra:template"]}")}
+             """
+    end
+
+    test "every variable in a template is described in its mapping" do
+      # A variable the mapping does not name leaves a client to guess what goes
+      # there — which is the one thing the template exists to prevent.
+      for template <- templates() do
+        declared = MapSet.new(template["hydra:mapping"], & &1["hydra:variable"])
+
+        used =
+          ~r/\{[?&]?([a-zA-Z_][a-zA-Z0-9_,]*)\}/
+          |> Regex.scan(template["hydra:template"], capture: :all_but_first)
+          |> List.flatten()
+          |> Enum.flat_map(&String.split(&1, ","))
+          |> MapSet.new()
+
+        undescribed = MapSet.difference(used, declared)
+
+        assert MapSet.size(undescribed) == 0,
+               "#{template["hydra:template"]} uses #{inspect(MapSet.to_list(undescribed))}, " <>
+                 "which its mapping does not describe"
+      end
+    end
+  end
 end

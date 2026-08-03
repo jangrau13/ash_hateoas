@@ -303,6 +303,50 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert mapping["hydra:variable"] == "query"
       assert mapping["hydra:required"] == true
     end
+
+    test "a router placeholder becomes a template variable" do
+      # `:id` is Plug's spelling; RFC 6570 wants `{id}`. Left as-is, a client
+      # expanding the template gets a URL with a literal `:id` in the path —
+      # verified against a URI Template expander, which happily produces
+      # `/documents/:id/related?query=q`.
+      #
+      # This only arises in the ApiDocumentation, which describes a *class*. On
+      # a served node the affordance was built for one record, so the
+      # placeholder is already substituted with that record's id.
+      affordance = %Affordance{
+        name: :related,
+        href: "/documents/:id/related",
+        method: :get,
+        fields: [%Field{name: :query, type: "string", allow_nil?: false}]
+      }
+
+      template = Renderer.operation(affordance, type: "document")["hydra:expects"]
+
+      assert template["hydra:template"] == "/documents/{id}/related{?query}"
+      refute template["hydra:template"] =~ ":id"
+    end
+
+    test "a path variable is described in the mapping, like a query one" do
+      # A template naming a variable the document never describes leaves a
+      # client to guess what to put there. Required, always: a path segment
+      # cannot be omitted the way a query parameter can.
+      affordance = %Affordance{
+        name: :related,
+        href: "/documents/:id/related",
+        method: :get,
+        fields: [%Field{name: :query, type: "string", allow_nil?: false}]
+      }
+
+      template = Renderer.operation(affordance, type: "document")["hydra:expects"]
+      variables = Enum.map(template["hydra:mapping"], & &1["hydra:variable"])
+
+      assert "id" in variables
+      assert "query" in variables
+
+      id_mapping = Enum.find(template["hydra:mapping"], &(&1["hydra:variable"] == "id"))
+      assert id_mapping["hydra:required"] == true
+      assert id_mapping["hydra:property"]["@id"] =~ "document/id"
+    end
   end
 
   describe "operation placement (href vs node @id)" do

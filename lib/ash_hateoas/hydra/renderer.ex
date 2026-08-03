@@ -289,10 +289,20 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_sh_in(field.constraints)
   end
 
-  @doc "Render a query/search read's fields as a `hydra:IriTemplate`."
+  @doc """
+  Render a query/search read's fields as a `hydra:IriTemplate`.
+
+  The template's whole job is to tell a client the URL to build, so a path
+  segment still holding a router placeholder would defeat it: `:id` is Plug's
+  spelling, not RFC 6570's. On a served node the placeholder is already
+  substituted with the record's own id, since the affordance was built for that
+  record; in the ApiDocumentation, which describes a class rather than an
+  instance, it survives — and becomes `{id}`, a variable the client supplies
+  like any other.
+  """
   @spec iri_template(Affordance.t(), keyword()) :: map()
   def iri_template(%Affordance{} = affordance, opts) do
-    href = href(affordance, opts) || ""
+    href = affordance |> href(opts) |> Kernel.||("") |> path_variables()
     variables = Enum.map(affordance.fields, &to_string(&1.name))
     type = Keyword.get(opts, :type)
 
@@ -300,8 +310,32 @@ defmodule AshHateoas.Hydra.Renderer do
       "@type" => "IriTemplate",
       "hydra:template" => href <> template_suffix(variables),
       "hydra:variableRepresentation" => "BasicRepresentation",
-      "hydra:mapping" => Enum.map(affordance.fields, &iri_template_mapping(&1, type))
+      "hydra:mapping" =>
+        Enum.map(affordance.fields, &iri_template_mapping(&1, type)) ++
+          path_mappings(href, type)
     }
+  end
+
+  # `/multi_read/:id/by_id` → `/multi_read/{id}/by_id`.
+  defp path_variables(href), do: Regex.replace(~r/:([a-zA-Z_][a-zA-Z0-9_]*)/, href, "{\\1}")
+
+  # A path variable is a variable the client must supply, so it belongs in the
+  # mapping beside the query ones — otherwise the template names something the
+  # document never describes. Always required: a path segment cannot be omitted
+  # the way a query parameter can.
+  defp path_mappings(template, type) do
+    ~r/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/
+    |> Regex.scan(template, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.map(fn name ->
+      %{
+        "@type" => "IriTemplateMapping",
+        "hydra:variable" => name,
+        "hydra:property" => property_ref(%Field{name: name}, type),
+        "hydra:required" => true
+      }
+    end)
   end
 
   @doc "Render one field as a `hydra:IriTemplateMapping`."

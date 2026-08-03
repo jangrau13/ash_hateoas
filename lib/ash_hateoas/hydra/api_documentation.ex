@@ -408,7 +408,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         "ah:action" => to_string(route.action)
       }
       |> put_unless_nil("hydra:title", action && Map.get(action, :description))
-      |> put_shape(action, resource, type)
+      |> put_shape(action, resource, type, route)
       |> put_possible_status(route, action, resource)
     end)
   end
@@ -455,11 +455,20 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
 
   # Reuse the renderer's `expects`/`returns` derivation so the documentation
   # catalogue and the live per-node operations describe input/output identically.
-  defp put_shape(op, nil, _resource, _type), do: op
+  defp put_shape(op, nil, _resource, _type, _route), do: op
 
-  defp put_shape(op, action, resource, type) do
+  defp put_shape(op, action, resource, type, route) do
+    # The route is passed, not `nil`, and that is what gives a query read a
+    # usable `hydra:template`.
+    #
+    # A GET with arguments renders as a `hydra:IriTemplate`, whose whole purpose
+    # is to tell a client the URL to build. Without the route, `href/2` had
+    # nothing to work from and every template came out as a bare query
+    # fragment — `{?label}` rather than `/domain/read_failure/invalid{?label}`.
+    # A client expanding that gets `?label=x` with no path at all, so the one
+    # thing an IriTemplate exists to say was the one thing missing.
     rendered =
-      AshHateoas.Descriptor.build(action, nil, resource)
+      AshHateoas.Descriptor.build(action, route, resource)
       |> Renderer.operation(
         type: type,
         semantic_actions: AshHateoas.Resource.Info.semantic_actions(resource)
