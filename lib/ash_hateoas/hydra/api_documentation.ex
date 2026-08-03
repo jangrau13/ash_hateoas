@@ -42,6 +42,14 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       |> Enum.sort_by(fn {type, _resource} -> type end)
       |> Enum.flat_map(fn {type, resource} -> supported_classes(resource, type) end)
 
+    report = validation_report(classes)
+
+    # The report classes derive from no resource, so the ontology's own walk
+    # never reaches their properties. They are declared alongside the classes
+    # they belong to — together or not at all.
+    report_declarations =
+      if report == [], do: [], else: Ontology.report_properties()
+
     %{
       "@context" => Context.context(),
       "@type" => "ApiDocumentation",
@@ -49,8 +57,8 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       # it. `@included` puts these node objects' triples in the default graph
       # while asserting nothing about the ApiDocumentation itself, so one fetch
       # gets both the affordances and the ontology behind them.
-      "@included" => Ontology.build(domains),
-      "hydra:supportedClass" => classes ++ validation_report(classes)
+      "@included" => Ontology.build(domains) ++ report_declarations,
+      "hydra:supportedClass" => classes ++ report
     }
     |> put_unless_nil("@id", Keyword.get(opts, :id))
     |> put_unless_nil("hydra:entrypoint", Keyword.get(opts, :entrypoint))

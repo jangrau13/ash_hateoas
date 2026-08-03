@@ -63,6 +63,30 @@ defmodule AshHateoas.Hydra.Ontology do
   ontology that defines it. `owl:imports` is also wrong, since it requires a
   separately dereferenceable document and would cost the one-fetch property.
 
+  ## What is deliberately *not* declared
+
+  An operation's input fields. A write's `hydra:expects` is a `hydra:Class` per
+  action (`…#Document/approveInput`) whose supported properties are the
+  action's *arguments* — `note`, `notify`, `signing_key`. Those IRIs are
+  referenced and not declared here, and that is the intended state:
+
+    * An argument is not a property of any class. `approve` takes a `note`; a
+      Document does not *have* a note. Declaring `…#document/note` with
+      `rdfs:domain …#Document` would assert exactly the thing that is false,
+      and under rdfs3 a reasoner would then type every value it saw.
+    * The input class is per-action and exists only to describe one call, so
+      there is no persistent class for such a property to belong to.
+
+  So the input shape stays self-contained, carrying its own type information at
+  the usage site. The rule this module follows is narrower than "declare every
+  IRI": declare every property that is a property *of a class*.
+
+  One known wrinkle, not yet resolved: an argument that happens to name an
+  attribute with a `semantic_property` mapping gets the unmapped
+  `…#person/additional_name` on the input class, where the class property
+  correctly emits `schema:additionalName`. The two paths should agree, and the
+  input path is the one that is wrong.
+
   > #### Verifying this output {: .warning}
   >
   > `@included` is JSON-LD **1.1**. The OWL API (and therefore `robot`) ships a
@@ -181,27 +205,6 @@ defmodule AshHateoas.Hydra.Ontology do
         "rdfs:subClassOf" => %{"@id" => "schema:Action"},
         "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
       },
-      # What a document action gives back: a verdict and, when it is negative,
-      # one entry per problem. It is not the resource — a validate writes
-      # nothing and has no record to return, and a save reports failures the
-      # same way rather than returning the aggregate it did not write.
-      #
-      # Declared because the alternative is a client hardcoding the shape from
-      # having read the source, which is what both consumers did.
-      %{
-        "@id" => "ah:ValidationReport",
-        "@type" => ["owl:Class", "hydra:Class"],
-        "rdfs:subClassOf" => %{"@id" => "hydra:Resource"},
-        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
-      },
-      %{
-        "@id" => "ah:ValidationError",
-        "@type" => ["owl:Class", "hydra:Class"],
-        "rdfs:subClassOf" => %{"@id" => "hydra:Resource"},
-        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
-      },
-      # `hydra:Resource` is the superclass those two name, and OWL 2 §5.8.2 wants
-      # every IRI in an axiom declared.
       %{"@id" => "hydra:Resource", "@type" => "owl:Class"}
     ]
   end
@@ -363,6 +366,72 @@ defmodule AshHateoas.Hydra.Ontology do
     else
       _ -> nil
     end
+  end
+
+  @doc """
+  Declarations for the two report classes and their properties.
+
+  `ValidationReport` and `ValidationError` describe what a document action gives
+  back: a verdict and, when it is negative, one entry per problem. Not the
+  resource — a validate writes nothing and has no record to return, and a save
+  reports failures the same way rather than returning the aggregate it did not
+  write. They are declared because the alternative is a client hardcoding the
+  shape from having read the source, which is what both consumers did.
+
+  They derive from no resource — no table, no identity, no routes — so the
+  resource walk above reaches neither them nor their properties.
+
+  Called by `AshHateoas.Hydra.ApiDocumentation` only when something actually
+  returns a report. A class nothing references is noise, and so are its
+  properties, so the whole group appears together or not at all.
+  """
+  @spec report_properties() :: [map()]
+  def report_properties do
+    report = Context.vocab_iri("ValidationReport")
+    error = Context.vocab_iri("ValidationError")
+
+    [
+      %{
+        "@id" => "ah:ValidationReport",
+        "@type" => ["owl:Class", "hydra:Class"],
+        "rdfs:subClassOf" => %{"@id" => "hydra:Resource"},
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      },
+      %{
+        "@id" => "ah:ValidationError",
+        "@type" => ["owl:Class", "hydra:Class"],
+        "rdfs:subClassOf" => %{"@id" => "hydra:Resource"},
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      },
+      datatype_property("validationReport", "valid?", report, "xsd:boolean"),
+      # An array of report entries. `rdfs:range` names the container, and
+      # `sh:class` names what goes in it — the member class is not something
+      # `rdfs:range` can express here, since the property's values are arrays
+      # rather than errors.
+      %{
+        "@id" => Context.property_iri("validationReport", "errors"),
+        "@type" => "owl:ObjectProperty",
+        "rdfs:domain" => %{"@id" => report},
+        "rdfs:range" => %{"@id" => "jsonschema:ArraySchema"},
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      },
+      datatype_property("validationError", "index", error, "xsd:integer"),
+      datatype_property("validationError", "kind", error, "xsd:string"),
+      datatype_property("validationError", "name", error, "xsd:string"),
+      datatype_property("validationError", "field", error, "xsd:string"),
+      datatype_property("validationError", "message", error, "xsd:string")
+    ]
+  end
+
+  defp datatype_property(owner, name, domain, range) do
+    %{
+      "@id" => Context.property_iri(owner, name),
+      "@type" => "owl:DatatypeProperty",
+      "rdfs:domain" => %{"@id" => domain},
+      "rdfs:range" => %{"@id" => range},
+      "rdfs:label" => name,
+      "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+    }
   end
 
   @doc """
