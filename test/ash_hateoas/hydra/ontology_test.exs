@@ -200,6 +200,62 @@ defmodule AshHateoas.Hydra.OntologyTest do
     end
   end
 
+  describe "the ah: vocabulary stays small" do
+    test "every ah: term emitted is one of a known, declared few" do
+      # A minted term is a maintenance debt: it must be declared, documented and
+      # understood by every consumer. The whole point of this stage is that 88
+      # IRIs accumulated because nothing counted them. This is the counter.
+      #
+      # Adding a term is allowed — extending this list is the deliberate act
+      # that makes it so. Silently growing the vocabulary is not.
+      known = ~w(
+        ah:action
+        ah:targetKind
+        ah:identity
+        ah:SaveAction
+        ah:RunAction
+        ah:ValidationReport
+        ah:ValidationError
+      )
+
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      found = doc |> ah_terms() |> Enum.sort() |> Enum.uniq()
+
+      assert found -- known == [],
+             "undeclared ah: terms reached the wire: #{inspect(found -- known)}"
+    end
+
+    test "every ah: term used is declared in the ontology" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      declared_ids = MapSet.new(doc["@included"], & &1["@id"])
+
+      undeclared =
+        doc
+        |> ah_terms()
+        |> Enum.uniq()
+        |> Enum.reject(&MapSet.member?(declared_ids, &1))
+
+      assert undeclared == [], "ah: terms used but not declared: #{inspect(undeclared)}"
+    end
+
+    # Every `ah:`-prefixed key, plus every `ah:`-prefixed value (a term used as
+    # a `@type` or an `@id` rather than as a key).
+    defp ah_terms(node) when is_map(node) do
+      Enum.flat_map(node, fn {key, value} ->
+        prefixed(key) ++ prefixed(value) ++ ah_terms(value)
+      end)
+    end
+
+    defp ah_terms(list) when is_list(list), do: Enum.flat_map(list, &ah_terms/1)
+    defp ah_terms(_other), do: []
+
+    defp prefixed(value) when is_binary(value) do
+      if String.starts_with?(value, "ah:"), do: [value], else: []
+    end
+
+    defp prefixed(_value), do: []
+  end
+
   describe "the context carries no axioms" do
     test "no ah: term is defined with an rdfs: predicate" do
       # A `@context` maps terms to IRIs, and its object form admits JSON-LD

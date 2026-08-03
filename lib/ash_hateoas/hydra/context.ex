@@ -141,8 +141,8 @@ defmodule AshHateoas.Hydra.Context do
   @doc """
   The vocabulary IRI for a term (`"ah:…"` expands to the vocab namespace).
 
-      iex> AshHateoas.Hydra.Context.vocab_iri("multiStep")
-      "https://ash-hateoas.org/vocab#multiStep"
+      iex> AshHateoas.Hydra.Context.vocab_iri("ValidationReport")
+      "https://ash-hateoas.org/vocab#ValidationReport"
   """
   @spec vocab_iri(atom() | String.t()) :: String.t()
   def vocab_iri(segment), do: @vocab <> to_string(segment)
