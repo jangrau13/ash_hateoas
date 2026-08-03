@@ -120,11 +120,14 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert op["schema:potentialAction"]["@type"] == "https://schema.org/ConfirmAction"
     end
 
-    test "a destroy returns owl:Nothing" do
+    test "a destroy returns the record it destroyed" do
       destroy = %Affordance{name: :destroy, href: "/documents/:id", method: :delete, fields: []}
       op = Renderer.operation(destroy, type: "document")
 
-      assert op["hydra:returns"] == %{"@id" => "owl:Nothing"}
+      # Not `owl:Nothing`. The plug asks Ash for the destroyed record
+      # (`return_destroyed?: true`) and renders its final state, so a client can
+      # show what it deleted without having fetched it first.
+      assert op["hydra:returns"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
     end
 
     test "without a resource type, expects has no @id and returns is omitted" do

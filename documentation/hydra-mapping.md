@@ -11,7 +11,7 @@ node offers — knowing nothing about Ash or this package.
 
 | Backbone output | Hydra / JSON-LD |
 |---|---|
-| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class, or `owl:Nothing` for a destroy) — plus a `schema:potentialAction` (see below) |
+| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class — including a destroy, which returns the record it destroyed) — plus a `schema:potentialAction` (see below) |
 | an operation as a *verb* | `schema:potentialAction` — a schema.org `Action` (subtype inferred from the HTTP method: GET→`ReadAction`, POST→`CreateAction`, PATCH→`UpdateAction`, DELETE→`DeleteAction`; overridable per action with `semantic_action`) with `schema:target` (`urlTemplate`, `httpMethod`, `contentType`). See [semantic-affordances.md](semantic-affordances.md) |
 | the affordance set on a record | the node's `hydra:operation` array (same-URL ops) + one `ah:<action>` link node per named sub-action |
 | a write action's fields | `hydra:expects` → a `hydra:Class` (with its own `@id`) carrying one `hydra:SupportedProperty` per field |

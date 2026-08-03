@@ -218,20 +218,23 @@ defmodule AshHateoas.Hydra.Renderer do
     Map.put(op, "hydra:expects", expected)
   end
 
-  # `hydra:returns` ranges over a Class. A read/create/update returns the
-  # resource's own class; a destroy returns nothing (`owl:Nothing`). Without a
-  # known type we cannot name the class, so we omit it rather than guess.
+  # `hydra:returns` ranges over a Class, and names the resource's own class for
+  # every operation that yields a record — including a **destroy**, which
+  # returns the record it destroyed. Without a known type we cannot name the
+  # class, so we omit it rather than guess.
   #
-  # `owl:Nothing` here is **this package's choice, not Hydra's**. Hydra mentions
-  # OWL nowhere — verified against the vocabulary, `core.jsonld` and the spec
-  # prose, all of which contain the token `Nothing` zero times. It is kept
-  # because it is truthful (the empty class: this returns no thing) and because
-  # `hydra:returns` accepts any `rdfs:Class`, which `owl:Nothing` is. See
-  # `documentation/hydra-conformance-notes.md` §5.
-  defp put_returns(op, %Affordance{method: :delete}, _opts) do
-    Map.put(op, "hydra:returns", %{"@id" => "owl:Nothing"})
-  end
-
+  # A destroy used to declare `owl:Nothing` and send 204 with an empty body.
+  # That was self-consistent but less useful than it could be: a client wanting
+  # to show what it deleted had to GET first and hold the result across the
+  # delete, when Ash offers the record for the asking. It now sends the record's
+  # final state, so the declaration names its class.
+  #
+  # Worth noting what `owl:Nothing` would have meant if kept — it is the *empty
+  # class*, so "an instance of this is returned" is unsatisfiable, which is the
+  # honest reading of "no body". Hydra itself says nothing on the matter: the
+  # token appears zero times in the vocabulary, `core.jsonld` and the spec
+  # prose. It survives only on the `:ok`-with-no-record path, which sends no
+  # body at all. See `documentation/hydra-conformance-notes.md` §5.
   defp put_returns(op, %Affordance{} = affordance, opts) do
     cond do
       # A document action returns a verdict, not the resource. Naming the

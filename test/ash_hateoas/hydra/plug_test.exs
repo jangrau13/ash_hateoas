@@ -437,17 +437,63 @@ defmodule AshHateoas.Hydra.PlugTest do
       refute Map.has_key?(node, "ah:confirm")
     end
 
-    test "DELETE a member destroys it and returns 204" do
+    test "DELETE a member destroys it and returns the record it destroyed" do
       doc =
         Document
         |> Ash.Changeset.for_create(:create, %{title: "Doomed", owner_id: "admin-1"})
         |> Ash.create!(authorize?: false)
 
       conn = request(:delete, "/documents/#{doc.id}", @admin, %{})
-      assert conn.status == 204
+      assert conn.status == 200
+
+      # The record's final state, so a client can show what it deleted without
+      # having fetched it beforehand and held it across the delete.
+      destroyed = Jason.decode!(conn.resp_body)
+      assert destroyed["title"] == "Doomed"
+      assert destroyed["@id"] =~ doc.id
 
       # and it is gone
       assert body(get("/documents/#{doc.id}", @admin))["@type"] == "Error"
+    end
+
+    test "a destroyed record is returned without operations" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Doomed", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      destroyed = Jason.decode!(request(:delete, "/documents/#{doc.id}", @admin, %{}).resp_body)
+
+      # Every affordance on this node would address a record that no longer
+      # exists, so a client following one gets a 404 having been told it was
+      # available. The representation says what the record *was*, not what may
+      # be done to it.
+      refute Map.has_key?(destroyed, "hydra:operation")
+    end
+
+    test "the declared return of a destroy matches what it actually sends" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Doomed", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      conn = request(:delete, "/documents/#{doc.id}", @admin, %{})
+      assert conn.status == 200
+
+      # The two must stay in step. A body carrying the record while the
+      # documentation declared `owl:Nothing` would be the same mismatch stage 1
+      # fixed for validate/save — a client parsing what it was told to expect
+      # and finding something else.
+      operation =
+        body(get("/doc", @admin))["hydra:supportedClass"]
+        |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#Document"))
+        |> Map.fetch!("hydra:supportedOperation")
+        |> Enum.find(&(&1["hydra:method"] == "DELETE"))
+
+      assert operation["hydra:returns"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
+
+      declared = Jason.decode!(conn.resp_body)["@type"]
+      assert "https://ash-hateoas.org/vocab#Document" in List.wrap(declared)
     end
 
     test "an unauthorized write is refused, not performed" do

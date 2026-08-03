@@ -414,9 +414,9 @@ defmodule AshHateoas.Hydra.Plug do
         safe(fn ->
           record
           |> Ash.Changeset.for_destroy(action, input, actor: actor, tenant: tenant)
-          |> Ash.destroy(authorize?: true)
+          |> Ash.destroy(authorize?: true, return_destroyed?: true)
         end)
-        |> respond_destroy(conn)
+        |> respond_destroy(conn, resource, type, actor, tenant, opts)
 
       :update ->
         safe(fn ->
@@ -461,9 +461,43 @@ defmodule AshHateoas.Hydra.Plug do
     send_ash_error(conn, error)
   end
 
-  defp respond_destroy(:ok, conn), do: Plug.Conn.send_resp(conn, 204, "") |> Plug.Conn.halt()
-  defp respond_destroy({:ok, _record}, conn), do: respond_destroy(:ok, conn)
-  defp respond_destroy({:error, error}, conn), do: send_ash_error(conn, error)
+  # A destroy returns the record it destroyed.
+  #
+  # The alternative — 204 with an empty body — makes a client that wants to show
+  # what it deleted issue a GET first and hold the result across the delete.
+  # Ash hands the record back for the asking (`return_destroyed?: true`), so the
+  # information is already there; sending it costs one render.
+  #
+  # **The node carries no operations.** `node/7` would gate and attach the usual
+  # affordances, and every one of them addresses a record that no longer exists
+  # — a client following `update` on this node gets a 404, having been told it
+  # was available. So the representation is the record's final state and nothing
+  # more: what it *was*, not what may be done to it.
+  #
+  # `hydra:returns` names this class rather than `owl:Nothing`, and the two must
+  # stay in step — see `Renderer.put_returns/3`.
+  defp respond_destroy({:ok, record}, conn, resource, type, actor, tenant, opts) do
+    id = record_id(record)
+    node = node(record, type, resource, id, actor, tenant, opts)
+    context = Context.context_for(AshHateoas.Resource.Info.semantic_properties(resource))
+
+    send_json(
+      conn,
+      200,
+      node
+      |> Map.drop(["hydra:operation"])
+      |> Map.put("@context", context)
+    )
+  end
+
+  # A destroy action that yields no record — `return_destroyed?` is honoured by
+  # the data layer, and a custom destroy may not carry one. Nothing to render,
+  # so the empty response is still the truthful one.
+  defp respond_destroy(:ok, conn, _resource, _type, _actor, _tenant, _opts),
+    do: Plug.Conn.send_resp(conn, 204, "") |> Plug.Conn.halt()
+
+  defp respond_destroy({:error, error}, conn, _resource, _type, _actor, _tenant, _opts),
+    do: send_ash_error(conn, error)
 
   # A generic action returns whatever it returns; wrap non-resource results so a
   # client always receives a JSON-LD document.
