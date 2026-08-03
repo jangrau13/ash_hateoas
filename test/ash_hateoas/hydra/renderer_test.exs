@@ -152,8 +152,26 @@ defmodule AshHateoas.Hydra.RendererTest do
           constraints: %{enum: [:public, :private]}
         })
 
-      assert prop["sh:in"] == ["public", "private"]
+      # `@list`, not a bare array. `sh:in` takes an `rdf:List`, and a plain
+      # JSON-LD array is an unordered *set* that expands to one independent
+      # triple per value rather than a `rdf:first`/`rdf:rest` chain — an
+      # ill-formed shape, which SHACL §3.4.2 says a processor SHOULD fail the
+      # whole graph over rather than skip.
+      assert prop["sh:in"] == %{"@list" => ["public", "private"]}
       assert {:ok, _} = Jason.encode(prop)
+    end
+
+    test "an enum's values keep their declared order" do
+      # A consequence of `@list` worth pinning: a set has no order, so a client
+      # rendering a choice would get whatever order the store returned.
+      prop =
+        Renderer.supported_property(%Field{
+          name: :size,
+          type: "string",
+          constraints: %{enum: [:small, :medium, :large]}
+        })
+
+      assert prop["sh:in"]["@list"] == ["small", "medium", "large"]
     end
 
     test "a union field emits schema:rangeIncludes with member type IRIs" do

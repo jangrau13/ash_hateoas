@@ -338,12 +338,33 @@ defmodule AshHateoas.Hydra.Renderer do
   defp put_default(map, {:ok, value}), do: Map.put(map, "sh:defaultValue", encodable(value))
   defp put_default(map, :error), do: map
 
+  # An enum's permitted values, as the `rdf:List` SHACL requires.
+  #
+  # `@list` is not decoration. A bare JSON-LD array has **unordered set**
+  # semantics and expands to one independent triple per value:
+  #
+  #     _:b0 sh:in "g" .        _:b0 sh:in "ml" .       _:b0 sh:in "piece" .
+  #
+  # whereas `sh:in` is defined to take an `rdf:List` — a `rdf:first`/`rdf:rest`
+  # chain ending in `rdf:nil`, which is what `@list` produces. Three loose
+  # statements are not that list, so the shape is **ill-formed**.
+  #
+  # That is not a quiet degradation. SHACL §2.1.1 makes a node carrying a
+  # parameter an *implicitly declared shape*, so these `SupportedProperty` nodes
+  # become shapes whether or not anyone meant them to; and §3.4.2 says a
+  # processor **SHOULD produce a failure** for an ill-formed shapes graph —
+  # failing the run rather than skipping the offending shape, taking
+  # well-formed shapes elsewhere down with it.
+  #
+  # Two smaller gains follow: the values keep their declared order, which a set
+  # does not guarantee, and the enumeration becomes one object a consumer can
+  # follow rather than triples it must gather and hope it found all of.
   defp put_sh_in(map, constraints) when map_size(constraints) == 0, do: map
 
   defp put_sh_in(map, constraints) do
     case constraints[:enum] do
       nil -> map
-      values -> Map.put(map, "sh:in", Enum.map(values, &encodable/1))
+      values -> Map.put(map, "sh:in", %{"@list" => Enum.map(values, &encodable/1)})
     end
   end
 
@@ -366,16 +387,34 @@ defmodule AshHateoas.Hydra.Renderer do
   # An array whose elements are instances of known classes says which, rather
   # than stopping at "an array of something".
   #
-  # `sh:class` is the same term a link property uses to name its target, so a
-  # client that can already follow a link can read this with nothing new — and
-  # the classes it names are described in full elsewhere in the same document.
-  # That is the hypermedia answer to "what goes in here": link to the
-  # description rather than inlining a copy of it that can drift.
+  # The classes are named as links, so a client that can already follow one
+  # reads this with nothing new, and each is described in full elsewhere in the
+  # same document. That is the hypermedia answer to "what goes in here": link to
+  # the description rather than inlining a copy that can drift.
+  #
+  # ## One class states it; several need `sh:or`
+  #
+  # `sh:class` applies to **each value node individually**, and here the value
+  # nodes are the array's elements. So repeating it — which a bare JSON-LD array
+  # does, expanding to one independent triple per class — asserts a
+  # **conjunction**: every element must be a Step *and* an Ingredient *and* a
+  # Technique at once. Nothing satisfies that, so a document that is perfectly
+  # valid fails.
+  #
+  # What is meant is a disjunction: an element is a Step *or* an Ingredient *or*
+  # a Technique. `sh:or` is SHACL's term for it, taking an `rdf:List` of
+  # **shapes** (hence `%{"sh:class" => …}` per member, not a bare IRI) — so the
+  # `@list` coercion is required here for the same reason as on `sh:in`.
+  #
+  # Verified against a SHACL processor rather than reasoned about: an element
+  # typed `Step` fails the bare form, fails `sh:and`, and conforms only under
+  # `sh:or`.
   defp put_type_info(map, %Field{type: "array", constraints: constraints}) do
     map = Map.put(map, "rdfs:range", %{"@id" => "jsonschema:ArraySchema"})
 
     case constraints[:element_classes] do
-      [_ | _] = iris -> Map.put(map, "sh:class", Enum.map(iris, &%{"@id" => &1}))
+      [iri] -> Map.put(map, "sh:class", %{"@id" => iri})
+      [_ | _] = iris -> Map.put(map, "sh:or", %{"@list" => Enum.map(iris, &%{"sh:class" => %{"@id" => &1}})})
       _ -> map
     end
   end

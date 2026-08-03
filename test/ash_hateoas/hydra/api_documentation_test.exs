@@ -438,15 +438,58 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       |> Enum.find(&(&1["hydra:title"] == "document"))
     end
 
+    # The classes a property constrains its values to, however they are spelled.
+    # One class is a plain `sh:class`; several are an `sh:or` over shapes, since
+    # repeating `sh:class` means a value must be all of them at once.
+    defp constrained_classes(property) do
+      case property do
+        %{"sh:class" => %{"@id" => iri}} -> [iri]
+        %{"sh:or" => %{"@list" => shapes}} -> Enum.map(shapes, & &1["sh:class"]["@id"])
+        _ -> []
+      end
+    end
+
     test "the element classes are named, not left as 'an array of something'" do
       # Without this the wire says `jsonschema:ArraySchema` and nothing more, and
       # the only statement of what an element looks like is English prose in a
       # description — which a client cannot construct a call from.
-      iris = document_property("save")["sh:class"] |> Enum.map(& &1["@id"])
+      iris = "save" |> document_property() |> constrained_classes()
 
       assert "https://ash-hateoas.org/vocab#Step" in iris
       assert "https://ash-hateoas.org/vocab#Ingredient" in iris
       assert "https://ash-hateoas.org/vocab#Technique" in iris
+    end
+
+    test "a choice of classes is a disjunction, not a conjunction" do
+      # `sh:class` constrains **each value node**, so repeating it says every
+      # element must be a Step *and* an Ingredient *and* a Technique at once —
+      # which nothing satisfies, so a valid document fails. Confirmed against a
+      # SHACL processor: an element typed `Step` conforms only under `sh:or`.
+      property = document_property("save")
+
+      refute Map.has_key?(property, "sh:class"),
+             "a choice must not be spelled as repeated sh:class — that is a conjunction"
+
+      # `sh:or` takes an rdf:List of **shapes**, so each member is a shape
+      # carrying `sh:class` rather than a bare class IRI. `@list` is required:
+      # a plain array is an unordered set, not the first/rest chain SHACL wants.
+      assert %{"sh:or" => %{"@list" => [_ | _] = shapes}} = property
+
+      for shape <- shapes do
+        assert %{"sh:class" => %{"@id" => _}} = shape
+      end
+    end
+
+    test "a single class stays a plain sh:class" do
+      # No disjunction to express, so no `sh:or` — one class is exactly what
+      # `sh:class` says, and wrapping it would be noise.
+      errors =
+        [AshHateoas.Test.Domain]
+        |> ApiDocumentation.build()
+        |> Map.get("@included")
+        |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#validationReport/errors"))
+
+      assert errors
     end
 
     test "each named class is described in full elsewhere in the same document" do
@@ -455,7 +498,7 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])
       described = MapSet.new(doc["hydra:supportedClass"], & &1["@id"])
 
-      for %{"@id" => iri} <- document_property("save")["sh:class"] do
+      for iri <- "save" |> document_property() |> constrained_classes() do
         assert iri in described, "#{iri} is named but never described"
       end
     end
@@ -467,7 +510,7 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
         |> AshHateoas.RootActions.managed_relationships()
         |> Enum.map(& &1.destination)
 
-      assert length(document_property("save")["sh:class"]) == length(managed)
+      assert length(constrained_classes(document_property("save"))) == length(managed)
     end
 
     test "a non-public relationship's class is not named" do
@@ -476,7 +519,7 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       # `recipe_audit` elements — and since `on_missing/2` destroys what an
       # owned `has_many` omits, being told so would let a document delete rows
       # it was never shown.
-      iris = document_property("save")["sh:class"] |> Enum.map(& &1["@id"])
+      iris = "save" |> document_property() |> constrained_classes()
 
       refute "https://ash-hateoas.org/vocab#RecipeAudit" in iris
     end
@@ -484,10 +527,11 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     test "validate describes the same document as save" do
       # They take the same argument; a client checking against one and saving
       # against the other must not find them disagreeing.
-      assert document_property("validate")["sh:class"] == document_property("save")["sh:class"]
+      assert constrained_classes(document_property("validate")) ==
+               constrained_classes(document_property("save"))
     end
 
-    test "sh:class is the term a link already uses, so nothing new is needed" do
+    test "the classes are named as links, so nothing new is needed" do
       # A client that can follow a link property can read this unchanged.
       assert %{"rdfs:range" => %{"@id" => "jsonschema:ArraySchema"}} = document_property("save")
     end
