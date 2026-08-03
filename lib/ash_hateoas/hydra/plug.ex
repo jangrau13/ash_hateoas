@@ -89,22 +89,26 @@ defmodule AshHateoas.Hydra.Plug do
 
   # ── Dispatch ────────────────────────────────────────────────────────────────
 
-  # The root entry document: every reachable type and its collection link.
-  # `hydra:collection` alone is enough for a generic Hydra client to discover
-  # the API — no custom `@type` needed.
-  defp dispatch(%{method: "GET"} = conn, [], actor, _tenant, opts) do
-    collections =
-      opts[:domains]
-      |> Navigation.root(actor, nav_opts(opts))
-      |> Map.new(fn {type, link} -> {type, nav_ref(link)} end)
-
-    document = %{
-      "@context" => document_context(conn, opts),
-      "hydra:collection" => collections
-    }
-
-    send_json(conn, 200, document)
-  end
+  # `GET /` serves nothing, and falls through to the 404 below.
+  #
+  # It used to return a listing of every collection in the domain, and both the
+  # listing and the `up` link that pointed at it are gone. **A
+  # collection-of-collections is not a resource**: nothing in any domain
+  # corresponds to it, and it existed only so that `up` had somewhere to point.
+  #
+  # Nor was it an entry point in any sense Hydra requires. A client may start at
+  # *any* URL — every response carries `Link: <…/doc>; rel="apiDocumentation"`,
+  # so the full description is one hop from whatever resource a client holds.
+  # Sitting at the root path made a convenience look like a required first
+  # fetch, and no consumer ever made it: the language derives its own root from
+  # the class advertising `validate`.
+  #
+  # It was also the last place in this package where **data was used as JSON
+  # object keys** — the collection map was keyed by type name, so the payload
+  # lived in positions a `@context` cannot define. Measured before removal: 27
+  # of 29 keys vanished under expansion, and the one survivor collided with a
+  # Hydra term and was retyped as something unrelated. The rule that replaces
+  # it: a key is a keyword or a declared term, never a value.
 
   defp dispatch(%{method: "GET"} = conn, segments, actor, _tenant, opts) do
     if segments == doc_segments(opts) do
@@ -616,13 +620,21 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> false
   end
 
-  # Navigation links (`collection`, `up`) map onto Hydra link terms, each a typed
-  # node reference (`{"@id", "@type"}`) so a strict client recognises the target's
-  # kind without decoding a private `rel` token.
+  # A navigation link maps onto a Hydra link term as a typed node reference
+  # (`{"@id", "@type"}`), so a strict client recognises the target's kind
+  # without decoding a private `rel` token.
+  #
+  # `collection` is the only one. There used to be `up`, rendered as
+  # `hydra:view` and pointing at `/` — a record's "owning
+  # collection-of-collections", which is not a resource. A record's honest
+  # parent is its collection, and that is what `hydra:collection` already says.
+  #
+  # Note `hydra:view` itself remains in use, for what it is actually for:
+  # `Collection.wrap/2` emits a `hydra:PartialCollectionView` under it when a
+  # collection is paged.
   defp merge_navigation(node, nav) do
     Enum.reduce(nav, node, fn
       {"collection", link}, acc -> Map.put(acc, "hydra:collection", nav_ref(link))
-      {"up", link}, acc -> Map.put(acc, "hydra:view", nav_ref(link))
       _other, acc -> acc
     end)
   end

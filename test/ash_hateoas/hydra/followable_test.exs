@@ -172,12 +172,19 @@ defmodule AshHateoas.Hydra.FollowableTest do
     end
   end
 
-  describe "the entry point is followable end to end" do
-    test "every collection the root advertises resolves" do
-      # The API's front door. Stage 5 shrinks this to `Model` alone in
-      # `svc_simulation`, so what matters is not how many collections appear but
-      # that each one is real.
-      assert_all_followable("/")
+  describe "any URL is a place to start" do
+    test "a record reached cold is followable and describes the API", %{article: article} do
+      # There is no entry point to begin at, so this is the property that
+      # replaces it: a client holding one URL — from a bookmark, a search
+      # result, another service — can follow everything that URL advertises and
+      # reach the description from it.
+      path = "/articles/#{article.id}"
+
+      assert_all_followable(path)
+
+      conn = get(path)
+      assert [link] = Plug.Conn.get_resp_header(conn, "link")
+      assert link =~ "apiDocumentation"
     end
   end
 

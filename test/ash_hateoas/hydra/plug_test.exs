@@ -56,22 +56,47 @@ defmodule AshHateoas.Hydra.PlugTest do
     end
   end
 
-  describe "the entry point (GET /)" do
-    test "lists reachable types with their collection links" do
-      doc = body(get("/", @admin))
+  describe "there is no entry point" do
+    test "GET / serves nothing" do
+      # It used to list every collection in the domain. A
+      # collection-of-collections is not a resource — nothing in any domain
+      # corresponds to it, and it existed so the `up` link had a target.
+      assert get("/", @admin).status == 404
+    end
 
-      # the root document is self-describing via hydra:collection
-      collections = doc["hydra:collection"]
-      assert is_map(collections)
-      # document and order are both routed and readable
-      assert Map.has_key?(collections, "document")
+    test "a client can start anywhere, because every response describes the API" do
+      # What replaces it, and what a hardcoded index was never needed for. A
+      # client holding *any* URL — a bookmark, another service's link — is one
+      # hop from the full description.
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Anywhere", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
 
-      # each collection link is a typed node reference, not {href, rel}
-      document = collections["document"]
-      assert document["@id"] =~ "/documents"
-      assert document["@type"] == "Collection"
-      refute Map.has_key?(document, "href")
-      refute Map.has_key?(document, "rel")
+      for path <- ["/documents/#{doc.id}", "/documents", "/doc"] do
+        conn = get(path, @admin)
+
+        assert conn.status == 200
+
+        assert [link] = Plug.Conn.get_resp_header(conn, "link")
+        assert link =~ Context.api_documentation_rel()
+      end
+    end
+
+    test "a record's parent is its collection, and nothing above it" do
+      doc =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Parented", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      assert node["hydra:collection"]["@id"] =~ "/documents"
+
+      # `hydra:view` used to carry an `up` link to `/`. It is reserved for what
+      # it is actually for — a `hydra:PartialCollectionView` on a paged
+      # collection — and a member node has none.
+      refute Map.has_key?(node, "hydra:view")
     end
   end
 
@@ -151,16 +176,17 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "structural navigation is emitted as typed node references", %{doc: doc} do
       node = body(get("/documents/#{doc.id}", @admin))
 
-      # collection/up links are {"@id", "@type"} node refs, never {href, rel}
+      # A navigation link is a {"@id", "@type"} node ref, never {href, rel}.
       collection = node["hydra:collection"]
       assert collection["@id"] =~ "/documents"
       assert collection["@type"] == "Collection"
       refute Map.has_key?(collection, "href")
       refute Map.has_key?(collection, "rel")
 
-      view = node["hydra:view"]
-      assert view["@type"] == "Resource"
-      refute Map.has_key?(view, "rel")
+      # `collection` is the only structural link. There was a second, `up`,
+      # rendered as `hydra:view` and pointing at `/` — a record's owning
+      # "collection-of-collections", which is not a resource.
+      refute Map.has_key?(node, "hydra:view")
     end
   end
 
@@ -651,16 +677,18 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert node["@id"] == "#{@base}/documents/#{doc.id}"
     end
 
-    test "the entry point's collection links are absolute" do
-      entry = body(get_based("/", @admin))
+    test "a record's collection link is absolute", %{doc: doc} do
+      node = body(get_based("/documents/#{doc.id}", @admin))
 
-      # collection links are typed node references — the URL lives in @id.
-      assert get_in(entry, ["hydra:collection", "document", "@id"]) ==
-               "#{@base}/documents"
+      # A collection link is a typed node reference — the URL lives in @id.
+      assert get_in(node, ["hydra:collection", "@id"]) == "#{@base}/documents"
     end
 
-    test "the Link header advertises an absolute ApiDocumentation URL" do
-      conn = get_based("/", @admin)
+    test "the Link header advertises an absolute ApiDocumentation URL", %{doc: doc} do
+      # Asserted on a real resource rather than `/`, which serves nothing. The
+      # header is what makes any URL a valid place to start, so it has to be
+      # right on the URLs a client actually holds.
+      conn = get_based("/documents/#{doc.id}", @admin)
 
       [link] = get_resp_header(conn, "link")
       assert link =~ "<#{@base}/doc>"

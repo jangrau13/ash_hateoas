@@ -3,9 +3,8 @@ defmodule AshHateoas.Navigation do
   Structural navigation — the other half of HATEOAS.
 
   Affordances answer *"what can I do with this?"*. Navigation answers *"where am
-  I, what else exists, and where do I start?"*. A client must be able to
-  hardcode **one** entry point and from there reach every type, every collection
-  and every record, being told at each stop what it may do.
+  I, and what is this part of?"* — a record's place in the structure, so a
+  client holding one resource can move from it.
 
   Like affordances, nothing here is new author config: it is the same
   principle — read what is already declared — extended from actions to
@@ -13,61 +12,63 @@ defmodule AshHateoas.Navigation do
 
   | Navigation need | Derived from |
   |---|---|
-  | which types exist | `Ash.Domain.Info.resources/1` + declared routes |
-  | collection URL per type | the resource's `:index` route |
+  | collection URL for a type | the resource's `:index` route |
   | record → its collection | route introspection |
-  | record → its domain | `Ash.Resource.Info.domain/1` |
+
+  ## There is no entry point to derive
+
+  This module used to answer a third question — *"where do I start?"* — with a
+  listing of every collection in the domain, served at `/`. It is gone, and so
+  is the `up` link that pointed at it.
+
+  **A client does not need a place to start.** Every response carries
+  `Link: <…/doc>; rel="apiDocumentation"`, so the full description of the API is
+  one hop from whatever resource a client happens to hold — a record reached
+  from a bookmark, a search result, another service's link. That is what makes
+  the surface navigable, and it makes *every* URL a valid beginning rather than
+  privileging one.
+
+  What the listing added was a rung above the top: a "collection-of-collections"
+  that no domain has, existing so `up` had a target. A record's honest parent is
+  its collection, and `collection` says that already.
 
   ## Authorization applies to navigation too
 
-  Structural links MUST NOT reveal types or collections the actor may not
-  access. An unreachable branch is omitted, not rendered-and-rejected — the same
-  posture the authorization gate takes. A type is reachable when the actor may
-  run *any* of its routed actions; in practice that is usually its `:read`.
+  Structural links MUST NOT reveal what the actor may not access. An unreachable
+  branch is omitted, not rendered-and-rejected — the same posture the
+  authorization gate takes. A record's `collection` link needs no separate check:
+  it is emitted on a record the actor has already read, in the same domain and
+  under the same policies.
   """
 
-  alias AshHateoas.Index
-
   @doc """
-  The root entry document: every type the actor can reach, with its collection
-  link.
+  Structural links for a single record: its collection.
 
-  This is the one URL a client hardcodes. Types the actor cannot access are
-  omitted entirely.
+  Transport-neutral, keyed by relation name (`"collection"`), each value a
+  `%{url:, kind:}` the rendering transport shapes. The name mirrors the
+  registered IANA relation type, so navigation and affordances arrive together
+  without colliding.
 
-  Transport-neutral: returns `%{type_string => %{url: collection_url, kind:
-  :collection}}`. The transport that renders it (the Hydra plug) turns each entry
-  into whatever its serialization needs — for Hydra, a `{"@id", "@type":
-  "Collection"}` node reference. `Navigation` names *what* the link is, not how a
-  given media type spells it.
-  """
-  @spec root(module() | [module()], term(), keyword()) :: %{String.t() => map()}
-  def root(domains, actor, opts \\ []) do
-    domains = List.wrap(domains)
+  ## There is no `up` beyond the collection
 
-    domains
-    |> Index.build()
-    |> Enum.filter(fn {_type, resource} -> reachable?(resource, actor, domains, opts) end)
-    |> Map.new(fn {type, resource} ->
-      {type, %{url: collection_href(resource, domains, opts), kind: :collection}}
-    end)
-  end
+  A record used to carry a second link, `up`, pointing at `/` — a listing of
+  every collection in the domain. Both are gone, and the reason is the same for
+  each: **a collection-of-collections is not a resource**. Nothing in any domain
+  corresponds to it; it existed so `up` had a target, and `up` existed because
+  the listing was there to point at.
 
-  @doc """
-  Structural links for a single record: its collection and its owning domain.
-
-  Transport-neutral, keyed by relation name (`"collection"`, `"up"`), each value
-  a `%{url:, kind:}` the rendering transport shapes. `collection` and `up`
-  mirror the registered IANA relation types, so navigation and affordances
-  arrive together without colliding.
+  A record's honest parent is its collection, which `collection` already names.
+  The listing added a rung above the top, and being at the root path made it
+  look like a required starting point — which it never was. A client may begin
+  at *any* URL: every response carries a `Link: rel="apiDocumentation"` header,
+  so the whole API is discoverable from whichever resource a client happens to
+  hold. That, not a hardcoded index, is what makes the surface navigable.
   """
   @spec record_links(struct(), [module()], keyword()) :: %{String.t() => map()}
   def record_links(record, domains, opts \\ []) when is_struct(record) do
     resource = record.__struct__
 
-    %{}
-    |> put_collection(resource, domains, opts)
-    |> put_domain(resource, domains, opts)
+    put_collection(%{}, resource, domains, opts)
   end
 
   @doc """
@@ -84,56 +85,22 @@ defmodule AshHateoas.Navigation do
     end
   end
 
-  # A collection link is followable only if the actor may READ the collection —
-  # the action a client performs when it follows the link. Testing "any routed
-  # action" is wrong and produces exactly the failure to avoid: a resource
-  # whose :create is public but whose :read is restricted would be advertised
-  # and then 403 on arrival, which is rendering-and-rejecting.
-  defp reachable?(resource, actor, domains, _opts) do
-    case index_action(resource, domains) do
-      nil -> false
-      action -> can?(resource, action, actor)
-    end
-  end
-
-  defp index_action(resource, domains) do
-    with %{action: action_name} <- index_route(resource, domains),
-         action when not is_nil(action) <- Ash.Resource.Info.action(resource, action_name) do
-      action
-    else
-      _ -> nil
-    end
-  end
-
-  defp can?(resource, action, actor) do
-    Ash.can?({resource, action}, actor)
-  rescue
-    _ -> false
-  end
+  # Gone with the root listing: a per-actor reachability filter, which decided
+  # which types that listing named. The rule it encoded is worth keeping in
+  # view even though its caller is gone — **a link is followable only if the
+  # actor may perform the action following it performs**. Testing "any routed
+  # action" advertises a resource whose `:create` is public but whose `:read` is
+  # restricted, and the client gets a 403 on arrival: rendering-and-rejecting.
+  #
+  # A record's own `collection` link needs no such filter. It is emitted on a
+  # record the actor has already read, in the same domain and under the same
+  # policies, so a reader of the record is a reader of its collection.
 
   defp put_collection(links, resource, domains, opts) do
     case collection_href(resource, domains, opts) do
       nil -> links
       href -> Map.put(links, "collection", %{url: href, kind: :collection})
     end
-  end
-
-  # `up` is the IANA relation for a parent resource. The domain is the record's
-  # owning collection-of-collections, which is the closest honest reading.
-  defp put_domain(links, resource, domains, opts) do
-    case domain_of(resource) do
-      nil ->
-        links
-
-      _domain ->
-        Map.put(links, "up", %{url: prefix(opts, domains) <> "/", kind: :resource})
-    end
-  end
-
-  defp domain_of(resource) do
-    Ash.Resource.Info.domain(resource)
-  rescue
-    _ -> nil
   end
 
   # The canonical collection, when a type has more than one index route.
