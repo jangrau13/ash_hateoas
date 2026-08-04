@@ -126,21 +126,27 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # has to survive into `capture_id/2`, and a second bare `:id` would make that
   # unrecoverable.
   #
-  # ## Derived from the module, never by reading the owner's DSL
+  # ## Derived from the module name, never by reading the owner's DSL
   #
   # The same constraint `domain_short_name/1` documents below, and the same
-  # reason: reading the owner's declared `base` would force that module to
-  # finish compiling while it may be waiting on this one. `Info.type/1` is safe
-  # — it falls back to the module name — which is why
-  # `DeriveRelationshipRoutes.has_type?/1` uses it on a still-compiling
-  # destination too.
+  # reason — but sharper here, and found by hitting it. `Info.type/1` looks in
+  # the DSL before falling back to the module name, and that first step **forces
+  # the owner module to finish compiling**. When the owner also points back
+  # (a `has_many` to its children, which an owner usually has) the two wait on
+  # each other and the compiler reports a deadlock:
   #
-  # The cost is that an owner declaring a custom `base` is not honoured in its
-  # children's paths. That is a real limitation, and the alternative is
-  # deadlocking every app that nests.
+  #     model.ex            => ElementResource
+  #     element_resource.ex => Model
+  #
+  # `Info.module_type/1` reads only `Module.split/1`, so it needs nothing
+  # compiled. The cost is that an owner **declaring** a `type` or `base`
+  # different from its module name is not honoured in its children's paths.
+  # That is a real limitation and the alternative is deadlocking every app that
+  # nests.
   defp owner_prefix(dsl_state, domain) do
     with %{name: name, destination: destination} <- AshHateoas.Resource.Info.owner(dsl_state),
-         owner_type when is_binary(owner_type) <- AshHateoas.Resource.Info.type(destination) do
+         owner_type when is_binary(owner_type) <-
+           AshHateoas.Resource.Info.module_type(destination) do
       "/#{domain}/#{owner_type}/:#{name}_id"
     else
       _ -> "/#{domain}"

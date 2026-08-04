@@ -74,7 +74,23 @@ defmodule AshHateoas.Resource.Info do
     _ -> nil
   end
 
-  defp module_type(module) do
+  @doc """
+  A resource's type inferred from its **module name alone**
+  (`MyApp.Blog.Comment` → `"comment"`).
+
+  Public because a transformer sometimes needs another resource's type while
+  that resource may still be compiling, and `type/1` cannot serve there: it
+  reads the DSL first, which forces the module and can deadlock the compiler if
+  the two point at each other. Measured — declaring an owner that also holds a
+  `has_many` back is enough.
+
+  So this is the safe reading, and its cost is stated: a resource that
+  **declares** a `type` different from its module name is not honoured here. It
+  is the same trade `DeriveActionRoutes.domain_short_name/1` makes for exactly
+  the same reason.
+  """
+  @spec module_type(module()) :: String.t() | nil
+  def module_type(module) do
     module
     |> Module.split()
     |> List.last()
