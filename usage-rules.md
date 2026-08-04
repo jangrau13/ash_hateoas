@@ -20,8 +20,8 @@ to an existing resource — it widens that resource's HTTP surface to every acti
 it declares, so audit the action list first.
 
 Richardson Level 3 in one sentence: the client discovers every available state
-transition from what the server embeds in the response, and never constructs a
-URL or relies on out-of-band knowledge of your operations.
+transition from the links and operations the response carries, and never
+constructs a URL or relies on out-of-band knowledge of your operations.
 
 ## Setup
 
@@ -187,6 +187,75 @@ Three things to know before declaring it:
   `change/3`, so the refusal would be skipped; the installed change declines
   atomicity rather than let that happen.
 
+## Links
+
+Resources are connected by **links**, never by one resource's representation
+sitting inside another's. You write ordinary Ash relationships; every public one
+becomes a `hydra:Link` property on the node, and the whole link surface —
+routes, `@context` terms, ontology declarations, write handling — derives from
+them. There is no link DSL to learn.
+
+A link takes one of two forms, and both state the same thing:
+
+```json
+"author":   {"@id": "/people/7"}                                  // node reference
+"comments": {"@id": "/documents/3/comments", "@type": "Collection"}
+```
+
+```json
+"author": {"@id": "/people/7", "@type": "Person", "name": "Ada"}   // expanded node
+```
+
+A **node reference** is the identity alone. An **expanded node** is the same
+link with the target's own properties stated alongside it, still carrying its
+`@id`. In RDF both are the same graph — expansion adds facts, it never changes
+what the property points at.
+
+**Which one you get is decided by what the action loads.** Nothing else:
+
+```elixir
+read :with_author do
+  prepare build(load: [:author])   # `author` now arrives expanded
+end
+```
+
+An unloaded to-one is referenced from its foreign key without reading the
+target, so it costs nothing; a loaded one is rendered in place, recursively,
+with cycles degrading to a plain reference. The target's own terms travel with
+it as a scoped `@context`, so a record expands to the same triples however it
+was reached.
+
+### Writing links
+
+A client names the target; it never sends a foreign key. Two ways, both
+advertised in the ApiDocumentation (`sh:nodeKind: sh:IRI` on the link property):
+
+```json
+{"author": {"@id": "/people/7"}}          // by node reference — what a read emits
+{"author": {"name": "Ada"}}               // by declared identity
+{"author": null}                          // clears an optional link
+```
+
+The identity form works for any resource with an `identity` — published as
+`ah:identity` on its class, so a client reads the key from the contract rather
+than guessing which property names a record. An identity object whose keys are
+not a declared identity is refused rather than matched approximately.
+
+Rules the write path enforces:
+
+- **A required link cannot be cleared.** `null` on a `belongs_to` whose foreign
+  key is `allow_nil?: false` is a 422 — the same fact `hydra:required`
+  advertises on the property.
+- **A reference must resolve to the right class.** An IRI naming some other
+  resource is a 422, not a silently-ignored key.
+- **A reference must exist.** A dangling target is refused. The check runs as
+  the actor, so a target they may not see answers exactly as a missing one
+  does — a write never reports whether a hidden record exists.
+- **Only this API's URLs.** An absolute IRI under another origin is refused: it
+  names a resource in some other API, which no local relationship can hold.
+  Cross-API links are `AshHateoas.Type.ResourceLink` attributes, where the
+  open-world assumption applies and a target may legitimately vanish.
+
 ## Field descriptors
 
 Fields derive from an action's **public** arguments, carrying `description`,
@@ -253,10 +322,11 @@ determine that — a wrong guess returns a wrong authorization answer.
 
 ## Common mistakes
 
-- **Expecting relationship links on a resource that declares none.** Public
-  to-many relationships derive `related`/`relationship` routes automatically;
-  a private relationship is left off the surface. To-one relationships are
-  skipped — served better as an inline node reference than as a collection route.
+- **Expecting relationship links on a resource that declares none.** Every
+  public relationship becomes a link on the node; a private one is left off the
+  surface. A to-many additionally derives `related`/`relationship` routes, since
+  its link points at a collection; a to-one needs no route — it references the
+  target member directly.
 - **Expecting affordances on a resource with no routes.** A resource with no
   routes falls back to its actions directly and affordances have no `href`. That
   is intended — the backbone is usable before route derivation has run.

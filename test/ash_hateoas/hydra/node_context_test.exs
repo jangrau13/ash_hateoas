@@ -202,7 +202,6 @@ defmodule AshHateoas.Hydra.NodeContextTest do
     end
 
     test "a declared semantic_property still wins over ours" do
-      # The one binding that always worked, and the reason the rest went unseen.
       # A mapped attribute advertises the well-known IRI, matching what
       # `ApiDocumentation.supported_properties/2` puts on the wire for it.
       expanded = "/people/#{person().id}" |> get() |> then(&JsonLd.node(&1, &1["@id"]))
@@ -244,6 +243,30 @@ defmodule AshHateoas.Hydra.NodeContextTest do
       # did not.
       assert JsonLd.values(alone, "#{@vocab}article/title") ==
                JsonLd.values(in_collection, "#{@vocab}article/title")
+    end
+
+    test "a node reached THROUGH A LINK expands the same as one read directly" do
+      # An expanded link carries the target's keys while the document's context
+      # binds the source's, so the target's data would expand to nothing — the
+      # same silent drop, one level down. The node's own scoped `@context` is
+      # what makes the two agree.
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Through", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{body: "via link", document_id: document.id})
+      |> Ash.create!(authorize?: false)
+
+      href = "/documents/#{document.id}"
+      alone = href |> get() |> then(&JsonLd.node(&1, &1["@id"]))
+      through_link = "/comments/with_document" |> get() |> JsonLd.node(href)
+
+      assert JsonLd.values(alone, "#{@vocab}document/title") == ["Through"]
+
+      assert JsonLd.values(through_link, "#{@vocab}document/title") ==
+               JsonLd.values(alone, "#{@vocab}document/title")
     end
   end
 end

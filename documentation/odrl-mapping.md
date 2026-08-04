@@ -73,7 +73,7 @@ Policy** for that resource.  Each operation is an **Action** the caller may
 perform on the **Asset** (the resource identified by the node's `@id`).
 
 The ODRL mapping makes the permission explicit: each operation carries an
-embedded `odrl:Permission` that declares the action term and the target asset.
+nested `odrl:Permission` that declares the action term and the target asset.
 There is no separate top-level `odrl:Policy` wrapper — the resource node *is*
 the policy context.
 
@@ -95,7 +95,7 @@ Permission.  If the caller is not authorized for an action, the action is
 the fail-closed design: denied actions are absent, and ODRL says nothing about
 absent rules.
 
-### Permissions are embedded in operations, not separate
+### Permissions are nested in operations, not separate
 
 Each `hydra:Operation` carries its own `odrl:permission` as a single
 `odrl:Permission` object inside the operation:
@@ -133,7 +133,7 @@ Each `hydra:Operation` carries its own `odrl:permission` as a single
 
 A named sub-action (an action whose URL differs from the resource node's own
 `@id`, e.g. `/inventory/activities/123/copy_to_database`) is rendered as a
-separate link node with its own `@id`.  The `odrl:target` of the embedded
+separate link node with its own `@id`.  The `odrl:target` of the nested
 Permission is the **link node's own `@id`**, not the parent resource's:
 
 ```json
@@ -157,7 +157,7 @@ Permission is the **link node's own `@id`**, not the parent resource's:
 
 The collection endpoint (e.g. `GET /inventory/activities`) carries operations
 that apply to the **collection as a whole** — creating a new resource, running
-a search, etc.  These operations embed Permissions with no `odrl:target`
+a search, etc.  These operations nest Permissions with no `odrl:target`
 (because a collection is not a single asset), or with a target referencing the
 collection URL.  Each member of the collection independently carries its own
 operations and Permissions.

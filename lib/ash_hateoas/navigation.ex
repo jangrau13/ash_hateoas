@@ -17,20 +17,15 @@ defmodule AshHateoas.Navigation do
 
   ## There is no entry point to derive
 
-  This module used to answer a third question — *"where do I start?"* — with a
-  listing of every collection in the domain, served at `/`. It is gone, and so
-  is the `up` link that pointed at it.
-
   **A client does not need a place to start.** Every response carries
   `Link: <…/doc>; rel="apiDocumentation"`, so the full description of the API is
   one hop from whatever resource a client happens to hold — a record reached
-  from a bookmark, a search result, another service's link. That is what makes
-  the surface navigable, and it makes *every* URL a valid beginning rather than
-  privileging one.
+  from a bookmark, a search result, another service's link. That makes *every*
+  URL a valid beginning rather than privileging one.
 
-  What the listing added was a rung above the top: a "collection-of-collections"
-  that no domain has, existing so `up` had a target. A record's honest parent is
-  its collection, and `collection` says that already.
+  A listing of every collection would be a rung above the top: a
+  "collection-of-collections" that no domain has. A record's parent is its
+  collection, and `collection` says that already.
 
   ## Authorization applies to navigation too
 
@@ -51,13 +46,10 @@ defmodule AshHateoas.Navigation do
 
   ## There is no `up` beyond the collection
 
-  A record used to carry a second link, `up`, pointing at `/` — a listing of
-  every collection in the domain. Both are gone, and the reason is the same for
-  each: **a collection-of-collections is not a resource**. Nothing in any domain
-  corresponds to it; it existed so `up` had a target, and `up` existed because
-  the listing was there to point at.
+  **A collection-of-collections is not a resource** — nothing in any domain
+  corresponds to it, so there is nothing for an `up` link to point at.
 
-  A record's honest parent is its collection, which `collection` already names.
+  A record's parent is its collection, which `collection` already names.
   The listing added a rung above the top, and being at the root path made it
   look like a required starting point — which it never was. A client may begin
   at *any* URL: every response carries a `Link: rel="apiDocumentation"` header,

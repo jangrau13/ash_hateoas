@@ -45,7 +45,7 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert prop["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/notify"}
       # the value's datatype rides alongside, not on the property reference
       assert prop["sh:datatype"] == "xsd:boolean"
-      assert prop["hydra:writeable"] == true
+      assert prop["hydra:writable"] == true
     end
 
     test "allow_nil? inverts to hydra:required at the edge" do
@@ -71,7 +71,11 @@ defmodule AshHateoas.Hydra.RendererTest do
       assert plain["sh:defaultValue"] == false
     end
 
-    test "an operation carries a schema:potentialAction typed by its HTTP method" do
+    test "an operation states no schema.org action unless one was declared" do
+      # A role an HTTP method already implies states nothing, so an inferred
+      # subtype is not emitted. `approve` is an ordinary PATCH with no
+      # `semantic_action`, and a client learns it is an update from
+      # `hydra:method` — which is on the same node, four lines away.
       approve = %Affordance{
         name: :approve,
         href: "/documents/:id/approve",
@@ -80,25 +84,44 @@ defmodule AshHateoas.Hydra.RendererTest do
       }
 
       op = Renderer.operation(approve, type: "document", path_params: %{"id" => "7"})
-      action = op["schema:potentialAction"]
 
-      # a PATCH infers UpdateAction
-      assert action["@type"] == "schema:UpdateAction"
-      target = action["schema:target"]
-      assert target["schema:httpMethod"] == "PATCH"
-      assert target["schema:urlTemplate"] == "/documents/7/approve"
-      assert target["schema:contentType"] == "application/ld+json"
+      assert op["hydra:method"] == "PATCH"
+      refute Map.has_key?(op, "schema:potentialAction")
     end
 
-    test "each HTTP method maps to its schema.org Action subtype" do
-      for {method, type} <- [
-            {:get, "schema:ReadAction"},
-            {:post, "schema:CreateAction"},
-            {:patch, "schema:UpdateAction"},
-            {:delete, "schema:DeleteAction"}
-          ] do
+    test "a declared role is emitted, and carries no target" do
+      # The role is the one thing Hydra cannot express, so a declared
+      # `semantic_action` survives. What does *not* survive is `schema:target`:
+      # it restated the URL (`@id`, on the node this hangs from), the method
+      # (`hydra:method`) and a content type that belongs to the API rather than
+      # to one operation.
+      approve = %Affordance{
+        name: :approve,
+        href: "/documents/:id/approve",
+        method: :patch,
+        fields: []
+      }
+
+      action =
+        Renderer.operation(approve,
+          type: "document",
+          path_params: %{"id" => "7"},
+          semantic_actions: %{approve: "https://schema.org/ConfirmAction"}
+        )["schema:potentialAction"]
+
+      assert action["@type"] == "https://schema.org/ConfirmAction"
+      refute Map.has_key?(action, "schema:target")
+    end
+
+    test "no HTTP method infers a schema.org Action subtype" do
+      # Mapping these to Read/Create/Update/DeleteAction would be a second
+      # spelling of `hydra:method` on the same node: a client gains nothing and
+      # the two statements can drift apart.
+      for method <- [:get, :post, :patch, :delete] do
         op = Renderer.operation(%Affordance{name: :x, href: "/x", method: method, fields: []})
-        assert op["schema:potentialAction"]["@type"] == type
+
+        refute Map.has_key?(op, "schema:potentialAction"),
+               "#{method} still infers an Action subtype"
       end
     end
 

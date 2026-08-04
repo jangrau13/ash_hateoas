@@ -145,46 +145,52 @@ defmodule AshHateoas.Hydra.Renderer do
     |> put_potential_action(affordance, opts)
   end
 
-  # The schema.org description of the operation as an *action* — so a client that
-  # speaks schema.org (a search engine, an assistant) understands the verb even
-  # when it does not speak Hydra.
+  # The operation's **declared role**, and only when there is one.
+  #
+  # This is the one thing Hydra cannot say. `hydra:Operation` describes a method,
+  # an input and an output, but never what the operation is *for* — so a client
+  # asking "which of these is the save?" has only the action's name to go on, and
+  # a name belongs to the domain and may change. A schema.org Action subtype
+  # states the role in a published vocabulary instead.
+  #
+  # **A role a method already implies states nothing**, so no subtype is
+  # inferred from the HTTP verb: deriving `schema:ReadAction` from a GET would
+  # be a second spelling of `hydra:method` on the same node, which is only a
+  # chance for two spellings to disagree. Only what a `semantic_action`
+  # declares is emitted — `CheckAction`, `ConfirmAction`, `ShipAction`, and this
+  # library's own `SaveAction`/`RunAction` for roles no published vocabulary
+  # carries.
+  #
+  # There is likewise **no `schema:target`**. It would restate the URL, the
+  # method and the content type — and all three are already stated:
+  #
+  #   * the URL is the node the operation hangs on (`@id`), which is Hydra's own
+  #     rule: an operation is invoked against its node. `hydra:Operation` has no
+  #     target-URL property precisely because it needs none;
+  #   * the method is `hydra:method`, on this very node;
+  #   * the content type is the API's, not this operation's.
+  #
+  # It would also be ill-typed: `schema:urlTemplate` is defined as *"an url
+  # template (RFC6570)"*, and a Plug route is not one — RFC 6570 gives `:` no
+  # meaning, so an expander finds zero variables and hands back a literal
+  # `:id`. A templated URL is stated once, properly, as a `hydra:IriTemplate`.
   defp put_potential_action(op, %Affordance{} = affordance, opts) do
-    url = href(affordance, opts)
-    method = affordance.method |> to_string() |> String.upcase()
-
-    action = %{
-      "@type" => action_type(affordance, opts),
-      "schema:target" => target(url, method)
-    }
-
-    Map.put(op, "schema:potentialAction", action)
-  end
-
-  defp target(url, method) do
-    %{
-      "schema:contentType" => "application/ld+json",
-      "schema:httpMethod" => method
-    }
-    |> put_unless_nil("schema:urlTemplate", url)
-  end
-
-  # An explicit `semantic_action` override wins; otherwise the subtype is inferred
-  # from the HTTP method (never guessed from the action name). Bare tokens have
-  # already been resolved to full schema.org IRIs by the info reader; the inferred
-  # subtypes are bare tokens the `schema:` prefix in the @context resolves.
-  defp action_type(%Affordance{name: name, method: method}, opts) do
-    case Keyword.get(opts, :semantic_actions, %{})[name] do
-      iri when is_binary(iri) -> iri
-      _ -> method_action_type(method)
+    case declared_action_type(affordance, opts) do
+      nil -> op
+      iri -> Map.put(op, "schema:potentialAction", %{"@type" => iri})
     end
   end
 
-  defp method_action_type(:get), do: "schema:ReadAction"
-  defp method_action_type(:post), do: "schema:CreateAction"
-  defp method_action_type(:patch), do: "schema:UpdateAction"
-  defp method_action_type(:put), do: "schema:UpdateAction"
-  defp method_action_type(:delete), do: "schema:DeleteAction"
-  defp method_action_type(_other), do: "schema:Action"
+  # Only an explicit `semantic_action`. Bare tokens have already been resolved to
+  # full IRIs by the info reader, so whatever arrives here is what the domain
+  # declared — never a guess from the action's name, and no longer a fallback
+  # derived from the HTTP method.
+  defp declared_action_type(%Affordance{name: name}, opts) do
+    case Keyword.get(opts, :semantic_actions, %{})[name] do
+      iri when is_binary(iri) -> iri
+      _ -> nil
+    end
+  end
 
   # A named sub-action: a link node carrying the distinct URL and the operation.
   defp link_node(%Affordance{} = affordance, href, opts) do
@@ -223,18 +229,17 @@ defmodule AshHateoas.Hydra.Renderer do
   # returns the record it destroyed. Without a known type we cannot name the
   # class, so we omit it rather than guess.
   #
-  # A destroy used to declare `owl:Nothing` and send 204 with an empty body.
-  # That was self-consistent but less useful than it could be: a client wanting
-  # to show what it deleted had to GET first and hold the result across the
-  # delete, when Ash offers the record for the asking. It now sends the record's
-  # final state, so the declaration names its class.
+  # A destroy sends the record's final state rather than 204 with an empty
+  # body, so the declaration names its class: a client wanting to show what it
+  # deleted would otherwise have to GET first and hold the result across the
+  # delete, when Ash offers the record for the asking.
   #
-  # Worth noting what `owl:Nothing` would have meant if kept — it is the *empty
-  # class*, so "an instance of this is returned" is unsatisfiable, which is the
-  # honest reading of "no body". Hydra itself says nothing on the matter: the
-  # token appears zero times in the vocabulary, `core.jsonld` and the spec
-  # prose. It survives only on the `:ok`-with-no-record path, which sends no
-  # body at all. See `documentation/hydra-conformance-notes.md` §5.
+  # `owl:Nothing` is reserved for the `:ok`-with-no-record path, which sends no
+  # body at all: it is the *empty class*, so "an instance of this is returned"
+  # is unsatisfiable — the honest reading of "no body". Hydra itself says
+  # nothing on the matter; the token appears zero times in the vocabulary,
+  # `core.jsonld` and the spec prose. See
+  # `documentation/hydra-conformance-notes.md` §5.
   defp put_returns(op, %Affordance{} = affordance, opts) do
     cond do
       # A document action returns a verdict, not the resource. Naming the
@@ -276,7 +281,7 @@ defmodule AshHateoas.Hydra.Renderer do
       # Ash says allow_nil?; the wire says required. The inversion lives here.
       "hydra:required" => not field.allow_nil?,
       "hydra:readable" => false,
-      "hydra:writeable" => true
+      "hydra:writable" => true
     }
     |> put_unless_nil("hydra:title", to_string_or_nil(field.name))
     |> put_unless_nil("hydra:description", field.description)
@@ -312,22 +317,42 @@ defmodule AshHateoas.Hydra.Renderer do
       "hydra:variableRepresentation" => "BasicRepresentation",
       "hydra:mapping" =>
         Enum.map(affordance.fields, &iri_template_mapping(&1, type)) ++
-          path_mappings(href, type)
+          path_mappings(href, type, variables)
     }
   end
 
-  # `/multi_read/:id/by_id` → `/multi_read/{id}/by_id`.
+  # Plug's router spelling → RFC 6570's, for both `hydra:template` and
+  # `schema:urlTemplate`:
+  #
+  #     /multi_read/:id/by_id            → /multi_read/{id}/by_id
+  #     /ledger/:ledger_id/entry/:id     → /ledger/{ledger_id}/entry/{id}
+  #
+  # An owned resource's route carries two placeholders (stage 5's nesting), so
+  # this substitutes every one rather than only the record's own — a template
+  # that expanded `id` and left `{ledger_id}` behind would resolve to nothing.
+  #
+  # The scheme and authority are untouched: `:` there is the URL's own and
+  # matches no variable name, since a name cannot start with `//`.
   defp path_variables(href), do: Regex.replace(~r/:([a-zA-Z_][a-zA-Z0-9_]*)/, href, "{\\1}")
 
   # A path variable is a variable the client must supply, so it belongs in the
   # mapping beside the query ones — otherwise the template names something the
   # document never describes. Always required: a path segment cannot be omitted
   # the way a query parameter can.
-  defp path_mappings(template, type) do
+  #
+  # `already` excludes the query fields, which are mapped from the affordance
+  # itself and carry their real types and requiredness. Without it a route whose
+  # path segment shares a name with one of its own arguments is described twice
+  # — `/multi_read/{id}/by_id{?id}` emitted two mappings for `id`, one claiming
+  # required and one not, which is worse than either alone.
+  defp path_mappings(template, type, already) do
+    seen = MapSet.new(already)
+
     ~r/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/
     |> Regex.scan(template, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(seen, &1))
     |> Enum.map(fn name ->
       %{
         "@type" => "IriTemplateMapping",

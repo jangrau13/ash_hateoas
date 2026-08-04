@@ -28,6 +28,14 @@ defmodule AshHateoas.Test.Person do
     attribute(:additional_name, :string, public?: true)
   end
 
+  # The natural key a client names this resource by, published as `ah:identity`
+  # so an author can write `{"author": {"name": "Ada"}}` without holding a URL.
+  identities do
+    # ETS cannot enforce uniqueness itself, so the check runs as a read first
+    # (`pre_check_with`) — required by the data layer for any identity here.
+    identity(:unique_name, [:name], pre_check_with: AshHateoas.Test.Domain)
+  end
+
   actions do
     defaults([:read, :destroy, create: [:name, :additional_name]])
   end

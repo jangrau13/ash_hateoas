@@ -58,9 +58,8 @@ defmodule AshHateoas.Hydra.PlugTest do
 
   describe "there is no entry point" do
     test "GET / serves nothing" do
-      # It used to list every collection in the domain. A
-      # collection-of-collections is not a resource — nothing in any domain
-      # corresponds to it, and it existed so the `up` link had a target.
+      # A collection-of-collections is not a resource — nothing in any domain
+      # corresponds to it, so there is nothing here to represent.
       assert get("/", @admin).status == 404
     end
 
@@ -93,9 +92,9 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       assert node["hydra:collection"]["@id"] =~ "/documents"
 
-      # `hydra:view` used to carry an `up` link to `/`. It is reserved for what
-      # it is actually for — a `hydra:PartialCollectionView` on a paged
-      # collection — and a member node has none.
+      # `hydra:view` is reserved for what it is for — a
+      # `hydra:PartialCollectionView` on a paged collection — and a member node
+      # has none.
       refute Map.has_key?(node, "hydra:view")
     end
   end
@@ -258,9 +257,8 @@ defmodule AshHateoas.Hydra.PlugTest do
       end
 
       # Follow the link the node itself advertised. Asserting only that the key
-      # is present leaves the URL free to 404 — which is what shipped, and is
-      # a broken contract for every client that follows links rather than
-      # constructing them.
+      # is present would leave the URL free to 404 — a broken contract for
+      # every client that follows links rather than constructing them.
       node = body(get("/articles/#{article.id}", @admin))
       collection = body(get(node["comments"]["@id"], @admin))
 
@@ -276,6 +274,317 @@ defmodule AshHateoas.Hydra.PlugTest do
       unknown = Ash.UUID.generate()
 
       assert get("/articles/#{unknown}/comments", @admin).status == 404
+    end
+
+    test "a belongs_to surfaces as a node reference built from the foreign key" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Target", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{body: "points home", document_id: document.id})
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/comments/#{comment.id}", @admin))
+
+      # A node reference and nothing more: the target's identity, no target data.
+      assert %{"@id" => ref} = node["document"]
+      assert ref =~ "/documents/#{document.id}"
+      assert map_size(node["document"]) == 1
+    end
+
+    test "the to-one reference RESOLVES to the target node" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Resolvable", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{body: "follow me", document_id: document.id})
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/comments/#{comment.id}", @admin))
+      target = body(get(node["document"]["@id"], @admin))
+
+      assert target["@id"] =~ "/documents/#{document.id}"
+      assert target["title"] == "Resolvable"
+    end
+
+    test "a LOADED to-one link is stated in place, carrying the target's own @id" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Expanded", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{body: "loaded", document_id: document.id})
+      |> Ash.create!(authorize?: false)
+
+      # `with_document` loads :document — the only lever, an ordinary Ash
+      # preparation. Same link, stated rather than referenced.
+      collection = body(get("/comments/with_document", @admin))
+      comment = Enum.find(collection["hydra:member"], &(&1["body"] == "loaded"))
+
+      target = comment["document"]
+      assert target["@id"] =~ "/documents/#{document.id}"
+      assert target["title"] == "Expanded"
+
+      # Identity is unchanged by expansion: the same URL the reference carried.
+      assert target["@id"] == body(get("/documents/#{document.id}", @admin))["@id"]
+    end
+
+    test "a LOADED to-many link states its collection in place, at the same @id" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Has comments", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{body: "in place", document_id: document.id})
+      |> Ash.create!(authorize?: false)
+
+      collection = body(get("/documents/with_comments", @admin))
+      node = Enum.find(collection["hydra:member"], &(&1["@id"] =~ document.id))
+
+      comments = node["comments"]
+      assert comments["@type"] == "Collection"
+      assert comments["hydra:totalItems"] == 1
+      assert [member] = comments["hydra:member"]
+      assert member["body"] == "in place"
+
+      # The expanded collection keeps the URL the unloaded reference carries,
+      # so following it and reading it give the same answer.
+      unloaded = body(get("/documents/#{document.id}", @admin))["comments"]
+      assert comments["@id"] == unloaded["@id"]
+    end
+
+    test "a cycle terminates: the back-reference is a plain node reference" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Cyclic", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{body: "back-ref", document_id: document.id})
+      |> Ash.create!(authorize?: false)
+
+      # document → comments → document: the second hop is already rendered, so
+      # it degrades to the reference rather than recursing.
+      collection = body(get("/documents/with_comments", @admin))
+      node = Enum.find(collection["hydra:member"], &(&1["@id"] =~ document.id))
+      [member] = node["comments"]["hydra:member"]
+
+      assert member["document"] == %{"@id" => node["@id"]}
+    end
+
+    test "a nil foreign key yields no key at all — absent, not null" do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Holder", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{body: "unattached", document_id: document.id})
+        |> Ash.create!(authorize?: false)
+
+      node = body(get("/comments/#{comment.id}", @admin))
+
+      # the optional belongs_to :article was never related
+      refute Map.has_key?(node, "article")
+    end
+  end
+
+  describe "writing links" do
+    setup do
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Write target", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      %{document: document}
+    end
+
+    test "a create relates by node reference — the IRI a read emits", %{document: document} do
+      created =
+        body(
+          request(:post, "/comments", @admin, %{
+            "body" => "by reference",
+            "document" => %{"@id" => "/documents/#{document.id}"}
+          })
+        )
+
+      # Written as a link, and readable back as the same link.
+      assert created["document"]["@id"] =~ "/documents/#{document.id}"
+      assert body(get(created["@id"], @admin))["document"]["@id"] =~ "/documents/#{document.id}"
+    end
+
+    test "a create relates by IDENTITY OBJECT — the declared natural key", %{document: document} do
+      Person
+      |> Ash.Changeset.for_create(:create, %{name: "Ada"})
+      |> Ash.create!(authorize?: false)
+
+      created =
+        body(
+          request(:post, "/comments", @admin, %{
+            "body" => "by name",
+            "document" => %{"@id" => "/documents/#{document.id}"},
+            "author" => %{"name" => "Ada"}
+          })
+        )
+
+      # The identity object named an existing individual; the response carries
+      # its IRI. The key was a lookup, never content.
+      assert %{"@id" => author} = created["author"]
+      assert author =~ "/people/"
+      assert body(get(author, @admin))["name"] == "Ada"
+    end
+
+    test "a write response carries links in the same shape a read does", %{document: document} do
+      Person
+      |> Ash.Changeset.for_create(:create, %{name: "Shape"})
+      |> Ash.create!(authorize?: false)
+
+      created =
+        body(
+          request(:post, "/comments", @admin, %{
+            "body" => "shape",
+            "document" => %{"@id" => "/documents/#{document.id}"},
+            "author" => %{"name" => "Shape"}
+          })
+        )
+
+      # Managing a relationship leaves its target loaded, which would expand
+      # that one link and reference every other — a shape decided by how the
+      # write ran rather than by what the action declares.
+      assert Map.keys(created["author"]) == ["@id"]
+      assert Map.keys(created["document"]) == ["@id"]
+
+      read = body(get(created["@id"], @admin))
+      assert read["author"] == created["author"]
+      assert read["document"] == created["document"]
+    end
+
+    test "an update replaces a link", %{document: document} do
+      other =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Other", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{body: "relinked", document_id: document.id})
+        |> Ash.create!(authorize?: false)
+
+      updated =
+        body(
+          request(:patch, "/comments/#{comment.id}", @admin, %{
+            "document" => %{"@id" => "/documents/#{other.id}"}
+          })
+        )
+
+      assert updated["document"]["@id"] =~ "/documents/#{other.id}"
+    end
+
+    test "an update clears an optional link with null", %{document: document} do
+      person =
+        Person
+        |> Ash.Changeset.for_create(:create, %{name: "Removable"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{
+          body: "has author",
+          document_id: document.id,
+          author_id: person.id
+        })
+        |> Ash.create!(authorize?: false)
+
+      updated = body(request(:patch, "/comments/#{comment.id}", @admin, %{"author" => nil}))
+
+      # Cleared means the key is gone, not present-and-null.
+      refute Map.has_key?(updated, "author")
+    end
+
+    test "a REQUIRED link refuses to be cleared", %{document: document} do
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{body: "must stay", document_id: document.id})
+        |> Ash.create!(authorize?: false)
+
+      conn = request(:patch, "/comments/#{comment.id}", @admin, %{"document" => nil})
+
+      # The affordance advertises `hydra:required`; the write path must not
+      # contradict it.
+      assert conn.status == 422
+      assert body(conn)["hydra:title"] =~ "required"
+
+      # And the link still holds.
+      assert body(get("/comments/#{comment.id}", @admin))["document"]["@id"] =~ document.id
+    end
+
+    test "an IRI pointing at the WRONG class is refused", %{document: document} do
+      person =
+        Person
+        |> Ash.Changeset.for_create(:create, %{name: "Not a document"})
+        |> Ash.create!(authorize?: false)
+
+      conn =
+        request(:post, "/comments", @admin, %{
+          "body" => "mismatched",
+          "document" => %{"@id" => "/people/#{person.id}"}
+        })
+
+      assert conn.status == 422
+      assert body(conn)["hydra:title"] =~ "person"
+      # Not silently ignored: relating to the wrong class is an error the
+      # client can act on.
+      refute is_nil(document)
+    end
+
+    test "an IRI that names no resource of this API is refused" do
+      conn =
+        request(:post, "/comments", @admin, %{
+          "body" => "foreign",
+          "document" => %{"@id" => "https://elsewhere.example/documents/1"}
+        })
+
+      assert conn.status == 422
+    end
+
+    test "an identity object whose keys are not a declared identity is refused", %{
+      document: document
+    } do
+      conn =
+        request(:post, "/comments", @admin, %{
+          "body" => "guessed key",
+          "document" => %{"@id" => "/documents/#{document.id}"},
+          "author" => %{"additional_name" => "guessed"}
+        })
+
+      # Matching on a guessed property matches the wrong record, or none, and
+      # does so silently — so it is refused rather than attempted.
+      assert conn.status == 422
+      assert body(conn)["hydra:title"] =~ "identity"
+    end
+
+    test "a dangling reference is refused, and says nothing about existence", %{
+      document: document
+    } do
+      unknown = Ash.UUID.generate()
+
+      conn =
+        request(:post, "/comments", @admin, %{
+          "body" => "dangling",
+          "document" => %{"@id" => "/documents/#{unknown}"}
+        })
+
+      assert conn.status in [400, 404, 422]
+      refute is_nil(document)
     end
   end
 
@@ -416,12 +725,18 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       # confirm is a named sub-action -> link node; its operation carries the
       # schema:potentialAction, sharpened to ConfirmAction by semantic_action.
-      [op] = node["ah:confirm"]["hydra:operation"]
+      link = node["ah:confirm"]
+      [op] = link["hydra:operation"]
       action = op["schema:potentialAction"]
 
       assert action["@type"] == "https://schema.org/ConfirmAction"
-      assert action["schema:target"]["schema:httpMethod"] == "PATCH"
-      assert action["schema:target"]["schema:urlTemplate"] =~ "/orders/#{order.id}/confirm"
+
+      # The role is *all* it carries. Where the operation acts is the link
+      # node's own `@id`, and how is `hydra:method` — so a `schema:target`
+      # would say both a second time, in a second vocabulary.
+      refute Map.has_key?(action, "schema:target")
+      assert link["@id"] == "/orders/#{order.id}/confirm"
+      assert op["hydra:method"] == "PATCH"
     end
   end
 

@@ -44,6 +44,8 @@ defmodule AshHateoas.Resource.Transformers.DeriveObservables do
 
   @impl true
   def transform(dsl_state) do
+    # Ash's flag for a value type, which has no identity and therefore no URL
+    # to observe.
     if Transformer.get_persisted(dsl_state, :embedded?, false) do
       {:ok, dsl_state}
     else

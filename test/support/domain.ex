@@ -53,6 +53,13 @@ defmodule AshHateoas.Test.Document do
   actions do
     defaults([:read, :destroy])
 
+    # Loads the to-many link, and the comments' own to-one link back here —
+    # so the response states the collection in place and the back-reference
+    # closes a cycle, which must terminate as a plain node reference.
+    read :with_comments do
+      prepare(build(load: [comments: [:document]]))
+    end
+
     create :create do
       primary?(true)
       accept([:title, :body, :owner_id, :related_order])

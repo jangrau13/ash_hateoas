@@ -33,9 +33,8 @@ defmodule AshHateoas.Resource.Changes.EnforceNotDelegable do
 
   `AshHateoas.Resource.Changes.InvocationChange` implements `change/3` and
   returns a pre-flight changeset before `change_invocation/3` is called, so this
-  module cannot see one. That is structural rather than conventional: the guard
-  used to live here as a clause, and a clause can be dropped by an edit that
-  looks harmless.
+  module cannot see one. The guard is structural rather than a clause here,
+  because a clause can be dropped by an edit that looks harmless.
 
   Two things depend on it. `Ash.can?/3` asks whether the action is *permitted*,
   and it is — refusing there would drop the affordance from the advertised set.

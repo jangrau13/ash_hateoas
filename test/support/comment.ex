@@ -14,9 +14,6 @@ defmodule AshHateoas.Test.Comment do
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshHateoas.Resource]
 
-  # `belongs_to :document` is the to-one case, deliberately left underived —
-  # see the transformer's moduledoc for the upstream bug it avoids.
-
   ets do
     private?(true)
   end
@@ -29,19 +26,46 @@ defmodule AshHateoas.Test.Comment do
   attributes do
     uuid_primary_key(:id)
     attribute(:body, :string, public?: true, allow_nil?: false)
-    attribute(:article_id, :uuid, public?: true)
   end
 
+  # The to-one cases: a required `belongs_to` (document) and an optional one
+  # (article), both surfaced on the record as node references built from the
+  # local foreign key.
   relationships do
     belongs_to :document, AshHateoas.Test.Document do
       public?(true)
       allow_nil?(false)
       attribute_writable?(true)
     end
+
+    belongs_to :article, AshHateoas.Test.Article do
+      public?(true)
+      allow_nil?(true)
+      attribute_writable?(true)
+    end
+
+    # A target carrying a declared identity, so a client may name it by its
+    # natural key rather than by URL.
+    belongs_to :author, AshHateoas.Test.Person do
+      public?(true)
+      allow_nil?(true)
+      attribute_writable?(true)
+    end
   end
 
   actions do
-    defaults([:read, create: [:body, :document_id, :article_id]])
+    defaults([
+      :read,
+      create: [:body, :document_id, :article_id, :author_id],
+      update: [:body, :document_id, :article_id, :author_id]
+    ])
+
+    # A read that loads its to-one link. The link is then stated in place —
+    # the target's own node, carrying its own `@id` — rather than referenced.
+    # This is the only lever: expansion follows what the action loads.
+    read :with_document do
+      prepare(build(load: [:document]))
+    end
   end
 
   policies do

@@ -48,8 +48,8 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   ## What it will not do
 
     * **An `unrouted` action gets nothing.**
-    * **Embedded resources are skipped** — no routes, no identity, nothing to
-      address.
+    * **Ash embedded *types* are skipped** — a value type has no identity, so
+      no IRI, so nothing to address and nothing to link to.
   """
 
   use Spark.Dsl.Transformer

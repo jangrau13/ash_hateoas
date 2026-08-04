@@ -20,9 +20,9 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
       node, so a link to it would not resolve.
     * **A resource with no primary read action is skipped.** Both route types
       need a read action to fetch the source record.
-    * **`belongs_to` and `has_one` are skipped** for now — to-many relationships
-      are the well-defined case; a to-one link is better served as an inline
-      node reference on the record than as a separate collection route.
+    * **`belongs_to` and `has_one` derive no route** — a to-one is carried on
+      the record itself as a node reference (see `Plug.merge_relationships/5`),
+      so there is no separate collection URL to derive.
   """
 
   use Spark.Dsl.Transformer
@@ -49,6 +49,10 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
 
   @impl true
   def transform(dsl_state) do
+    # `:embedded?` is Ash's own flag for a value type — a struct stored inside
+    # an attribute. It has no identity, so no IRI, so nothing that could be
+    # linked to or dereferenced. Routing one would advertise a URL that cannot
+    # resolve.
     if Transformer.get_persisted(dsl_state, :embedded?, false) do
       {:ok, dsl_state}
     else

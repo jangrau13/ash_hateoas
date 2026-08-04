@@ -50,17 +50,17 @@ schema.org is the **default**, not a hard-wiring. `semantic_type`,
   freely per attribute/action.
 
 Only what a **bare** token means changes; absolute IRIs are never touched. See
-`AshHateoas.SemanticVocab`. (The method-inferred `schema:*Action` fallbacks for
-`potentialAction` remain schema.org — an un-annotated action's Action subtype is
-schema.org's CRUD verb; give it your ontology's verb with an explicit
-`semantic_action`.)
+`AshHateoas.SemanticVocab`. (An un-annotated action gets **no**
+`potentialAction` at all — a subtype derived from the HTTP method would restate
+`hydra:method`. Name its role with an explicit `semantic_action`, in schema.org's
+vocabulary or your own.)
 
 ## The layers
 
 | Layer | Native term (kept) | Standard annotation (added) | Vocabulary |
 |---|---|---|---|
 | an operation's HTTP verb | `hydra:method: "PATCH"` | — (already an IANA method) | IANA HTTP Methods |
-| an operation's *action semantics* | `hydra:operation` | `schema:potentialAction` typed `ReadAction`/`CreateAction`/`UpdateAction`/`DeleteAction`/… | schema.org Actions |
+| an operation's *declared role* | `hydra:operation` | `schema:potentialAction` typed by an explicit `semantic_action` (`CheckAction`, `ConfirmAction`, …); absent where none was declared | schema.org Actions |
 | the named-sub-action relation | `ah:<action>` key | (identifier stays; CRUD writes *are* the IANA `edit` rel) | IANA Link Relations |
 | an actor's granted operation | node `hydra:operation` (present-if-allowed) | `odrl:Permission` with an `odrl:action` | ODRL 2.2 |
 | `not_delegable?` | — | `odrl:Duty` / `odrl:Constraint` | ODRL 2.2 |
@@ -69,30 +69,97 @@ schema.org's CRUD verb; give it your ontology's verb with an explicit
 
 ## Layer 1 — schema.org `potentialAction` (the operation as a verb)
 
-Each affordance already renders as a `hydra:Operation`. Additionally it carries a
-`schema:potentialAction` — the schema.org description of the *action*, which
-search engines and assistants understand where they do not speak Hydra:
+Each affordance renders as a `hydra:Operation`. Where the domain **declared** a
+role, the operation additionally carries a `schema:potentialAction` naming it:
 
 ```json
-"schema:potentialAction": {
-  "@type": "UpdateAction",
-  "target": {
-    "urlTemplate": "/orders/{id}/confirm",
-    "httpMethod": "PATCH",
-    "contentType": "application/ld+json"
-  }
-}
+"schema:potentialAction": {"@type": "https://schema.org/ConfirmAction"}
 ```
 
-**Action-subtype mapping — CRUD auto, with an optional override.** The subtype is
-inferred from the Ash action's *type* (never guessed from its name, which would
-risk emitting a schema.org type that does not exist):
+That is the whole node. It answers one question — *what is this operation for?*
+— and it is the one question Hydra has no term for.
 
-| Ash action type | schema.org Action subtype |
+### Why the role needs saying, and nothing else does
+
+An operation already states where, how, what in and what out:
+
+| question | stated by |
 |---|---|
-| `:read` | `ReadAction` |
-| `:create` | `CreateAction` |
-| `:update` | `UpdateAction` |
+| **where** | the `@id` of the node the operation hangs on |
+| **how** | `hydra:method` |
+| **what you send** | `hydra:expects` |
+| **what comes back** | `hydra:returns` |
+| **what it is *for*** | — nothing in Hydra |
+
+The gap is real. `hydra:Operation` describes a method, an input and an output,
+but never the operation's purpose, so a client asking *"which of these is the
+save?"* has only the action's **name** to match on — and a name belongs to the
+domain, which may rename `validate` to `check` or `prüfen` tomorrow. A
+schema.org Action subtype states the role in a published vocabulary instead, so
+the contract is the API's rather than a convention two parties happen to share.
+
+**A role the method already implies states nothing**, so a subtype is emitted
+only where a `semantic_action` declared one. Measured on the fixture domain,
+inferring from the method made **139 of 146** `potentialAction` nodes a
+mechanical restatement of `hydra:method` on the same node. The 7 survivors are
+the ones carrying information: `CheckAction`, `ConfirmAction`, `ShipAction`, and
+this library's own `ah:SaveAction` / `ah:RunAction` for roles no published
+vocabulary has a term for.
+
+### There is no `schema:target`
+
+It would carry a `urlTemplate`, an `httpMethod` and a `contentType` — all three
+already stated, per the table above, and the content type belonging to the API
+rather than to one operation. **Hydra's `Operation` has no target-URL property
+precisely because it needs none:** an operation is invoked against the node it
+hangs on.
+
+It would also be ill-typed. schema.org defines `urlTemplate` as *"an url
+template (RFC6570) that will be used to construct the target of the execution of
+the action"*, and a **Plug** route is not one. RFC 6570 gives `:` no meaning, so
+an expander handed `/orders/:id/confirm` finds **zero** variables and returns
+the string unchanged — a client following it would request a literal `:id`.
+Verified against a real expander rather than assumed.
+
+Teaching a redundant statement to spell itself correctly is not worth doing, so
+the statement is not emitted at all.
+
+### URL templates: only where a URL must be *constructed*
+
+`hydra:IriTemplate` remains, for GETs taking query arguments — 7 in the fixture
+domain:
+
+```json
+{"@type": "IriTemplate",
+ "hydra:template": "/domain/eager_prepare/search{?query}",
+ "hydra:variableRepresentation": "BasicRepresentation",
+ "hydra:mapping": [
+   {"@type": "IriTemplateMapping", "hydra:variable": "query",
+    "hydra:property": {"@id": "…#eager_prepare/query"}, "hydra:required": false}]}
+```
+
+A query string is the one thing a client cannot discover by following a link:
+nothing else says `?query=` exists or that it is optional.
+
+**Path variables are a different matter.** A member URL, a sub-action URL and a
+relationship URL are all *given* — a collection lists its members with full
+`@id`s, a record carries concrete `ah:<action>` URLs, a relationship is a
+`hydra:Link` you follow. A client never holds ids without a URL, so a template
+describing `/entry/{id}` would restate an address the document already provides.
+Templates are for constructing URLs, and these need no construction.
+
+A path variable does still appear in `hydra:template` when the route has one,
+because the string must be a complete URL to expand at all. It is described in
+`hydra:mapping` only when it is not already one of the operation's own
+arguments — a route whose path segment shares a name with an argument
+(`/multi_read/{id}/by_id{?id}`) would otherwise be described twice, once
+required and once not.
+
+### Declaring a role
+
+**Only an explicit `semantic_action`.** A subtype is never guessed from an
+action's name, which would risk emitting a schema.org type that does not exist,
+and no longer falls back to one derived from the HTTP method.
 | `:destroy` | `DeleteAction` |
 | `:action` (generic) | `Action` |
 
@@ -188,6 +255,11 @@ Uses more of the vocabulary already grounded, no new namespace:
   `target` with `urlTemplate` / `httpMethod` / `contentType`;
   CRUD subtypes `ReadAction` / `CreateAction` / `UpdateAction` / `DeleteAction`
   and domain verbs (`ConfirmAction`, `CancelAction`, `ShipAction`, …).
+  Of these, **only the declared domain verbs are emitted**: `target` restates
+  facts the operation already carries, and a CRUD subtype restates
+  `hydra:method`. `urlTemplate`'s own definition names RFC 6570 — worth
+  recording, since the value emitted was a Plug route for as long as the term
+  was present.
 - **IANA Link Relations:** the registered `edit` relation (RFC 5023) for a
   resource's update/delete affordance; no registered relation for domain verbs
   (`approve`, `confirm`), which is why `ah:<action>` remains their identifier.

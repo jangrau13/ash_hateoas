@@ -2,34 +2,30 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
   @moduledoc """
   No document loses data to expansion.
 
-  The general rule, which three separate defects each violated in their own way:
+  The rule this enforces:
 
   > **A JSON object key must be a JSON-LD keyword (`@id`, `@type`, …) or a term
   > the `@context` defines. A key that carries *data* is silently dropped.**
 
   Silently is the operative word. A processor discards what it cannot resolve
   and reports nothing, so the JSON looks complete while the graph is missing
-  whole categories of statement. Every one of these shipped, and every one was
-  invisible to a test asserting on keys:
+  whole categories of statement — invisible to any test asserting on keys.
+  Three ways it goes wrong, each a whole category rather than one field:
+  relationship links on record nodes expanding to nothing; `title`/`name`
+  captured by the referenced Hydra context and retyped; a map keyed by data
+  (type names, error meta) putting values where a `@context` cannot reach.
 
-  | site | what was lost |
-  |---|---|
-  | record nodes | every relationship link; `title`/`name` retyped as Hydra terms |
-  | the root listing | 27 of 29 collections — the keys were type names |
-  | error meta | a projection delta's `to`/`gained`/`lost` |
-
-  So this test does not check any particular key. It fetches **every document
-  shape the plug serves**, expands each, and asserts that the number of
-  predicates in the graph accounts for the keys in the JSON. A new shape that
-  invents data-as-keys fails here without anyone having to remember this rule.
+  So this test checks no particular key. It fetches **every document shape the
+  plug serves**, expands each, and asserts the predicates in the graph account
+  for the keys in the JSON. A new shape that invents data-as-keys fails here
+  without anyone having to remember the rule.
 
   ## Why a shape list rather than an example
 
-  An example-based test proves one document is fine. The defects above were each
-  a whole *category* going missing, and the root listing survived precisely
-  because no test fetched `/` and expanded it. Enumerating the shapes is what
-  makes coverage a property of the list rather than of what someone remembered
-  to write.
+  An example-based test proves one document is fine, while these defects take
+  out a whole category at once — and a shape no test fetches is a shape nothing
+  checks. Enumerating them makes coverage a property of the list rather than of
+  what someone remembered to write.
   """
 
   use ExUnit.Case, async: false
@@ -134,6 +130,9 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
         {"member with operations", "/documents/#{document.id}"},
         {"collection", "/articles"},
         {"related collection", "/articles/#{article.id}/comments"},
+        {"member with a to-one node reference", "/comments"},
+        {"expanded to-one link", "/comments/with_document"},
+        {"expanded to-many link", "/documents/with_comments"},
         {"root-action member", "/recipes/#{recipe.id}"},
         {"error", "/articles/00000000-0000-0000-0000-000000000000"}
       ]

@@ -10,9 +10,10 @@ served natively as a Hydra / JSON-LD API.
 - `AshHateoas.Hydra.Plug` serves an Ash domain as `application/ld+json`. It
   reads and writes every routed resource itself and renders JSON-LD keyed to the
   Hydra Core Vocabulary (`http://www.w3.org/ns/hydra/core#`):
-  - `GET /` — the `hydra:ApiDocumentation` entry point (reachable types + links);
   - `GET <doc_path>` — the full `ApiDocumentation` (`supportedClass` with
-    `supportedProperty` and `supportedOperation`);
+    `supportedProperty` and `supportedOperation`). There is no entry point:
+    every response carries a `Link: <…/doc>; rel="apiDocumentation"` header, so
+    a client may start at any URL and `GET /` serves nothing;
   - `GET` member/collection — the resource node with its actor- and state-gated
     `hydra:operation`s, or a `hydra:Collection` with `member`, `totalItems` and a
     `hydra:PartialCollectionView` for paginated reads;
@@ -30,6 +31,37 @@ served natively as a Hydra / JSON-LD API.
   the endpoint enforces on invocation — plus the state gate where a state machine
   is present.
 - `AshHateoas.affordances/3` exposes the transport-neutral envelope directly.
+
+### Links
+
+- Resources are connected by **links**, never by one resource's representation
+  sitting inside another's. Every public Ash relationship becomes a
+  `hydra:Link` property on the node; there is no link DSL.
+- A link is a **node reference** (`{"@id": …}`, plus `"@type": "Collection"`
+  for a to-many) or an **expanded node** — the same link with the target's own
+  properties stated alongside it, still carrying its `@id`. Which one is
+  decided entirely by what the action loads (`Ash.load/3`, a preparation, a
+  query load): an unloaded to-one is referenced from its foreign key without
+  reading the target, a loaded one is rendered in place, recursively, with
+  cycles degrading to a plain reference. The target's terms travel with it as a
+  scoped `@context`, so a record expands to the same triples however it is
+  reached.
+- **Writes name the target, never a foreign key.** A body carries
+  `{"author": {"@id": "/people/7"}}` or, for a class declaring an `identity`,
+  `{"author": {"name": "Ada"}}`; `null` clears an optional link.
+  `AshHateoas.Hydra.LinkInput` resolves an IRI by matching it against the same
+  routes that serve a GET, so the URLs the API issues are the URLs it accepts.
+  Foreign keys do not appear in `hydra:expects` at all — a relationship input
+  is advertised as its link property, typed `sh:nodeKind: sh:IRI`.
+- Refusals are `hydra:Status` 422s: clearing a required link, a reference to
+  the wrong class, a dangling target, an identity object whose keys are not a
+  declared identity, or an absolute IRI under a foreign origin. Existence is
+  checked as the actor, so a target they may not see answers exactly as a
+  missing one — a write is never an existence oracle.
+- Link properties advertise `hydra:writable` (the current Hydra term) according
+  to whether a write action can actually set them, and the property IRI matches
+  the ontology declaration — so the chain from a write operation's input to the
+  target class's own operations is traversable for every verb.
 
 ### Routes
 

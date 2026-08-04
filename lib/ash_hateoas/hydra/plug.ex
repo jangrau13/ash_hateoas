@@ -56,7 +56,7 @@ defmodule AshHateoas.Hydra.Plug do
 
   require Logger
 
-  alias AshHateoas.Hydra.{ApiDocumentation, Collection, Context, Renderer}
+  alias AshHateoas.Hydra.{ApiDocumentation, Collection, Context, LinkInput, Renderer}
   alias AshHateoas.Hydra.Error, as: HydraError
   alias AshHateoas.{Index, Navigation, Route}
 
@@ -91,24 +91,17 @@ defmodule AshHateoas.Hydra.Plug do
 
   # `GET /` serves nothing, and falls through to the 404 below.
   #
-  # It used to return a listing of every collection in the domain, and both the
-  # listing and the `up` link that pointed at it are gone. **A
-  # collection-of-collections is not a resource**: nothing in any domain
-  # corresponds to it, and it existed only so that `up` had somewhere to point.
+  # **A collection-of-collections is not a resource**: nothing in any domain
+  # corresponds to it, so there is nothing for the root path to represent.
   #
-  # Nor was it an entry point in any sense Hydra requires. A client may start at
-  # *any* URL — every response carries `Link: <…/doc>; rel="apiDocumentation"`,
-  # so the full description is one hop from whatever resource a client holds.
-  # Sitting at the root path made a convenience look like a required first
-  # fetch, and no consumer ever made it: the language derives its own root from
-  # the class advertising `validate`.
+  # Nor does Hydra require an entry point. A client may start at *any* URL —
+  # every response carries `Link: <…/doc>; rel="apiDocumentation"`, so the full
+  # description is one hop from whatever resource a client holds.
   #
-  # It was also the last place in this package where **data was used as JSON
-  # object keys** — the collection map was keyed by type name, so the payload
-  # lived in positions a `@context` cannot define. Measured before removal: 27
-  # of 29 keys vanished under expansion, and the one survivor collided with a
-  # Hydra term and was retyped as something unrelated. The rule that replaces
-  # it: a key is a keyword or a declared term, never a value.
+  # A listing here would also have to key its entries by type name, putting
+  # data in JSON object key positions, which a `@context` cannot define: such
+  # keys are dropped silently by a JSON-LD processor. The rule throughout this
+  # package is that a key is a keyword or a declared term, never a value.
 
   defp dispatch(%{method: "GET"} = conn, segments, actor, _tenant, opts) do
     if segments == doc_segments(opts) do
@@ -221,7 +214,7 @@ defmodule AshHateoas.Hydra.Plug do
         members =
           Enum.map(records, fn record ->
             id = record_id(record)
-            node(record, type, resource, id, actor, tenant, opts, scope: :collection)
+            node(record, type, resource, id, actor, tenant, opts, scope: :linked)
           end)
 
         # Collection-level affordances (create, …) live on the collection, not
@@ -284,7 +277,7 @@ defmodule AshHateoas.Hydra.Plug do
       members =
         Enum.map(related, fn member ->
           node(member, type, destination, record_id(member), actor, tenant, opts,
-            scope: :collection
+            scope: :linked
           )
         end)
 
@@ -404,14 +397,25 @@ defmodule AshHateoas.Hydra.Plug do
     # be able to contradict it. The path wins: an author writing a different
     # `ledger_id` in the body would otherwise create a record somewhere other
     # than where they posted it.
-    input = conn |> read_body_params() |> Map.merge(scope(opts))
+    body = conn |> read_body_params() |> Map.merge(scope(opts))
 
-    safe(fn ->
-      resource
-      |> Ash.Changeset.for_create(action, input, actor: actor, tenant: tenant)
-      |> Ash.create(authorize?: true)
-    end)
-    |> respond_write(conn, resource, type, actor, tenant, opts, created: true)
+    action_struct = Ash.Resource.Info.action(resource, action)
+
+    with {:ok, input, links} <-
+           LinkInput.split(body, resource, action_struct, link_opts(resource, opts)),
+         :ok <- LinkInput.verify_targets(links, actor: actor, tenant: tenant) do
+      {keys, managed} = LinkInput.partition(links, resource, action_struct)
+
+      safe(fn ->
+        resource
+        |> Ash.Changeset.for_create(action, Map.merge(input, keys), actor: actor, tenant: tenant)
+        |> LinkInput.manage(managed)
+        |> Ash.create(authorize?: true)
+      end)
+      |> respond_write(conn, resource, type, actor, tenant, opts, created: true)
+    else
+      {:error, _reason, detail} -> send_error(conn, 422, detail)
+    end
   end
 
   defp serve_write(conn, resource, type, action, id, actor, tenant, opts) do
@@ -439,8 +443,20 @@ defmodule AshHateoas.Hydra.Plug do
   end
 
   defp run_write(conn, record, resource, type, action, actor, tenant, opts) do
-    input = read_body_params(conn)
+    body = read_body_params(conn)
     action_struct = Ash.Resource.Info.action(resource, action)
+
+    with {:ok, input, links} <-
+           LinkInput.split(body, resource, action_struct, link_opts(resource, opts)),
+         :ok <- LinkInput.verify_targets(links, actor: actor, tenant: tenant) do
+      run_write(conn, record, resource, type, action_struct, input, links, actor, tenant, opts)
+    else
+      {:error, _reason, detail} -> send_error(conn, 422, detail)
+    end
+  end
+
+  defp run_write(conn, record, resource, type, action_struct, input, links, actor, tenant, opts) do
+    action = action_struct.name
 
     case action_struct.type do
       :destroy ->
@@ -452,9 +468,12 @@ defmodule AshHateoas.Hydra.Plug do
         |> respond_destroy(conn, resource, type, actor, tenant, opts)
 
       :update ->
+        {keys, managed} = LinkInput.partition(links, resource, action_struct)
+
         safe(fn ->
           record
-          |> Ash.Changeset.for_update(action, input, actor: actor, tenant: tenant)
+          |> Ash.Changeset.for_update(action, Map.merge(input, keys), actor: actor, tenant: tenant)
+          |> LinkInput.manage(managed)
           |> Ash.update(authorize?: true)
         end)
         |> respond_write(conn, resource, type, actor, tenant, opts, [])
@@ -484,7 +503,7 @@ defmodule AshHateoas.Hydra.Plug do
   # Renders the resulting record as a fresh node (a write returns the new state).
   defp respond_write({:ok, record}, conn, resource, type, actor, tenant, opts, write_opts) do
     id = record_id(record)
-    node = node(record, type, resource, id, actor, tenant, opts)
+    node = record |> forget_links(resource) |> node(type, resource, id, actor, tenant, opts)
     context = document_context(conn, opts, resource)
     status = if Keyword.get(write_opts, :created, false), do: 201, else: 200
     send_json(conn, status, Map.put(node, "@context", context))
@@ -494,6 +513,24 @@ defmodule AshHateoas.Hydra.Plug do
     send_ash_error(conn, error)
   end
 
+  # Managing a relationship leaves its target loaded on the result, which would
+  # expand that one link and reference every other — a shape decided by how the
+  # write ran rather than by what the action declares. A write returns the new
+  # state of the record it wrote, so its links are references, the same as a
+  # read of a resource that loads nothing.
+  defp forget_links(record, resource) do
+    resource
+    |> public_relationships()
+    |> Enum.reduce(record, fn relationship, acc ->
+      Map.put(acc, relationship.name, %Ash.NotLoaded{
+        type: :relationship,
+        field: relationship.name
+      })
+    end)
+  rescue
+    _ -> record
+  end
+
   # A destroy returns the record it destroyed.
   #
   # The alternative — 204 with an empty body — makes a client that wants to show
@@ -501,11 +538,10 @@ defmodule AshHateoas.Hydra.Plug do
   # Ash hands the record back for the asking (`return_destroyed?: true`), so the
   # information is already there; sending it costs one render.
   #
-  # **The node carries no operations.** `node/7` would gate and attach the usual
-  # affordances, and every one of them addresses a record that no longer exists
-  # — a client following `update` on this node gets a 404, having been told it
-  # was available. So the representation is the record's final state and nothing
-  # more: what it *was*, not what may be done to it.
+  # **The node carries no operations.** Every affordance would address a record
+  # that no longer exists, so a client following `update` on this node gets a
+  # 404 having been told it was available. The representation is the record's
+  # final state and nothing more: what it *was*, not what may be done to it.
   #
   # `hydra:returns` names this class rather than `owl:Nothing`, and the two must
   # stay in step — see `Renderer.put_returns/3`.
@@ -552,20 +588,32 @@ defmodule AshHateoas.Hydra.Plug do
 
   # ── Node building ─────────────────────────────────────────────────────────
 
-  # A resource node: its attributes flattened onto the node, its identity, and
-  # (for a member) its gated operations + structural navigation.
+  # A resource node: its attributes flattened onto the node, its identity, its
+  # relationship links, and (for a member) its gated operations + structural
+  # navigation.
   defp node(record, type, resource, id, actor, tenant, opts, node_opts \\ []) do
+    href = member_href(resource, id, opts)
+
     base =
       record
       |> attributes(resource, opts)
       |> Map.merge(%{
-        "@id" => member_href(resource, id, opts),
+        "@id" => href,
         "@type" => Context.node_type(type, AshHateoas.Resource.Info.semantic_type(resource))
       })
 
+    # A node already rendered further up the graph is referenced rather than
+    # rendered again — the link says the same thing, and a cycle
+    # (comment → document → comment) would otherwise not terminate.
+    visited = MapSet.put(Keyword.get(node_opts, :visited, MapSet.new()), href)
+    link_opts = Keyword.put(opts, :visited, visited)
+
     case Keyword.get(node_opts, :scope, :member) do
-      :collection ->
-        base
+      # A node reached through a link or as a collection member: its own data
+      # and its own links, but no operations — an affordance belongs on the
+      # node it addresses, one URL away.
+      :linked ->
+        merge_relationships(base, record, resource, id, link_opts)
 
       :member ->
         operations =
@@ -587,22 +635,158 @@ defmodule AshHateoas.Hydra.Plug do
         base
         |> Map.merge(operations)
         |> merge_navigation(nav, opts)
-        |> merge_relationship_links(resource, id, opts)
+        |> merge_relationships(record, resource, id, link_opts)
     end
   end
 
-  # A public to-many relationship derives a `:related` route
-  # (`/base/:id/<name>`); surface it on the node as a followable link to that
-  # related collection, keyed by the relationship name. The property is declared
-  # a `hydra:Link` in the ApiDocumentation, so a client knows the key is a link.
-  defp merge_relationship_links(node, resource, id, opts) do
+  # Every public relationship surfaces on the node as a link, keyed by the
+  # relationship name. Each property is declared a `hydra:Link` in the
+  # ApiDocumentation, so a client knows the key is a link.
+  #
+  # What the link carries depends on whether the relationship was loaded:
+  #
+  #   * **Not loaded** — a node reference. A to-many references its related
+  #     collection (the `:related` route, `/base/:id/<name>`); a `belongs_to`
+  #     references the target member, built from the local foreign key without
+  #     reading the target. A `has_one` keeps its key on the destination, so it
+  #     has nothing local to reference and appears only when loaded.
+  #   * **Loaded** (`Ash.load/3`, an action preparation, a query load) — the
+  #     target rendered in place, carrying its own `@id`, recursively.
+  #
+  # Both forms are the same graph: expansion states the target's own triples
+  # alongside the link rather than in a separate response. The reference is the
+  # identity either way, so a client may follow or read, and gets the same
+  # answer.
+  defp merge_relationships(node, record, resource, id, opts) do
+    related =
+      resource
+      |> AshHateoas.Resource.Info.routes()
+      |> Enum.filter(&(&1.type == :related))
+      |> Map.new(&{&1.relationship, &1})
+
     resource
-    |> AshHateoas.Resource.Info.routes()
-    |> Enum.filter(&(&1.type == :related))
-    |> Enum.reduce(node, fn route, acc ->
-      url = href_prefix(opts) <> fill(route.route, id, opts)
-      Map.put(acc, to_string(route.relationship), %{"@id" => url, "@type" => "Collection"})
+    |> public_relationships()
+    |> Enum.reduce(node, fn relationship, acc ->
+      case relationship_link(record, relationship, related[relationship.name], id, opts) do
+        nil -> acc
+        value -> Map.put(acc, to_string(relationship.name), value)
+      end
     end)
+  end
+
+  defp public_relationships(resource) do
+    Ash.Resource.Info.public_relationships(resource)
+  rescue
+    _ -> []
+  end
+
+  defp relationship_link(record, relationship, route, id, opts) do
+    case Map.get(record, relationship.name) do
+      %Ash.NotLoaded{} -> unloaded_link(record, relationship, route, id, opts)
+      nil -> unloaded_link(record, relationship, route, id, opts)
+      loaded -> loaded_link(loaded, relationship, route, id, opts)
+    end
+  end
+
+  # A `belongs_to` reference comes from the local foreign key — no read of the
+  # target. A missing or unselected key yields no property: absent, not null.
+  defp unloaded_link(record, %{type: :belongs_to} = relationship, _route, _id, opts) do
+    case Map.get(record, relationship.source_attribute) do
+      key when is_binary(key) or is_integer(key) ->
+        member_ref(relationship.destination, key, opts)
+
+      _missing ->
+        nil
+    end
+  end
+
+  defp unloaded_link(_record, %{cardinality: :one}, _route, _id, _opts), do: nil
+
+  defp unloaded_link(_record, _relationship, %Route{} = route, id, opts) do
+    collection_ref(route, id, opts)
+  end
+
+  defp unloaded_link(_record, _relationship, nil, _id, _opts), do: nil
+
+  # A loaded to-one: the target node in place of its reference.
+  defp loaded_link(target, %{cardinality: :one} = relationship, _route, _id, opts)
+       when is_struct(target) do
+    expanded_node(target, relationship.destination, opts)
+  end
+
+  # A loaded to-many: the related collection, stated here rather than one fetch
+  # away. Its `@id` is the same URL the unloaded reference carries, so
+  # expansion never changes what the property points at.
+  defp loaded_link(targets, relationship, %Route{} = route, id, opts) when is_list(targets) do
+    members =
+      targets
+      |> Enum.map(&expanded_node(&1, relationship.destination, opts))
+      |> Enum.reject(&is_nil/1)
+
+    route
+    |> collection_ref(id, opts)
+    |> Map.merge(%{"hydra:member" => members, "hydra:totalItems" => length(members)})
+  end
+
+  defp loaded_link(_targets, _relationship, _route, _id, _opts), do: nil
+
+  # A target rendered in place. Already-visited nodes degrade to a bare
+  # reference: the same statement, and what stops a cycle from recursing.
+  defp expanded_node(target, destination, opts) do
+    id = record_id(target)
+    href = member_href(destination, id, opts)
+    visited = Keyword.get(opts, :visited, MapSet.new())
+
+    cond do
+      is_nil(href) ->
+        nil
+
+      MapSet.member?(visited, href) ->
+        %{"@id" => href}
+
+      true ->
+        type = AshHateoas.Resource.Info.type(destination)
+
+        target
+        |> node(type, destination, id, nil, nil, opts, scope: :linked, visited: visited)
+        |> put_scoped_terms(destination)
+    end
+  end
+
+  # An expanded node carries the DESTINATION's keys — `owner_id` on a Document,
+  # `article` on a Comment — while the document's `@context` binds the keys of
+  # the resource that was requested. A key no term defines is silently dropped
+  # by a JSON-LD processor, so without this the target's data expands to
+  # nothing: present in the JSON, absent from the graph.
+  #
+  # JSON-LD 1.1 lets a node object carry its own `@context`, scoped to that
+  # subtree. The bindings are the very ones a read of the target on its own
+  # would emit (`Context.node_terms/1`), which is what makes a node expand to
+  # the same triples whether it is reached directly or through a link.
+  defp put_scoped_terms(node, destination) do
+    case Context.node_terms(destination) do
+      terms when map_size(terms) == 0 -> node
+      terms -> Map.put(node, "@context", terms)
+    end
+  end
+
+  defp collection_ref(%Route{} = route, id, opts) do
+    url = href_prefix(opts) <> fill(route.route, id, opts)
+    %{"@id" => url, "@type" => "Collection"}
+  end
+
+  # A node reference to another resource's member: the target's primary `:get`
+  # route with the key filled in. A route still carrying a placeholder after
+  # filling (an owned target whose owner id this request never saw) is not an
+  # address, so no reference is emitted.
+  defp member_ref(destination, key, opts) do
+    with %Route{} = route <- get_route(destination, &(&1.type == :get and &1.primary?)),
+         filled = fill(route.route, key, opts),
+         false <- String.contains?(filled, ":") do
+      %{"@id" => href_prefix(opts) <> filled}
+    else
+      _ -> nil
+    end
   end
 
   defp attributes(record, resource, opts) do
@@ -642,10 +826,9 @@ defmodule AshHateoas.Hydra.Plug do
   # (`{"@id", "@type"}`), so a strict client recognises the target's kind
   # without decoding a private `rel` token.
   #
-  # `collection` is the only one. There used to be `up`, rendered as
-  # `hydra:view` and pointing at `/` — a record's "owning
-  # collection-of-collections", which is not a resource. A record's honest
-  # parent is its collection, and that is what `hydra:collection` already says.
+  # `collection` is the only one: a record's parent is its collection, which is
+  # exactly what `hydra:collection` says. Anything above that would be a
+  # collection-of-collections, which is not a resource.
   #
   # Note `hydra:view` itself remains in use, for what it is actually for:
   # `Collection.wrap/2` emits a `hydra:PartialCollectionView` under it when a
@@ -807,12 +990,11 @@ defmodule AshHateoas.Hydra.Plug do
   # Every `:name` segment a path fills in, as `%{"name" => value}` — or `nil`
   # when the path does not match the pattern at all.
   #
-  # This used to return one id, folding over the segments and keeping the last
-  # `:id` it saw. A nested route has two — `/ledger/:ledger_id/entry/:id` — and
-  # under the old shape the owner's id was silently discarded, so an entry
-  # resolved regardless of which ledger was named. A map keeps both, and
-  # keeps them distinguishable: the record's own is `:id`, and an owner's is
-  # named after the relationship (`:ledger_id`), which is why
+  # A map rather than a single id, because a nested route carries two —
+  # `/ledger/:ledger_id/entry/:id` — and both constrain the read: an entry must
+  # resolve under the ledger that was named, not merely exist. They stay
+  # distinguishable by name: the record's own is `:id`, an owner's is named
+  # after the relationship (`:ledger_id`), which is why
   # `DeriveActionRoutes.owner_prefix/2` does not spell it `:id` too.
   defp capture_params(pattern, path) do
     pattern_segs = String.split(pattern, "/", trim: true)
@@ -1027,6 +1209,18 @@ defmodule AshHateoas.Hydra.Plug do
   defp affordance_opts(resource, opts) do
     domain = Ash.Resource.Info.domain(resource)
     [domain: domain, domains: opts[:domains]]
+  end
+
+  # What `LinkInput` needs to resolve an IRI back to a resource: the route
+  # table's domains, and the prefix/origin the rendered hrefs carry — so the
+  # URLs this API issues are the URLs it accepts.
+  defp link_opts(resource, opts) do
+    [
+      resource: resource,
+      domains: opts[:domains],
+      prefix: opts[:prefix],
+      base_url: opts[:base_url]
+    ]
   end
 
   defp render_opts(type, resource, opts, extra \\ []) do

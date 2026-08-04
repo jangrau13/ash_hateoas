@@ -144,7 +144,7 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:title" => name,
       "hydra:description" => Enum.join(description),
       "hydra:readable" => true,
-      "hydra:writeable" => false,
+      "hydra:writable" => false,
       "rdfs:range" => %{"@id" => range}
     }
     |> put_unless_nil("sh:class", member_class && %{"@id" => member_class})
@@ -157,14 +157,14 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   # is that second entry.
   #
   # The companion is a *description* keyed by the well-known IRI, not a claim
-  # about it. It used to carry `owl:equivalentClass` back to the local class,
-  # which asserted the two are the same set — almost never true, since a local
-  # Person has an id, a tenant and domain rules `schema:Person` knows nothing
-  # of. Worse, equivalence licenses substitution both ways, so a reasoner could
+  # about it. It carries no `owl:equivalentClass` back to the local class:
+  # equivalence asserts the two are the same set, which is almost never true —
+  # a local Person has an id, a tenant and domain rules `schema:Person` knows
+  # nothing of — and it licenses substitution both ways, letting a reasoner
   # conclude things about schema.org's class from statements about ours.
   #
-  # The honest relation is `rdfs:subClassOf`, and it is asserted once in the
-  # ontology block rather than twice here. See `AshHateoas.Hydra.Ontology`.
+  # The relation that holds is `rdfs:subClassOf`, asserted once in the ontology
+  # block rather than twice here. See `AshHateoas.Hydra.Ontology`.
   defp supported_classes(resource, type) do
     case AshHateoas.Resource.Info.semantic_type(resource) do
       nil ->
@@ -228,14 +228,14 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   #
   # So the term is declared in `AshHateoas.Hydra.Ontology` as an
   # `owl:AnnotationProperty`, deliberately **not** a subproperty of
-  # `owl:hasKey`. It was one until this change, and the claim was unsound twice
-  # over: `owl:hasKey` is a class axiom taking an `rdf:List`, so it cannot sit
-  # on a property node at all; and since `ah:identity` names a *business* key, a
-  # domain where two records legitimately share a name would have them merged
-  # and their properties unioned — the corruption the term exists to prevent.
+  # `owl:hasKey`. Such a claim would be unsound twice over: `owl:hasKey` is a
+  # class axiom taking an `rdf:List`, so it cannot sit on a property node at
+  # all; and since `ah:identity` names a *business* key, a domain where two
+  # records legitimately share a name would have them merged and their
+  # properties unioned — the corruption the term exists to prevent.
   #
-  # What it actually means is "unique within its parent" — scoped uniqueness,
-  # which OWL cannot express.
+  # What it means is "unique within its parent" — scoped uniqueness, which OWL
+  # cannot express.
   #
   # A composite identity keys on several properties at once, so each entry is
   # itself a list.
@@ -289,23 +289,21 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
           # `hydra:property` ranges over rdf:Property, so this is a reference to
           # the property — and only a reference.
           #
-          # The value's type used to travel alongside it here, as `sh:datatype`
-          # / `sh:nodeKind` / `rdfs:range`. It is a fact about the *property*,
-          # so it now lives on the property's own declaration in the ontology,
-          # stated once instead of at every site the property is used. A
-          # consumer follows the `@id`.
+          # The value's type is a fact about the *property*, so it lives on the
+          # property's own declaration in the ontology as `sh:datatype` /
+          # `sh:nodeKind` / `rdfs:range` — stated once instead of at every site
+          # the property is used. A consumer follows the `@id`.
           #
-          # Note the same keys survive on an operation's **input** properties
-          # (`Renderer.put_type_info/2`), and must: an argument is not a
-          # property of any class, so the ontology declares none, and stripping
-          # them there would leave every input field untyped. Measured — it
-          # collapses boolean, integer and ref to string, which is precisely the
-          # bug that typed every MCP field `"string"`.
+          # Note the same keys DO belong on an operation's **input** properties
+          # (`Renderer.put_type_info/2`): an argument is not a property of any
+          # class, so the ontology declares none for it, and omitting them
+          # there would leave every input field untyped — collapsing boolean,
+          # integer and reference alike to string.
           "hydra:property" => %{"@id" => property_id},
           "hydra:title" => to_string(attribute.name),
           "hydra:required" => not Map.get(attribute, :allow_nil?, true),
           "hydra:readable" => true,
-          "hydra:writeable" => Map.get(attribute, :writable?, true)
+          "hydra:writable" => Map.get(attribute, :writable?, true)
         }
         |> put_unless_nil("hydra:description", Map.get(attribute, :description))
       end)
@@ -317,17 +315,16 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   # node typed `hydra:Link`, so a client knows the key on a record is a
   # followable link rather than a literal value.
   #
-  # Both cardinalities are described. To-MANY comes from a routed `:related`
-  # route (the link is to a collection). To-ONE has no route by design — a to-one
-  # is served as an inline node reference rather than a collection route (see
-  # `DeriveRelationshipRoutes`) — but it is still part of the class's shape, so
-  # it belongs in the catalogue. Omitting it left roughly half the graph edges
-  # undescribed, invisible to any client deriving structure from the
-  # documentation.
+  # Both cardinalities are described. A to-MANY has a routed `:related` route,
+  # so the link is to a collection. A to-ONE has no route: it is carried on the
+  # record itself as a node reference. Either way it is part of the class's
+  # shape and belongs in the catalogue — omitting the to-one would leave
+  # roughly half the graph edges undescribed, invisible to any client deriving
+  # structure from the documentation.
   #
-  # Each link carries `sh:class`: the IRI of the class it points AT. Without it
-  # a link says only "this is followable", never "→ what", which is not enough
-  # for a client to resolve the reference to a described class.
+  # What the link points AT is `rdfs:range` on the property's own declaration
+  # in the ontology, stated once rather than restated at every site the
+  # property appears.
   defp link_properties(resource, type) do
     routed = MapSet.new(routes(resource), fn %Route{} = route -> route.relationship end)
 
@@ -335,35 +332,25 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       resource
       |> routes()
       |> Enum.filter(&(&1.type == :related))
-      |> Enum.map(&link_property(resource, type, &1.relationship, "Collection"))
+      |> Enum.map(&link_property(resource, type, &1.relationship))
 
     # Public to-one relationships, which are never routed.
     to_one =
       resource
       |> Ash.Resource.Info.public_relationships()
       |> Enum.filter(&(&1.cardinality == :one and &1.name not in routed))
-      |> Enum.map(&link_property(resource, type, &1.name, nil))
+      |> Enum.map(&link_property(resource, type, &1.name))
 
     to_many ++ to_one
   end
 
   # One `hydra:Link` property.
   #
-  # Cardinality is no longer marked here. It used to be `ah:targetKind:
-  # "Collection"` on the to-many, a minted term saying what the property's
-  # `rdfs:range` now says in the ontology: a to-many ranges over a
-  # `hydra:Collection` subclass carrying a `hydra:memberAssertion`, a to-one
-  # over the destination class itself. A client reads the range either way.
-  defp link_property(_resource, type, name, _target_kind) do
-    # A bare reference. What the link points AT used to travel here as
-    # `sh:class` — a per-usage constraint restating the same target wherever the
-    # property appeared — and is now `rdfs:range` on the property's own
-    # declaration in the ontology, said once.
-    #
-    # `sh:class` survives on an operation's **input** properties, where it names
-    # the classes a document may contain. That is a different statement: the
-    # save operation's `document` argument is a genuine per-usage constraint
-    # over a heterogeneous array, and no declared property range could carry it.
+  # Cardinality is not marked here: the property's `rdfs:range` in the ontology
+  # already says it — a to-many ranges over a `hydra:Collection` subclass
+  # carrying a `hydra:memberAssertion`, a to-one over the destination class
+  # itself.
+  defp link_property(resource, type, name) do
     property = %{
       "@id" => Context.property_iri(type, name),
       "@type" => "hydra:Link"
@@ -374,9 +361,50 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
       "hydra:property" => property,
       "hydra:title" => to_string(name),
       "hydra:readable" => true,
-      "hydra:writeable" => false
+      "hydra:writable" => writable_link?(resource, name)
     }
   end
+
+  # A link is writable when some write action can set it: the client names a
+  # target (by IRI or by declared identity) and the server relates it.
+  #
+  # Two ways an action can. It may take the relationship as an **argument** —
+  # `change manage_relationship(:author, ...)` — which is the author's own
+  # handling. Or, for a `belongs_to`, it may **accept the foreign key**, which
+  # is the attribute a resolved link writes.
+  #
+  # Saying `false` where a write is possible is what leaves a client guessing
+  # which links it may set; saying `true` where none is would advertise an
+  # affordance the write path refuses.
+  defp writable_link?(resource, name) do
+    case Ash.Resource.Info.relationship(resource, name) do
+      nil ->
+        false
+
+      relationship ->
+        resource
+        |> Ash.Resource.Info.actions()
+        |> Enum.filter(&(&1.type in [:create, :update]))
+        |> Enum.any?(&manages?(&1, relationship))
+    end
+  rescue
+    _ -> false
+  end
+
+  defp manages?(action, relationship) do
+    argument?(action, relationship.name) or accepts_foreign_key?(action, relationship)
+  end
+
+  defp argument?(%{arguments: arguments}, name) when is_list(arguments),
+    do: Enum.any?(arguments, &(&1.name == name))
+
+  defp argument?(_action, _name), do: false
+
+  defp accepts_foreign_key?(%{accept: accept}, %{type: :belongs_to} = relationship)
+       when is_list(accept),
+       do: relationship.source_attribute in accept
+
+  defp accepts_foreign_key?(_action, _relationship), do: false
 
   @doc """
   The `hydra:supportedOperation` list from a resource's derived routes.

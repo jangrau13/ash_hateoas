@@ -310,13 +310,13 @@ defmodule AshHateoas.Hydra.Ontology do
   #
   # Both types earn their place. `owl:ObjectProperty` says the values are
   # individuals rather than literals — the ontology question. `hydra:Link` says
-  # the value is *meant to be fetched* — the transport question. A foreign key
-  # by id would be `owl:ObjectProperty` alone, a distinction the old encoding
-  # (`@type: hydra:Link` and nothing else) could not express.
+  # the value is *meant to be fetched* — the transport question. Both are
+  # needed: a foreign key by id would be `owl:ObjectProperty` alone, and
+  # `hydra:Link` alone would not say the values are individuals.
   #
-  # `rdfs:range` replaces the per-usage `sh:class`. The range is a fact about
-  # the property and belongs on it; `sh:class` restated the same target at every
-  # site it appeared, which is a shape that permits drift.
+  # The target is `rdfs:range`, not a per-usage `sh:class`. The range is a fact
+  # about the property and belongs on it; restating the same target at every
+  # site the property appears is a shape that permits drift.
   defp relationship_nodes(resource, type) do
     routed = MapSet.new(routes(resource), & &1.relationship)
 
@@ -386,10 +386,10 @@ defmodule AshHateoas.Hydra.Ontology do
   # — "clients would understand that all members of collections which are
   # instances of api:UserCollections would in fact have rdf:type api:User".
   #
-  # It replaces `ah:targetKind: "Collection"`, which carried the same fact in a
-  # minted term. Two standard terms for one local one, and they say strictly
-  # more: `ah:targetKind` marked a property as to-many while the member class
-  # sat separately on `sh:class`, whereas this states the relation between them.
+  # Two standard terms rather than a minted one, and they say strictly more
+  # than a `targetKind: "Collection"` marker would: they state the relation
+  # between the collection and its member class rather than leaving the two
+  # facts side by side.
   #
   # Note the member class cannot simply be the property's `rdfs:range`: the
   # value is the collection, so a range naming the member would assert the

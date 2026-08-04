@@ -26,7 +26,7 @@ defmodule AshHateoas.RootActions do
 
   ## Every error, not the first
 
-  Elements are cast **individually**. Casting the list into an embedded array
+  Elements are cast **individually**. Casting the list as one array type
   would stop at the first bad element, which would give an author one error per
   round-trip — the "fix one, discover the next" loop this design exists to
   avoid. `Ash.Changeset.for_create/4` accumulates every bad field within an

@@ -52,53 +52,25 @@ defmodule AshHateoas.Hydra.Context do
         "odrl" => "http://www.w3.org/ns/odrl/2/",
         "sh" => "http://www.w3.org/ns/shacl#",
         "jsonschema" => "https://www.w3.org/2019/wot/json-schema#",
-        # `ah:identity` names the properties that key a class — what a client
-        # matches on when it edits an existing record. No published vocabulary
-        # says that without dragging something else along, so the term is
-        # declared in `AshHateoas.Hydra.Ontology` as an annotation property.
-        #
-        # It used to be declared here as `rdfs:subPropertyOf owl:hasKey`, and
-        # that was unsound twice over. `owl:hasKey` is a *class* axiom, taking a
-        # class expression and an `rdf:List` of properties — it cannot sit on a
-        # property node, and the nested-array value here is not an `rdf:List`
-        # anyway. And it licenses a reasoner to infer `owl:sameAs` between
-        # individuals sharing key values, which for a *business* key like a name
-        # means two legitimately distinct records get merged and their
-        # properties unioned. That is the data corruption the term exists to
-        # prevent, arrived at by declaring the term.
-        #
-        # The value is a list of identities, each itself a list of properties,
-        # since a composite key names several at once. That nesting is left as
-        # plain JSON rather than declared with `@container`, which cannot
-        # express a list of lists.
-        #
-        # ## Why no `ah:` term is defined here any more
-        #
-        # This map used to carry four entries of the form
-        #
-        #     "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}}
-        #
-        # — `ah:SaveAction`, `ah:RunAction`, `ah:ValidationReport` and
-        # `ah:ValidationError`, each stating a superclass. They looked harmless
-        # and they broke the entire document.
+        # ## Why this map declares prefixes and nothing else
         #
         # A `@context` maps *terms to IRIs*. A term definition's value may be a
         # string, or an object built from JSON-LD keywords (`@id`, `@type`,
-        # `@container`, …) — it may **not** carry arbitrary RDF. `rdfs:subClassOf`
-        # is not a keyword, so each of these is an **invalid term definition**,
-        # and a conformant JSON-LD 1.1 processor does not skip it: it raises and
-        # refuses the whole document. Verified with `pyld` — every emitted
-        # ApiDocumentation failed to expand, so nothing downstream of an
-        # expansion step ever saw a single triple.
+        # `@container`, …) — it may **not** carry arbitrary RDF. An entry like
         #
-        # It went unseen because every test asserted on the raw JSON, where the
-        # entries look fine and the keys are present. That is exactly why the
-        # ontology's own tests assert on expanded N-Quads instead.
+        #     "ah:SaveAction" => %{"rdfs:subClassOf" => %{"@id" => "schema:UpdateAction"}}
         #
-        # The axioms themselves were worth stating; only the location was wrong.
-        # They now live in `AshHateoas.Hydra.Ontology`, in the `@included` block,
-        # where a superclass is an ordinary triple rather than a malformed
-        # mapping.
+        # is an **invalid term definition**, and a conformant JSON-LD 1.1
+        # processor does not skip it: it raises and refuses the whole document,
+        # so nothing downstream of an expansion step sees a single triple. The
+        # raw JSON looks fine either way, which is why the ontology's tests
+        # assert on expanded N-Quads rather than on keys.
+        #
+        # Class and property axioms belong in `AshHateoas.Hydra.Ontology`, in
+        # the `@included` block, where a superclass is an ordinary triple. That
+        # is also where `ah:identity` — the properties that key a class, which a
+        # client matches on when editing an existing record — is declared, as an
+        # annotation property.
         "rdfs" => "http://www.w3.org/2000/01/rdf-schema#",
         # Needed by the ontology block: a union-typed property is declared a
         # bare `rdf:Property`, since OWL keeps object and datatype properties
@@ -132,24 +104,17 @@ defmodule AshHateoas.Hydra.Context do
 
   ## Why every key, not only the mapped ones
 
-  This used to bind *only* `semantic_property` mappings, and the result was that
-  instance data and vocabulary never met. Measured by expanding a real node with
-  a JSON-LD 1.1 processor — the raw JSON looks fine either way, which is why it
-  went unseen:
+  Binding only `semantic_property` mappings would leave instance data and
+  vocabulary unable to meet, and it would fail in two ways a reader of the raw
+  JSON cannot see — the document looks identical either way:
 
-  | key | before | after |
-  |---|---|---|
-  | `comments` | **no triple at all** | `vocab#article/comments` |
-  | `id` | **no triple at all** | `vocab#article/id` |
-  | `title` | `hydra:title` | `vocab#article/title` |
-  | `name` | `hydra:name` | `vocab#person/name` |
-
-  Two distinct failures, and the second is the worse one. An **unbound** key is
-  *silently dropped* — a JSON-LD processor discards what it cannot resolve, so
-  every relationship link on every record node produced zero triples. A key the
-  referenced Hydra context happens to define is **captured**: `title` and `name`
-  are Hydra terms, so a record's own `name` expanded to `hydra:name` — "the name
-  of the link" — which is not a drop but a wrong triple a reasoner will consume.
+  - An **unbound** key is *silently dropped*. A JSON-LD processor discards what
+    it cannot resolve, so every relationship link on every record node would
+    produce zero triples.
+  - A key the referenced Hydra context happens to define is **captured**.
+    `title` and `name` are Hydra terms, so a record's own `name` would expand
+    to `hydra:name` — "the name of the link" — a wrong triple a reasoner will
+    consume, which is worse than a drop.
 
   The `@context` array is ordered and later entries win, so these bindings
   override the Hydra context for the node's own keys while leaving the Hydra
@@ -211,9 +176,10 @@ defmodule AshHateoas.Hydra.Context do
   @doc """
   The term bindings for a resource's node keys: flat key → property IRI.
 
-  Public because both the member node and the nodes embedded in a collection
-  need them, and they must be identical — a member read on its own and the same
-  member read inside its collection cannot expand to different triples.
+  Public because a node needs them wherever it appears — read on its own, as a
+  collection member, or reached through an expanded link — and they must be
+  identical, since one record cannot expand to different triples depending on
+  how it was reached.
   """
   @spec node_terms(module()) :: %{String.t() => String.t()}
   def node_terms(resource) do
@@ -244,15 +210,13 @@ defmodule AshHateoas.Hydra.Context do
     _ -> %{}
   end
 
-  # Only the to-many relationships a node actually emits a key for — the
-  # `:related` routes `Plug.merge_relationship_links/4` folds in. A to-one is
-  # declared in the ontology but never appears as a node key, so binding it here
-  # would define a term nothing uses.
+  # Every public relationship is a node key — a to-many as its related
+  # collection link, a to-one as a node reference (or an expanded node when
+  # loaded) — so every one gets a term.
   defp relationship_terms(resource, type) do
     resource
-    |> AshHateoas.Resource.Info.routes()
-    |> Enum.filter(&(&1.type == :related))
-    |> Map.new(&{to_string(&1.relationship), property_iri(type, &1.relationship)})
+    |> Ash.Resource.Info.public_relationships()
+    |> Map.new(&{to_string(&1.name), property_iri(type, &1.name)})
   rescue
     _ -> %{}
   end

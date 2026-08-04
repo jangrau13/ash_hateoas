@@ -87,9 +87,62 @@ defmodule AshHateoas.Descriptor do
     action
     |> Map.get(:accept, [])
     |> List.wrap()
-    |> Enum.map(&attribute(resource, &1))
-    |> Enum.filter(&(&1 && public?(&1)))
-    |> Enum.map(&to_field/1)
+    |> Enum.map(&accepted_field(resource, &1))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  # An accepted attribute, unless it is a relationship's foreign key — in which
+  # case the field is the RELATIONSHIP: named `author`, typed as a link.
+  #
+  # The key itself never reaches the wire. A client relates one resource to
+  # another by naming the target (`{"author": {"@id": …}}` or a declared
+  # identity), which `AshHateoas.Hydra.LinkInput` resolves back to the key; an
+  # advertised `author_id: xsd:string` would tell that client to send a raw id
+  # instead, which is the one shape the write path does not take.
+  defp accepted_field(resource, name) do
+    case foreign_key_relationship(resource, name) do
+      nil ->
+        case attribute(resource, name) do
+          attribute when not is_nil(attribute) ->
+            if public?(attribute), do: to_field(attribute)
+
+          _ ->
+            nil
+        end
+
+      relationship ->
+        link_field(resource, relationship, name)
+    end
+  end
+
+  defp link_field(resource, relationship, key) do
+    %Field{
+      name: relationship.name,
+      type: "link",
+      allow_nil?: allow_nil?(resource, key),
+      description: Map.get(relationship, :description),
+      default: :error,
+      constraints: %{}
+    }
+  end
+
+  defp allow_nil?(resource, key) do
+    case Ash.Resource.Info.attribute(resource, key) do
+      %{allow_nil?: allow_nil?} -> allow_nil?
+      _ -> true
+    end
+  rescue
+    _ -> true
+  end
+
+  # The public `belongs_to` whose foreign key this is, if any. A private
+  # relationship is not part of the API surface, so its key stays an attribute.
+  defp foreign_key_relationship(resource, name) do
+    resource
+    |> Ash.Resource.Info.public_relationships()
+    |> Enum.find(&(&1.type == :belongs_to and &1.source_attribute == name))
+  rescue
+    _ -> nil
   end
 
   defp attribute(resource, name) do

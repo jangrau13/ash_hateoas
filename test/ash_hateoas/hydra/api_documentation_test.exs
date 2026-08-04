@@ -119,7 +119,101 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     # the property node is typed hydra:Link, so a client knows the key is a link
     assert link["hydra:property"]["@type"] == "hydra:Link"
     assert link["hydra:readable"] == true
-    assert link["hydra:writeable"] == false
+    assert link["hydra:writable"] == false
+  end
+
+  describe "the affordance chain" do
+    test "a writable link leads to the operations of the class it points at" do
+      # What a client has to be able to do from the catalogue alone: holding a
+      # Comment's create operation, discover that `document` is a link, that it
+      # points at Document, and what may be done to a Document — so "the target
+      # does not exist yet" has an answer that is itself an affordance.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      classes = Map.new(doc["hydra:supportedClass"], &{&1["@id"], &1})
+      properties = Map.new(doc["@included"], &{&1["@id"], &1})
+
+      comment = classes["https://ash-hateoas.org/vocab#Comment"]
+
+      # 1. the link property is on the class, typed and writable
+      link =
+        Enum.find(
+          comment["hydra:supportedProperty"],
+          &(&1["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#comment/document")
+        )
+
+      assert link["hydra:property"]["@type"] == "hydra:Link"
+      assert link["hydra:writable"] == true
+
+      # 2. the ontology says where it points
+      property = properties[link["hydra:property"]["@id"]]
+      assert "hydra:Link" in List.wrap(property["@type"])
+      range = property["rdfs:range"]["@id"]
+      assert range == "https://ash-hateoas.org/vocab#Document"
+
+      # 3. the range class advertises its own operations — the chain closes,
+      #    and it closes for every verb, not only create.
+      target = classes[range]
+
+      methods =
+        target["hydra:supportedOperation"]
+        |> Enum.map(& &1["hydra:method"])
+        |> Enum.uniq()
+
+      for verb <- ["GET", "POST", "PATCH", "DELETE"] do
+        assert verb in methods, "expected the target class to advertise #{verb}"
+      end
+    end
+
+    test "a write operation expects the LINK, never the foreign key" do
+      # The catalogue has to describe the shape the write path actually takes.
+      # Advertising `document_id: xsd:string` would tell a client to send a raw
+      # id — the one thing the wire format does not carry.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      comment =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Comment")
+        )
+
+      create = Enum.find(comment["hydra:supportedOperation"], &(&1["hydra:method"] == "POST"))
+      expected = create["hydra:expects"]["hydra:supportedProperty"]
+      titles = Enum.map(expected, & &1["hydra:title"])
+
+      assert "document" in titles
+      refute "document_id" in titles
+
+      link = Enum.find(expected, &(&1["hydra:title"] == "document"))
+
+      # Typed as an IRI: the client sends a node reference.
+      assert link["sh:nodeKind"] == "sh:IRI"
+      refute Map.has_key?(link, "sh:datatype")
+
+      # And it is the same property the ontology declares, so the chain from
+      # this input to the target class's operations is one lookup.
+      assert link["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#comment/document"
+    end
+
+    test "a link a client cannot set is not advertised as writable" do
+      # The other half: `writable` is a claim about this API's write path, so a
+      # relationship no action manages must say so.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      article =
+        Enum.find(
+          doc["hydra:supportedClass"],
+          &(&1["@id"] == "https://ash-hateoas.org/vocab#Article")
+        )
+
+      link =
+        Enum.find(
+          article["hydra:supportedProperty"],
+          &(&1["hydra:property"]["@id"] == "https://ash-hateoas.org/vocab#article/comments")
+        )
+
+      assert link["hydra:writable"] == false
+    end
   end
 
   test "a link names the class it points at" do
@@ -635,9 +729,9 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     # reference to the property — and now *only* that.
     assert title["hydra:property"] == %{"@id" => "https://ash-hateoas.org/vocab#document/title"}
 
-    # The datatype used to ride alongside as `sh:datatype`, restated at every
-    # site the property appeared. It is a fact about the property, so it is
-    # declared once on the property itself and a consumer follows the `@id`.
+    # The datatype is a fact about the property, so it is declared once on the
+    # property itself and a consumer follows the `@id` — rather than restated
+    # at every site the property appears.
     refute Map.has_key?(title, "sh:datatype")
 
     declared =
@@ -753,6 +847,103 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
                "#{template["hydra:template"]} uses #{inspect(MapSet.to_list(undescribed))}, " <>
                  "which its mapping does not describe"
       end
+    end
+  end
+
+  describe "the document states each fact once" do
+    # `schema:target` would carry a `urlTemplate`, an `httpMethod` and a
+    # `contentType`, and all three are already stated: the URL by the `@id` of
+    # the node the operation hangs on (Hydra's own rule — an operation is
+    # invoked against its node, which is why `hydra:Operation` has no
+    # target-URL property), the method by `hydra:method` on the operation
+    # itself, and the content type by the API rather than by one operation.
+    #
+    # It was also wrong for as long as it existed. schema.org defines
+    # `urlTemplate` as *"an url template (RFC6570)"*, and RFC 6570 gives `:` no
+    # meaning — so the Plug-spelled `/orders/:id/ship` expanded to **zero**
+    # variables and handed back a literal `:id`. Verified against a real
+    # expander. Rather than teach a redundant statement to spell itself
+    # correctly, the statement went.
+    #
+    # A **declared** `semantic_action` still emits `schema:potentialAction`,
+    # since an operation's role is the one thing Hydra cannot express. What no
+    # longer appears is a subtype *inferred* from the method: 139 of 146 were
+    # `hydra:method` said twice.
+    #
+    # Asserted document-wide, because both failures were categorical — every
+    # template wrong at once, every operation redundant at once — and an
+    # example-based test passes happily while a whole category rots.
+
+    defp nodes_with(doc, key) do
+      collect = fn collect, node, acc ->
+        cond do
+          is_map(node) ->
+            acc = if Map.has_key?(node, key), do: [node | acc], else: acc
+            Enum.reduce(Map.values(node), acc, &collect.(collect, &1, &2))
+
+          is_list(node) ->
+            Enum.reduce(node, acc, &collect.(collect, &1, &2))
+
+          true ->
+            acc
+        end
+      end
+
+      collect.(collect, doc, [])
+    end
+
+    test "no operation carries a schema:target" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      assert nodes_with(doc, "schema:target") == [],
+             "schema:target restates @id, hydra:method and the API's content type"
+    end
+
+    test "no schema:urlTemplate survives anywhere" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      assert nodes_with(doc, "schema:urlTemplate") == [],
+             "the URL is the operation's node @id, stated once"
+    end
+
+    test "a potentialAction appears only where a role was declared" do
+      # `hydra:method` is on the same node, so an inferred subtype adds nothing.
+      # The survivors are the roles a domain declared with `semantic_action` —
+      # including two this library names itself, for roles no published
+      # vocabulary carries.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      types =
+        doc
+        |> nodes_with("schema:potentialAction")
+        |> Enum.map(& &1["schema:potentialAction"]["@type"])
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      assert types != [], "the fixture declares semantic_actions; none reached the wire"
+
+      inferred = ["schema:ReadAction", "schema:CreateAction", "schema:UpdateAction", "schema:DeleteAction"]
+
+      assert Enum.filter(types, &(&1 in inferred)) == [],
+             "a method-inferred subtype reached the wire: #{inspect(types)}"
+    end
+  end
+
+  describe "every IriTemplate variable is described exactly once" do
+    test "a path segment sharing a name with an argument is not mapped twice" do
+      # `/multi_read/{id}/by_id{?id}` has a path `:id` and a query argument also
+      # named `id`. Both were mapped, one claiming required and one not — two
+      # statements about one variable, which is worse than either alone.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+
+      for template <- templates() do
+        vars = Enum.map(template["hydra:mapping"], & &1["hydra:variable"])
+
+        assert vars == Enum.uniq(vars),
+               "#{template["hydra:template"]} maps #{inspect(vars -- Enum.uniq(vars))} more than once"
+      end
+
+      _ = doc
     end
   end
 end

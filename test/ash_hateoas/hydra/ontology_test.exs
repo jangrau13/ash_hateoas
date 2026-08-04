@@ -320,9 +320,9 @@ defmodule AshHateoas.Hydra.OntologyTest do
       # keywords only. An entry like
       # `"ah:SaveAction" => %{"rdfs:subClassOf" => …}` is an invalid term
       # definition, and a conformant processor rejects the **whole document**
-      # rather than skipping it — so every ApiDocumentation emitted before this
-      # failed to expand. It went unseen because tests assert on raw JSON, where
-      # the entry looks fine.
+      # rather than skipping it, so the ApiDocumentation would fail to expand
+      # entirely. Invisible to a test asserting on raw JSON, where the entry
+      # looks fine — hence this check.
       terms = Enum.find(AshHateoas.Hydra.Context.context(), &is_map/1)
 
       for {term, definition} <- terms, is_map(definition) do

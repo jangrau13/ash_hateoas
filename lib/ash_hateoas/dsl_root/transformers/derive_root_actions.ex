@@ -69,11 +69,13 @@ defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
   one — it already knows which classes are elements — but a client reading only
   the wire cannot construct a call from this description.
 
-  Typing it as a generated embedded-resource tree would fix that, since an
-  embedded resource has real attributes for `AshHateoas.Descriptor` to walk.
-  It is deliberately not done here: an embedded resource currently maps to
-  `"string"` in `TypeMapper`, so the wire description would be no better until
-  that and `Descriptor`'s recursion land. When they do, this one line changes
+  Typing it as a generated tree of Ash embedded *types* would fix that, since
+  such a type has real attributes for `AshHateoas.Descriptor` to walk. (Ash's
+  embedded type is a value stored inside an attribute — it has no identity and
+  no URL, so it is not a resource anything links to.) It is deliberately not
+  done here: an embedded type currently maps to `"string"` in `TypeMapper`, so
+  the wire description would be no better until that and `Descriptor`'s
+  recursion land. When they do, this one line changes
   and every aggregate root picks it up on recompile.
 
   Note that the *validation* does not depend on the choice.
