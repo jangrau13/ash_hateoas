@@ -78,9 +78,6 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
 
   defp derive(dsl_state) do
     existing = Transformer.get_persisted(dsl_state, @persisted_routes_key, [])
-    if Transformer.get_persisted(dsl_state, :module) == AshHateoas.Test.Ledger do
-      IO.puts(">>> LEDGER existing=#{inspect(length(existing))} read=#{inspect(primary_read(dsl_state))} base=#{inspect(base(existing))} routable=#{inspect(Enum.map(routable(dsl_state), & &1.name))}")
-    end
 
     with read when not is_nil(read) <- primary_read(dsl_state),
          base when not is_nil(base) <- base(existing),
@@ -177,5 +174,4 @@ defmodule AshHateoas.Resource.Transformers.DeriveRelationshipRoutes do
   rescue
     _ -> false
   end
-
 end
