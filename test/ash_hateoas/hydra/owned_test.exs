@@ -1,28 +1,43 @@
 defmodule AshHateoas.Hydra.OwnedTest do
   @moduledoc """
-  A resource that declares an owner is addressed through it.
+  A resource is connected to another by a **link**, and by nothing else.
 
-      /domain/ledger/<ledger-id>/entry/<entry-id>
+      /domain/entry/<entry-id>
 
-  `owned_by :ledger` names a **relationship**, so the destination — and
-  therefore what the URL nests under — is read from the data model rather than
-  restated. The declaration cannot disagree with the relationship it names, and
-  `ash_hateoas` learns what owns what without learning what a ledger *is*.
+  `Entry.ledger` is required — an entry has no independent existence — and the
+  address says nothing about it. That separation is what these tests pin.
 
-  ## What the nesting has to be, to be worth anything
+  ## Why the URL stopped carrying the owner
 
-  A URL that merely *looks* nested is decoration. These tests pin the two
-  properties that make it a constraint:
+  It used to nest, and the two spellings disagreed about identity:
 
-    * a record id under the **wrong** owner is a 404, not a redirect and not a
-      silent success — otherwise the owner segment is ignored and the address
-      lies about containment
-    * there is **no** flat collection — a list of every entry across every
-      ledger is not a resource this domain has, and keeping one would be the
-      single URL still implying entries exist independently
+    * **a link says a record *is* a URL.** `LinkInput` resolves an IRI by
+      matching its path against the same derived routes that serve a GET, so the
+      URLs the API issues are the URLs it accepts. One record, one address.
+    * **nesting said a record is a URL *plus the path you came by*.** The same
+      entry under another ledger segment was a 404 rather than the same record,
+      so its identity was not its IRI alone.
 
-  Both are asserted on what the router *does*, not on the shape of the route
-  string.
+  For a graph that is fatal rather than stylistic. A triple names its subject by
+  IRI; if the IRI carries the containment then the containment cannot *be* a
+  triple, and the edge the domain most cares about is structure no reasoner ever
+  sees. A client holding `{"ledger": {"@id": …}}` and a record id also had no
+  way to build the address without knowing the nesting convention out of band —
+  which is what Richardson Level 3 forbids.
+
+  ## What these tests assert
+
+    * the member is flat, and it is the **only** address
+    * the collection exists — `Ash.read(Entry)` was always a legitimate query,
+      and a collection is its representation. What the domain lacks is not the
+      *list* but a reason to privilege it
+    * the edge is stated as a link, in both directions
+    * a write names the ledger by IRI rather than inheriting it from the path
+
+  The wrong-owner-404 tests that stood here have **no successor**: that
+  constraint was the URL's, not the domain's. Its real content — an entry
+  belongs to one ledger — is enforced by the required `belongs_to` and asserted
+  through the link instead.
   """
 
   use ExUnit.Case, async: false
@@ -65,145 +80,188 @@ defmodule AshHateoas.Hydra.OwnedTest do
     {:ok, ledger: ledger, other: other, entry: entry}
   end
 
-  describe "the URL carries the owner" do
-    test "a record resolves under its owner", %{ledger: ledger, entry: entry} do
-      conn = get("/domain/ledger/#{ledger.id}/entry/#{entry.id}")
+  describe "the address is flat" do
+    test "a record resolves at its own URL", %{entry: entry} do
+      conn = get("/domain/entry/#{entry.id}")
 
       assert conn.status == 200
       assert body(conn)["memo"] == "M"
     end
 
-    test "the node's @id is the nested URL, not a flat one", %{ledger: ledger, entry: entry} do
-      node = body(get("/domain/ledger/#{ledger.id}/entry/#{entry.id}"))
-
-      assert node["@id"] == "/domain/ledger/#{ledger.id}/entry/#{entry.id}"
+    test "the node's @id is that URL", %{entry: entry} do
+      # The identity a triple can name. Under nesting this was the path the
+      # client happened to arrive by, which is not a property of the record.
+      assert body(get("/domain/entry/#{entry.id}"))["@id"] == "/domain/entry/#{entry.id}"
     end
 
-    test "no placeholder survives into any advertised URL", %{ledger: ledger, entry: entry} do
-      # The failure this hit three times while being built: nesting adds a
-      # second placeholder to every route, and each href builder substituted
-      # only `:id`. A node then advertises `/ledger/:ledger_id/entry/<id>` —
-      # a pattern rather than an address, and one that 404s.
-      raw = get("/domain/ledger/#{ledger.id}/entry/#{entry.id}").resp_body
+    test "the nested URL is gone", %{ledger: ledger, entry: entry} do
+      # Not merely unadvertised. A second address for one record is two IRIs for
+      # one thing, with nothing on the wire saying they are the same.
+      assert get("/domain/ledger/#{ledger.id}/entry/#{entry.id}").status == 404
+    end
+
+    test "no placeholder survives into any advertised URL", %{entry: entry} do
+      # Kept from the nesting era, where it caught all three href builders. It
+      # is cheaper than it looks and it guards a whole class: an unsubstituted
+      # placeholder is a pattern rather than an address, and it 404s.
+      raw = get("/domain/entry/#{entry.id}").resp_body
 
       refute raw =~ ":ledger_id", "a route placeholder reached the wire"
-
-      # Both spellings, because `schema:urlTemplate` now renders placeholders in
-      # RFC 6570's. That is right in the *documentation*, which describes a
-      # class and has no id to substitute — but a served node was built for one
-      # record, so an unbound `{ledger_id}` here would mean a client following
-      # `schema:target` POSTs to a literal brace. `hateoas2dsl` prefers the
-      # template over the node's own `@id` (`submit.ts:183`), so it would.
       refute raw =~ "{ledger_id}", "an unexpanded variable reached a served node"
       refute raw =~ "{id}", "an unexpanded variable reached a served node"
     end
   end
 
-  describe "the owner is a constraint, not decoration" do
-    test "a record under the WRONG owner is a 404", %{other: other, entry: entry} do
-      # The entry exists and the ledger exists; only the pairing is wrong. A
-      # 200 here would mean the owner segment is ignored, and the URL would be
-      # asserting a containment the server does not check.
-      assert get("/domain/ledger/#{other.id}/entry/#{entry.id}").status == 404
-    end
-
-    test "an unknown owner is a 404 even for a real record", %{entry: entry} do
-      assert get("/domain/ledger/#{Ash.UUID.generate()}/entry/#{entry.id}").status == 404
-    end
-
-    test "a wrong owner is indistinguishable from a missing record", %{
-      other: other,
-      entry: entry
-    } do
-      # Both 404. Checking containment after the read rather than as a filter
-      # keeps a mismatch from confirming the record exists somewhere else.
-      wrong_owner = get("/domain/ledger/#{other.id}/entry/#{entry.id}")
-      missing = get("/domain/ledger/#{other.id}/entry/#{Ash.UUID.generate()}")
-
-      assert wrong_owner.status == missing.status
-      assert body(wrong_owner) == body(missing)
-    end
-
-    test "a nested collection holds only that owner's records", %{
-      ledger: ledger,
-      other: other
-    } do
+  describe "the collection exists" do
+    test "every record is listed, across owners", %{other: other} do
       Entry
       |> Ash.Changeset.for_create(:create, %{memo: "Theirs", ledger_id: other.id})
       |> Ash.create!(authorize?: false)
 
       memos =
-        "/domain/ledger/#{ledger.id}/entry"
+        "/domain/entry"
         |> get()
         |> body()
         |> Map.get("hydra:member")
         |> Enum.map(& &1["memo"])
+        |> Enum.sort()
 
-      assert memos == ["M"]
+      assert memos == ["M", "Theirs"]
+    end
+
+    test "it is a read, not a claim that records float free" do
+      # `Ash.read(Entry)` has always been a legitimate query and this is its
+      # representation. The old docs argued the collection "stops existing"
+      # because a flat list is "not a resource the domain has" — wrong on its
+      # own terms: what the domain lacks is a reason to privilege the list.
+      assert get("/domain/entry").status == 200
     end
   end
 
-  describe "an owned resource has no independent address" do
-    test "the flat member URL does not exist", %{entry: entry} do
-      assert get("/domain/entry/#{entry.id}").status == 404
+  describe "the edge is a link, in both directions" do
+    test "the record carries its ledger as a node reference", %{ledger: ledger, entry: entry} do
+      node = body(get("/domain/entry/#{entry.id}"))
+
+      assert node["ledger"]["@id"] == "/domain/ledger/#{ledger.id}"
     end
 
-    test "the flat collection does not exist" do
-      # A list of every entry across every ledger is not a resource this domain
-      # has. Keeping one would be the single URL still implying an entry stands
-      # on its own.
-      assert get("/domain/entry").status == 404
+    test "the link resolves", %{entry: entry} do
+      # What makes it a link rather than a decoration: the URL the record states
+      # is one the API serves.
+      href = body(get("/domain/entry/#{entry.id}"))["ledger"]["@id"]
+
+      assert get(href).status == 200
+    end
+
+    test "no foreign key is needed to reach the owner", %{entry: entry} do
+      # The point of the link. A client holding the record needs no knowledge of
+      # a nesting convention, and no `ledger_id` to paste into a path it built
+      # itself.
+      node = body(get("/domain/entry/#{entry.id}"))
+
+      assert is_binary(node["ledger"]["@id"])
     end
   end
 
-  describe "writes nest too" do
-    test "a create posts to the nested collection", %{ledger: ledger} do
-      conn = request(:post, "/domain/ledger/#{ledger.id}/entry", %{"memo" => "New"})
+  describe "a write names its parent" do
+    test "a create posts to the flat collection with the ledger as an IRI", %{ledger: ledger} do
+      conn =
+        request(:post, "/domain/entry", %{
+          "memo" => "New",
+          "ledger" => %{"@id" => "/domain/ledger/#{ledger.id}"}
+        })
 
       assert conn.status in [200, 201]
       assert body(conn)["memo"] == "New"
+      assert body(conn)["ledger"]["@id"] == "/domain/ledger/#{ledger.id}"
     end
 
-    test "an update patches the nested member", %{ledger: ledger, entry: entry} do
-      conn =
-        request(:patch, "/domain/ledger/#{ledger.id}/entry/#{entry.id}", %{"memo" => "Changed"})
+    test "an update patches the flat member", %{entry: entry} do
+      conn = request(:patch, "/domain/entry/#{entry.id}", %{"memo" => "Changed"})
 
       assert conn.status == 200
       assert body(conn)["memo"] == "Changed"
     end
 
-    test "an update under the wrong owner is refused", %{other: other, entry: entry} do
-      # The write path has to enforce what the read path enforces, or the
-      # constraint is only advisory — a client that constructs the URL rather
-      # than following it could edit across owners.
-      conn =
-        request(:patch, "/domain/ledger/#{other.id}/entry/#{entry.id}", %{"memo" => "Hijacked"})
+    test "the ledger is not inherited from the path", %{ledger: ledger} do
+      # Under nesting the owner id was merged into the write from the URL. With
+      # a flat address there is nothing to inherit, so a create that names no
+      # ledger must be refused rather than silently taking one.
+      conn = request(:post, "/domain/entry", %{"memo" => "Orphan"})
 
-      assert conn.status == 404
+      refute conn.status in [200, 201],
+             "a required link must be named, not inferred from the address"
 
-      assert Ash.get!(Entry, entry.id, authorize?: false).memo == "M",
-             "the record must be untouched"
+      # And naming it works, which is what proves the refusal is about the
+      # missing link rather than about the route.
+      assert request(:post, "/domain/entry", %{
+               "memo" => "Named",
+               "ledger" => %{"@id" => "/domain/ledger/#{ledger.id}"}
+             }).status in [200, 201]
     end
   end
 
-  describe "being an owner changes nothing about the owner" do
-    test "the owner keeps its flat routes", %{ledger: ledger} do
+  describe "the owner is unaffected" do
+    test "it keeps its own routes", %{ledger: ledger} do
       assert get("/domain/ledger/#{ledger.id}").status == 200
       assert get("/domain/ledger").status == 200
     end
 
-    test "only the child declares the relationship" do
-      # `owned_by` sits on the owned resource, since it is the child whose
-      # addressability depends on the owner. A resource does not become an
-      # owner by being pointed at.
-      assert AshHateoas.Resource.Info.owned_by(Entry) == :ledger
-      assert AshHateoas.Resource.Info.owned_by(Ledger) == nil
+    test "it states its entries when the read loads them", %{ledger: ledger, entry: entry} do
+      # The other direction of the same edge. Being pointed at is a fact about
+      # the relationship, not a declaration either resource makes.
+      assert %{"@type" => "Collection", "hydra:member" => [member]} = loaded(ledger)["entries"]
+      assert member["@id"] == "/domain/entry/#{entry.id}"
+    end
+  end
+
+  describe "a to-many link survives having no route" do
+    test "a loaded collection carries its members", %{ledger: ledger} do
+      # The regression this stage most risks. Both `unloaded_link/5` and
+      # `loaded_link/5` fell through to `nil` without a `%Route{}`, so removing
+      # the related routes without fixing them first makes every to-many link
+      # vanish from every node — "described in the ontology and absent from the
+      # node", which is the defect first-class links were written to fix,
+      # reintroduced from the other end.
+      entries = loaded(ledger)["entries"]
+
+      assert entries["hydra:totalItems"] == 1
+      assert length(entries["hydra:member"]) == 1
     end
 
-    test "the owner is resolved from the relationship, not restated" do
-      # The declaration names a relationship; the destination comes from the
-      # data model. So the two cannot drift.
-      assert %{name: :ledger, destination: Ledger} = AshHateoas.Resource.Info.owner(Entry)
+    test "the collection is a blank node, not a fabricated URL", %{ledger: ledger} do
+      # Honest rather than degraded: this collection is not separately
+      # addressable, it exists as the value of this property on this record.
+      # Minting an `@id` no route serves would be worse than having none.
+      refute Map.has_key?(loaded(ledger)["entries"], "@id")
     end
+
+    test "an unloaded to-many is absent, not empty", %{ledger: ledger} do
+      # Zero members would assert the ledger *has* no entries, which is false —
+      # it has one. Omitting the key means "not loaded", which is what is true.
+      refute Map.has_key?(body(get("/domain/ledger/#{ledger.id}")), "entries")
+    end
+
+    test "members carry their own flat @id, so each is a link and the data", %{
+      ledger: ledger,
+      entry: entry
+    } do
+      [member] = loaded(ledger)["entries"]["hydra:member"]
+
+      assert member["memo"] == "M"
+      assert get(member["@id"]).status == 200
+      assert member["@id"] == "/domain/entry/#{entry.id}"
+    end
+  end
+
+  # This ledger, read by an action that loads `:entries`. A named read derives a
+  # collection index rather than a member route, so the node comes out of
+  # `hydra:member` — which is the same idiom `/comments/with_document` uses.
+  defp loaded(ledger) do
+    "/domain/ledger/with_entries"
+    |> get()
+    |> body()
+    |> Map.get("hydra:member")
+    |> Enum.find(&(&1["@id"] == "/domain/ledger/#{ledger.id}"))
   end
 end

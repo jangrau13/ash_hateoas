@@ -288,40 +288,6 @@ defmodule AshHateoas.Resource do
         (`MyApp.Blog` + `"document"` → `"/blog/document"`).
         """
       ],
-      owned_by: [
-        type: {:or, [:atom, {:literal, nil}]},
-        default: nil,
-        doc: """
-        The `belongs_to` relationship whose destination owns this resource, so
-        its URLs nest under the owner's:
-
-            /blog/document/<document-id>/comment/<comment-id>
-
-        rather than a flat `/blog/comment/<comment-id>`.
-
-        Declare it when a record has no independent existence — when it is
-        reached *through* its owner and means nothing without it. The URL then
-        says what the domain already enforces, and a client reading the address
-        knows the containment without being told separately.
-
-        Two consequences to expect, both intended:
-
-          * **The owner's id is part of the address.** A record id under the
-            wrong owner is a 404, not a redirect — which is what makes the
-            nesting a real constraint rather than decoration.
-          * **There is no global collection.** `/blog/comment` stops existing;
-            only `/blog/document/<id>/comment` remains. A flat list of every
-            comment across every document is not a resource the domain has.
-
-        Names a *relationship*, not a resource, so the destination is read from
-        the relationship itself and the two cannot disagree. The relationship
-        must be `belongs_to` — a to-many owner would not identify one parent for
-        the path.
-
-        Optional and off by default: a resource that stands on its own keeps its
-        flat routes.
-        """
-      ],
       semantic_type: [
         type: {:or, [:string, {:literal, nil}]},
         default: nil,

@@ -109,47 +109,10 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
     with nil <- AshHateoas.Resource.Info.base(dsl_state),
          type when is_binary(type) <- AshHateoas.Resource.Info.type(dsl_state),
          domain when is_binary(domain) <- domain_short_name(dsl_state) do
-      "#{owner_prefix(dsl_state, domain)}/#{type}"
+      "/#{domain}/#{type}"
     else
       declared when is_binary(declared) -> declared
       _ -> nil
-    end
-  end
-
-  # What an owned resource's routes hang off: the owner's own base plus its id.
-  #
-  #     /blog/comment            without an owner
-  #     /blog/document/:document_id/comment    owned by :document
-  #
-  # The owner's id is named after the relationship rather than called `:id`,
-  # because a nested path has two and `:id` is the record's own. Which is which
-  # has to survive into `capture_id/2`, and a second bare `:id` would make that
-  # unrecoverable.
-  #
-  # ## Derived from the module name, never by reading the owner's DSL
-  #
-  # The same constraint `domain_short_name/1` documents below, and the same
-  # reason — but sharper here, and found by hitting it. `Info.type/1` looks in
-  # the DSL before falling back to the module name, and that first step **forces
-  # the owner module to finish compiling**. When the owner also points back
-  # (a `has_many` to its children, which an owner usually has) the two wait on
-  # each other and the compiler reports a deadlock:
-  #
-  #     model.ex            => ElementResource
-  #     element_resource.ex => Model
-  #
-  # `Info.module_type/1` reads only `Module.split/1`, so it needs nothing
-  # compiled. The cost is that an owner **declaring** a `type` or `base`
-  # different from its module name is not honoured in its children's paths.
-  # That is a real limitation and the alternative is deadlocking every app that
-  # nests.
-  defp owner_prefix(dsl_state, domain) do
-    with %{name: name, destination: destination} <- AshHateoas.Resource.Info.owner(dsl_state),
-         owner_type when is_binary(owner_type) <-
-           AshHateoas.Resource.Info.module_type(destination) do
-      "/#{domain}/#{owner_type}/:#{name}_id"
-    else
-      _ -> "/#{domain}"
     end
   end
 

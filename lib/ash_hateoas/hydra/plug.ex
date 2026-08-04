@@ -114,8 +114,8 @@ defmodule AshHateoas.Hydra.Plug do
   defp dispatch(%{method: method} = conn, segments, actor, tenant, opts)
        when method in ["POST", "PATCH", "DELETE"] do
     case match_write(method, segments, opts) do
-      {resource, type, action, id, scope} ->
-        serve_write(conn, resource, type, action, id, actor, tenant, scoped(opts, scope))
+      {resource, type, action, id} ->
+        serve_write(conn, resource, type, action, id, actor, tenant, opts)
 
       :error ->
         send_error(conn, 404, "Not Found")
@@ -128,35 +128,31 @@ defmodule AshHateoas.Hydra.Plug do
 
   # ── GET reads ─────────────────────────────────────────────────────────────
 
-  # The owner ids a nested path carried travel in `opts` under `:scope`, rather
-  # than as a positional argument threaded through every serve function. They
-  # are request context — the same kind of thing as `prefix` and `base_url`
-  # already in there — and every one of these functions already takes `opts`.
+  # A path carries one id: the record's own. It used to carry the owner's too,
+  # under `opts[:scope]`, and every serve function narrowed its read by it — so
+  # the same record under a different owner segment was a 404 rather than the
+  # same record. A record is now identified by its IRI alone, which is what a
+  # triple needs and what `LinkInput` already assumed on the write side.
   defp serve_get(conn, segments, actor, opts) do
     case match(segments, opts) do
-      {:member, resource, type, id, scope} ->
-        serve_member(conn, resource, type, id, actor, scoped(opts, scope))
+      {:member, resource, type, id} ->
+        serve_member(conn, resource, type, id, actor, opts)
 
-      {:collection, resource, type, action, scope} ->
-        serve_collection(conn, resource, type, action, actor, scoped(opts, scope))
+      {:collection, resource, type, action} ->
+        serve_collection(conn, resource, type, action, actor, opts)
 
-      {:related, resource, relationship, id, scope} ->
-        serve_related(conn, resource, relationship, id, actor, scoped(opts, scope))
+      {:related, resource, relationship, id} ->
+        serve_related(conn, resource, relationship, id, actor, opts)
 
       :error ->
         send_error(conn, 404, "Not Found")
     end
   end
 
-  defp scoped(opts, scope) when map_size(scope) == 0, do: opts
-  defp scoped(opts, scope), do: Keyword.put(opts, :scope, scope)
-
-  defp scope(opts), do: Keyword.get(opts, :scope, %{})
-
   defp serve_member(conn, resource, type, id, actor, opts) do
     tenant = Ash.PlugHelpers.get_tenant(conn)
 
-    case load(resource, id, actor, tenant, scope(opts)) do
+    case load(resource, id, actor, tenant) do
       nil ->
         send_error(conn, 404, "Not Found")
 
@@ -207,7 +203,7 @@ defmodule AshHateoas.Hydra.Plug do
     page = page_params(conn)
     arguments = read_arguments(conn, resource, action)
 
-    case read(resource, action, arguments, actor, tenant, page, scope(opts)) do
+    case read(resource, action, arguments, actor, tenant, page) do
       {:ok, result} ->
         {records, total, view_map} = paginate(result, resource, type, conn, opts)
 
@@ -268,7 +264,7 @@ defmodule AshHateoas.Hydra.Plug do
 
     with %{destination: destination} = definition <-
            Ash.Resource.Info.relationship(resource, relationship),
-         record when not is_nil(record) <- load(resource, id, actor, tenant, scope(opts)),
+         record when not is_nil(record) <- load(resource, id, actor, tenant),
          {:ok, loaded} <-
            Ash.load(record, [relationship], actor: actor, tenant: tenant, authorize?: true) do
       related = loaded |> Map.get(relationship) |> List.wrap()
@@ -392,12 +388,12 @@ defmodule AshHateoas.Hydra.Plug do
 
   # A create has no id; an update/destroy/generic acts on an existing record.
   defp serve_write(conn, resource, type, action, nil, actor, tenant, opts) do
-    # The URL a create posts to already names the owner
-    # (`POST /ledger/<id>/entry`), so the body need not repeat it — and must not
-    # be able to contradict it. The path wins: an author writing a different
-    # `ledger_id` in the body would otherwise create a record somewhere other
-    # than where they posted it.
-    body = conn |> read_body_params() |> Map.merge(scope(opts))
+    # The body is the whole input. A nested create merged the owner id from the
+    # path over it, so the address supplied part of the write — which is the
+    # same fact in two places, and the path silently won when they disagreed.
+    # A create now names its parent as a link, which `LinkInput` resolves
+    # against the routes that serve a GET.
+    body = read_body_params(conn)
 
     action_struct = Ash.Resource.Info.action(resource, action)
 
@@ -419,7 +415,7 @@ defmodule AshHateoas.Hydra.Plug do
   end
 
   defp serve_write(conn, resource, type, action, id, actor, tenant, opts) do
-    case load(resource, id, actor, tenant, scope(opts)) do
+    case load(resource, id, actor, tenant) do
       nil ->
         send_error(conn, 404, "Not Found")
 
@@ -622,11 +618,9 @@ defmodule AshHateoas.Hydra.Plug do
           |> Renderer.render(
             render_opts(type, resource, opts,
               node_id: member_href(resource, id, opts),
-              # The record's own id **and** any owner ids its path carried.
-              # `Renderer.href/2` substitutes each `:name` it is given, so an
-              # operation on an owned resource would otherwise advertise
-              # `/ledger/:ledger_id/entry/<id>` — a pattern, not a target.
-              path_params: Map.put(scope(opts), "id", id)
+              # The record's own id, which is the only placeholder a flat route
+              # has. `Renderer.href/2` substitutes each `:name` it is given.
+              path_params: %{"id" => id}
             )
           )
 
@@ -706,6 +700,18 @@ defmodule AshHateoas.Hydra.Plug do
     collection_ref(route, id, opts)
   end
 
+  # An unloaded to-many with no collection URL has nothing true to say, so it
+  # says nothing.
+  #
+  # The tempting alternative is an empty collection, and it is wrong: zero
+  # members asserts the record *has* none, which is a claim about the data
+  # rather than about what was loaded. Omitting the key means "not loaded",
+  # which is the honest reading and the one a client can act on.
+  #
+  # This is a real loss of expressiveness against a related route, which could
+  # say "there are entries; here is where" without reading them. What replaces
+  # it is a deliberate load: which read loads what becomes a public choice, and
+  # a document-shaped read carries the whole aggregate.
   defp unloaded_link(_record, _relationship, nil, _id, _opts), do: nil
 
   # A loaded to-one: the target node in place of its reference.
@@ -714,21 +720,34 @@ defmodule AshHateoas.Hydra.Plug do
     expanded_node(target, relationship.destination, opts)
   end
 
-  # A loaded to-many: the related collection, stated here rather than one fetch
-  # away. Its `@id` is the same URL the unloaded reference carries, so
-  # expansion never changes what the property points at.
-  defp loaded_link(targets, relationship, %Route{} = route, id, opts) when is_list(targets) do
+  # A loaded to-many: a `hydra:Collection` carrying its members.
+  #
+  # **Not a bare array.** `hydra:member` is a real predicate: with it, the
+  # property points at *one collection* which *has* N members. Without it the
+  # property would point at N unrelated things and the collection — the subject
+  # `hydra:totalItems` and any future paging describe — would not exist at all.
+  #
+  # The collection takes an `@id` when a route addresses it and is otherwise a
+  # **blank node**, which is honest rather than a degradation: this collection
+  # is not separately addressable, it exists as the value of this property on
+  # this record. Each member still carries its own flat `@id`, so it is a link
+  # *and* the data, and a client follows that to reach the member's own
+  # affordances. The class collection stays the addressable one.
+  defp loaded_link(targets, relationship, route, id, opts) when is_list(targets) do
     members =
       targets
       |> Enum.map(&expanded_node(&1, relationship.destination, opts))
       |> Enum.reject(&is_nil/1)
 
     route
-    |> collection_ref(id, opts)
+    |> collection_node(id, opts)
     |> Map.merge(%{"hydra:member" => members, "hydra:totalItems" => length(members)})
   end
 
   defp loaded_link(_targets, _relationship, _route, _id, _opts), do: nil
+
+  defp collection_node(%Route{} = route, id, opts), do: collection_ref(route, id, opts)
+  defp collection_node(nil, _id, _opts), do: %{"@type" => "Collection"}
 
   # A target rendered in place. Already-visited nodes degrade to a bare
   # reference: the same statement, and what stops a cycle from recursing.
@@ -835,9 +854,9 @@ defmodule AshHateoas.Hydra.Plug do
   # collection is paged.
   defp merge_navigation(node, nav, opts) do
     Enum.reduce(nav, node, fn
-      # `Navigation` is transport-neutral and knows nothing of a request, so an
-      # owned resource's collection URL arrives still holding its owner's
-      # placeholder. Filled here, where the scope from the request is in hand.
+      # `Navigation` is transport-neutral and builds from a route pattern, so a
+      # collection URL may still hold `:id`. Filled here, against the request
+      # that reached this record.
       {"collection", link}, acc ->
         Map.put(acc, "hydra:collection", nav_ref(%{link | url: fill(link.url, nil, opts)}))
 
@@ -902,19 +921,18 @@ defmodule AshHateoas.Hydra.Plug do
          path,
          prefix
        ) do
-    # An owned resource's collection carries its owner's id
-    # (`/ledger/:ledger_id/entry`), so this is a pattern match rather than a
-    # string comparison — and the captured owner scopes the read.
+    # A pattern match rather than a string comparison, so a path carrying an
+    # extra segment fails to match rather than being truncated onto this route.
     case capture_params(prefix <> route, path) do
       nil -> nil
-      params -> {:collection, resource, type, action, scope_params(params)}
+      _params -> {:collection, resource, type, action}
     end
   end
 
   defp match_route(%Route{type: :get, primary?: true, route: route}, resource, type, path, prefix) do
     case capture_params(prefix <> route, path) do
       nil -> nil
-      params -> {:member, resource, type, own_id(params), scope_params(params)}
+      params -> {:member, resource, type, params["id"]}
     end
   end
 
@@ -935,7 +953,7 @@ defmodule AshHateoas.Hydra.Plug do
        ) do
     case capture_params(prefix <> route, path) do
       nil -> nil
-      params -> {:related, resource, relationship, own_id(params), scope_params(params)}
+      params -> {:related, resource, relationship, params["id"]}
     end
   end
 
@@ -958,7 +976,7 @@ defmodule AshHateoas.Hydra.Plug do
       end)
       |> case do
         nil -> nil
-        {action, id, scope} -> {resource, type, action, id, scope}
+        {action, id} -> {resource, type, action, id}
       end
     end)
   end
@@ -967,12 +985,12 @@ defmodule AshHateoas.Hydra.Plug do
     if route_method(route) == method do
       full = prefix <> (route.route || "")
 
-      # A create posts to the collection base, which under an owner still
-      # carries that owner's id — so both cases are a pattern match, and the
-      # presence of `:id` in the *pattern* decides which it is.
+      # A create posts to the collection base and has no `:id`; an update or a
+      # destroy addresses a member and has one. The presence of `:id` in the
+      # *pattern* decides which, so both are one pattern match.
       case capture_params(full, path) do
         nil -> nil
-        params -> {route.action, own_id(params), scope_params(params)}
+        params -> {route.action, params["id"]}
       end
     end
   end
@@ -986,16 +1004,15 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp route_method(_route), do: nil
 
-  # `/documents/:id` against `/documents/123` yields `"123"`; nil on no match.
   # Every `:name` segment a path fills in, as `%{"name" => value}` — or `nil`
-  # when the path does not match the pattern at all.
+  # when the path does not match the pattern at all. `/documents/:id` against
+  # `/documents/123` yields `%{"id" => "123"}`.
   #
-  # A map rather than a single id, because a nested route carries two —
-  # `/ledger/:ledger_id/entry/:id` — and both constrain the read: an entry must
-  # resolve under the ledger that was named, not merely exist. They stay
-  # distinguishable by name: the record's own is `:id`, an owner's is named
-  # after the relationship (`:ledger_id`), which is why
-  # `DeriveActionRoutes.owner_prefix/2` does not spell it `:id` too.
+  # A map rather than a bare id because it is the honest shape of a pattern
+  # match, and it was load-bearing while routes nested and carried two. Every
+  # route now has at most `:id`, so callers read that key directly — but the
+  # map is what makes an extra segment a non-match rather than a silent
+  # mis-capture.
   defp capture_params(pattern, path) do
     pattern_segs = String.split(pattern, "/", trim: true)
     path_segs = String.split(path, "/", trim: true)
@@ -1015,75 +1032,21 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  # The record's own id from a captured set. A pattern with no `:id` — a
-  # collection under an owner — has none, which is not a failure.
-  defp own_id(params), do: params["id"]
-
-  # Everything except the record's own id: the owner ids a nested path carries.
-  # These become filters, so a record under the wrong owner is not found rather
-  # than being found and mis-attributed.
-  defp scope_params(params), do: Map.delete(params, "id")
-
   # ── Ash calls ───────────────────────────────────────────────────────────────
 
-  defp load(resource, id, actor, tenant, scope) do
+  defp load(resource, id, actor, tenant) do
     case Ash.get(resource, id, actor: actor, tenant: tenant, authorize?: true) do
-      {:ok, record} -> if in_scope?(record, scope), do: record, else: nil
+      {:ok, record} -> record
       _ -> nil
     end
   rescue
     _ -> nil
   end
 
-  # A nested URL's owner id is a **constraint**, not decoration: an entry that
-  # exists but belongs to a different ledger must not resolve under that
-  # ledger's path. Without this the id in the path would be ignored, so
-  # `/ledger/A/entry/<entry-of-B>` would happily return B's entry — the record
-  # found, and silently mis-attributed to the wrong parent.
-  #
-  # Checked after the read rather than as a filter, so authorization decides
-  # first and a mismatch is indistinguishable from a missing record: both are
-  # 404, and neither confirms the record exists elsewhere.
-  defp in_scope?(_record, scope) when map_size(scope) == 0, do: true
-
-  defp in_scope?(record, scope) do
-    Enum.all?(scope, fn {key, value} ->
-      case Map.fetch(record, String.to_existing_atom(key)) do
-        {:ok, actual} -> to_string(actual) == value
-        :error -> true
-      end
-    end)
-  rescue
-    # An unknown key names no attribute, so there is nothing to contradict.
-    ArgumentError -> true
-  end
-
   # Run the matched read action (the primary read for the base index, or a named
   # collection read like `semantic_search` for `/base/<name>`), with any query
   # params bound to its public arguments.
-  # Narrow a collection read to the owner ids its URL carried. Each key names an
-  # attribute on the resource — `ledger_id` for `owned_by :ledger` — and a key
-  # matching no attribute is skipped rather than raising, so an unexpected path
-  # segment cannot turn a read into a 500.
-  defp scope_query(query, _resource, scope) when map_size(scope) == 0, do: query
-
-  defp scope_query(query, resource, scope) do
-    Enum.reduce(scope, query, fn {key, value}, acc ->
-      field = String.to_existing_atom(key)
-
-      if Ash.Resource.Info.attribute(resource, field) do
-        # A keyword filter rather than an `expr`: the field name is known only
-        # at runtime, and `filter/2` is a macro that wants it at compile time.
-        Ash.Query.filter_input(acc, [{field, value}])
-      else
-        acc
-      end
-    end)
-  rescue
-    ArgumentError -> query
-  end
-
-  defp read(resource, action, arguments, actor, tenant, page, scope) do
+  defp read(resource, action, arguments, actor, tenant, page) do
     read_opts = [actor: actor, tenant: tenant, authorize?: true]
 
     # Paginate only when page params were supplied AND this action declares
@@ -1095,13 +1058,7 @@ defmodule AshHateoas.Hydra.Plug do
         read_opts
       end
 
-    # A nested collection lists **that owner's** records, not every record of
-    # the type. Without this filter `/ledger/A/entry` returns B's entries too —
-    # a URL that names a scope and then ignores it.
-    query =
-      resource
-      |> Ash.Query.for_read(action, arguments, actor: actor, tenant: tenant)
-      |> scope_query(resource, scope)
+    query = Ash.Query.for_read(resource, action, arguments, actor: actor, tenant: tenant)
 
     # The real Ash error is returned, not flattened to a bare `:error`, so the
     # caller can classify it (a policy denial is a 403, invalid input a 400/422,
@@ -1178,22 +1135,17 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  # A route pattern with every placeholder filled: the record's own `:id`, and
-  # any owner id a nested route carries.
+  # A route pattern with its placeholder filled.
   #
-  # Substituting `:id` alone was enough while every route was flat. Under an
-  # owner it leaves the parent's placeholder in the URL — a node advertising
-  # `@id: "/ledger/:ledger_id/entry/<id>"`, which is not an address at all. The
-  # owner ids come from `scope(opts)`, captured from the request that reached
-  # this record, so they are the very ids the client used to get here.
-  defp fill(pattern, id, opts) do
+  # There is exactly one: the record's own `:id`. A nested route carried the
+  # owner's too, and substituting `:id` alone left the parent's placeholder in
+  # the URL — a node advertising `@id: "/ledger/:ledger_id/entry/<id>"`, which
+  # is a pattern rather than an address. Flat routes remove the second
+  # placeholder rather than filling it, so that failure mode has no source.
+  defp fill(pattern, id, _opts) do
     # A collection path has no `:id` to fill, and is given none — substituting
     # `nil` would put an empty segment in the URL.
-    filled = if is_nil(id), do: pattern, else: String.replace(pattern, ":id", to_string(id))
-
-    Enum.reduce(scope(opts), filled, fn {key, value}, acc ->
-      String.replace(acc, ":#{key}", to_string(value))
-    end)
+    if is_nil(id), do: pattern, else: String.replace(pattern, ":id", to_string(id))
   end
 
   defp get_route(resource, fun) do

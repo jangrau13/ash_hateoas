@@ -1,11 +1,12 @@
 defmodule AshHateoas.Test.Ledger do
   @moduledoc """
-  An owner: a resource other records are addressed *through*.
+  The one side of a required `belongs_to`.
 
-  Paired with `AshHateoas.Test.Entry`, which declares `owned_by :ledger` and so
-  nests its URLs under this one's. Nothing here says it is an owner — being
-  owned is the child's declaration, since it is the child whose addressability
-  depends on it.
+  Paired with `AshHateoas.Test.Entry`, whose `ledger` is `allow_nil?: false` —
+  an entry means nothing without one. That dependence is stated by the
+  relationship and by nothing else: both resources are addressed flatly, and the
+  edge between them travels as a link in both directions (`ledger` on the entry,
+  `entries` here).
   """
 
   use Ash.Resource,
@@ -34,29 +35,41 @@ defmodule AshHateoas.Test.Ledger do
   actions do
     defaults([:read, :destroy, create: [:name], update: [:name]])
     default_accept([:name])
+
+    # A to-many is stated on the node only when the action loads it — there is
+    # no per-relationship collection URL to reference otherwise, and an empty
+    # collection would assert this ledger has no entries. So "the whole ledger"
+    # is a read a caller chooses, and the lean default stays lean.
+    read :with_entries do
+      prepare(build(load: [:entries]))
+    end
   end
 end
 
 defmodule AshHateoas.Test.Entry do
   @moduledoc """
-  An owned resource: it has no independent existence, so its URL says so.
+  A record that depends on another and is addressed as though it did not.
 
-      /domain/ledger/<ledger-id>/entry/<entry-id>
+      /domain/entry/<entry-id>
 
-  rather than a flat `/domain/entry/<entry-id>`.
+  The `ledger` is required — an entry has no independent existence — and the URL
+  says nothing about it. That separation is the property this fixture pins:
+  **a resource is connected to another by a link, and by nothing else.**
 
-  `owned_by :ledger` names the **relationship**, not the resource. The
-  destination is read from the relationship itself, so the declaration cannot
-  disagree with the data model, and `ash_hateoas` learns what owns what without
-  learning what a ledger *is*.
+  It used to nest, under `/domain/ledger/<ledger-id>/entry/<entry-id>`, and the
+  two spellings disagreed about identity. A link says a record *is* a URL, since
+  `LinkInput` resolves an IRI against the same routes that serve a GET. Nesting
+  said a record is a URL *plus the path you came by* — the same entry under
+  another ledger segment being a 404 rather than the same record. A triple names
+  its subject by IRI, so containment carried in the address is structure no
+  reasoner ever sees, and the graph loses the edge the domain most cares about.
 
-  Two properties this fixture exists to pin, neither of which any other fixture
-  covers:
+  Three properties this fixture exists to pin, none of which any other covers:
 
-    * an entry id under the **wrong** ledger is a 404 — nesting is a constraint,
-      not decoration
-    * there is **no** `/domain/entry` collection — a flat list of every entry
-      across every ledger is not a resource this domain has
+    * the member is flat, and it is the **only** address
+    * `/domain/entry` exists — `Ash.read(Entry)` was always a legitimate query,
+      and the collection is its representation
+    * a write names the ledger by IRI rather than inheriting it from the path
   """
 
   use Ash.Resource,
@@ -70,7 +83,6 @@ defmodule AshHateoas.Test.Entry do
 
   hateoas do
     type("entry")
-    owned_by(:ledger)
     warn_on_missing_authorizers?(false)
   end
 

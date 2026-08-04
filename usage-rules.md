@@ -199,7 +199,7 @@ A link takes one of two forms, and both state the same thing:
 
 ```json
 "author":   {"@id": "/people/7"}                                  // node reference
-"comments": {"@id": "/documents/3/comments", "@type": "Collection"}
+"comments": {"@type": "Collection", "hydra:member": [{"@id": "/comments/1"}]}
 ```
 
 ```json
@@ -224,6 +224,53 @@ target, so it costs nothing; a loaded one is rendered in place, recursively,
 with cycles degrading to a plain reference. The target's own terms travel with
 it as a scoped `@context`, so a record expands to the same triples however it
 was reached.
+
+### A to-many is a collection, and it is inline
+
+A loaded to-many is a `hydra:Collection` carrying its members — **not a bare
+array**. `hydra:member` is a real predicate: with it, the property points at
+*one collection* which *has* N members. Without it the property points at N
+unrelated things and the collection, the subject `hydra:totalItems` and any
+paging describe, does not exist at all.
+
+```json
+"comments": {"@type": "Collection", "hydra:totalItems": 2,
+             "hydra:member": [{"@id": "/comments/1", "body": "…"},
+                              {"@id": "/comments/2", "body": "…"}]}
+```
+
+Each member carries its own `@id`, so it is a link *and* the data: follow it to
+reach that member's own affordances.
+
+Two consequences of there being no per-relationship collection URL:
+
+- **An unloaded to-many is absent, not empty.** Emitting zero members would
+  assert the record *has* none, which is a claim about the data rather than
+  about what was loaded. So which read loads what becomes a public choice: keep
+  the default `read` lean and load the aggregate on a document-shaped read.
+- **Pagination has nowhere to live.** An inline collection cannot page. Fine
+  while a record's children number in the hundreds; state it as a known bound
+  rather than discovering it as a slow response.
+
+### A recursive to-many travels flat
+
+A self-referencing to-many — a tree — is emitted as **one flat collection**,
+every node naming its `parent` and an ordering attribute, rather than nested
+collections inside members inside collections:
+
+```json
+"value": {"@type": "Collection", "hydra:totalItems": 3,
+  "hydra:member": [
+    {"@id": "/value/1", "operator": "*", "position": 0},
+    {"@id": "/value/2", "position": 0, "parent": {"@id": "/value/1"}},
+    {"@id": "/value/3", "position": 1, "parent": {"@id": "/value/1"}}]}
+```
+
+The structure is recoverable from the edges: group by `parent`, sort by
+position. Recursion on the wire forces a depth cap, and a depth cap **truncates
+silently** — the flat form has no depth to cap, and `hydra:totalItems` makes
+completeness checkable rather than assumed. The payload is linear in the node
+count rather than multiplicative.
 
 ### Writing links
 

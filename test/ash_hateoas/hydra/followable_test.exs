@@ -20,11 +20,13 @@ defmodule AshHateoas.Hydra.FollowableTest do
   link kind is covered the moment it is emitted, with no test to remember to
   write.
 
-  That matters most for the change this precedes. Nesting an element's URL under
-  its owner rewrites `capture_id/2` from returning one id to returning a param
-  map, and every `match_route/5` clause with it. A `many_to_many` and a
-  `has_many` reach the router by different paths; covering only one leaves the
-  other free to break silently.
+  It was written for the change that nested an element's URL under its owner,
+  and it earned its place immediately by catching all three href builders. It
+  outlived that change: **un-nesting** rewrites the same paths in the opposite
+  direction, and the sweep now covers more than it did, since a flat member
+  advertises its own operations *and* the links that used to be path segments.
+  A `many_to_many` and a `has_many` still reach the router differently, so
+  covering only one leaves the other free to break silently.
   """
 
   use ExUnit.Case, async: false
@@ -174,7 +176,7 @@ defmodule AshHateoas.Hydra.FollowableTest do
     end
   end
 
-  describe "an owned resource's nested URLs are followable" do
+  describe "a record with a required link is followable flatly" do
     setup do
       ledger =
         Ledger |> Ash.Changeset.for_create(:create, %{name: "L"}) |> Ash.create!(authorize?: false)
@@ -187,23 +189,35 @@ defmodule AshHateoas.Hydra.FollowableTest do
       {:ok, ledger: ledger, entry: entry}
     end
 
-    test "every URL a nested member advertises resolves", %{ledger: ledger, entry: entry} do
-      # The case that makes this test worth having. Nesting introduced a second
-      # placeholder into every route, and three separate href builders
-      # substituted only `:id` — so a node advertised
-      # `/ledger/:ledger_id/entry/<id>` for each of its operations: a pattern,
-      # not an address. Each was a 404 a key-presence assertion would have
-      # called fine.
-      assert_all_followable("/domain/ledger/#{ledger.id}/entry/#{entry.id}")
+    test "every URL the member advertises resolves", %{entry: entry} do
+      # These cases used to address `/domain/ledger/<id>/entry/<id>` and caught
+      # a real defect there: nesting put a second placeholder in every route
+      # and three href builders substituted only `:id`, so each operation
+      # advertised `/ledger/:ledger_id/entry/<id>` — a pattern, not an address,
+      # and a 404 a key-presence assertion would have called fine.
+      #
+      # Flat addressing removes that particular trap and the sweep now covers
+      # *more*: a member advertises its own operations and its `ledger` link,
+      # every one of which must resolve.
+      assert_all_followable("/domain/entry/#{entry.id}")
     end
 
-    test "every URL a nested collection advertises resolves", %{ledger: ledger} do
-      assert_all_followable("/domain/ledger/#{ledger.id}/entry")
+    test "every URL the collection advertises resolves" do
+      # And the collection exists to be swept at all. Under nesting there was
+      # no `/domain/entry`.
+      assert_all_followable("/domain/entry")
     end
 
-    test "the owner's own URLs are unaffected", %{ledger: ledger} do
-      # Being an owner changes nothing about the owner: only the child declares
-      # the relationship, and only the child's routes nest.
+    test "the link's target is itself followable", %{entry: entry} do
+      # The property that makes the edge a link rather than a decoration: the
+      # URL the record states for its ledger is one the API serves, and
+      # everything *that* node advertises resolves in turn.
+      href = body(get("/domain/entry/#{entry.id}"))["ledger"]["@id"]
+
+      assert_all_followable(href)
+    end
+
+    test "the other side's own URLs are unaffected", %{ledger: ledger} do
       assert_all_followable("/domain/ledger/#{ledger.id}")
     end
   end
