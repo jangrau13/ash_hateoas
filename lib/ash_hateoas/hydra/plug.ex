@@ -1050,7 +1050,39 @@ defmodule AshHateoas.Hydra.Plug do
       value = Map.get(record, attribute.name)
       {to_string(attribute.name), attribute_value(attribute, value, opts)}
     end)
+    |> Map.merge(calculations(record, resource, opts))
   end
+
+  # A public calculation is part of the representation, exactly as an attribute
+  # is. The difference is only in where the value comes from — derived rather
+  # than stored — which is a storage concern the wire has no reason to carry.
+  #
+  # It was omitted entirely: every path here read `public_attributes/1` and
+  # stopped, so a resource could declare a calculation, load it, and still have
+  # it absent from the node. That made a derived property unreadable by any
+  # client no matter how it was declared.
+  #
+  # **Unloaded ones are skipped rather than rendered as null.** A calculation is
+  # computed only when an action loads it, and `%Ash.NotLoaded{}` means "not
+  # asked for" — while `null` would assert the value *is* nothing. The same
+  # distinction a to-many draws between absent and empty.
+  defp calculations(record, resource, opts) do
+    resource
+    |> Ash.Resource.Info.public_calculations()
+    |> Enum.flat_map(fn calculation ->
+      case Map.get(record, calculation.name) do
+        %Ash.NotLoaded{} -> []
+        nil -> []
+        value -> [{to_string(calculation.name), calculation_value(value, opts)}]
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp calculation_value(value, opts) when is_list(value),
+    do: Enum.map(value, &calculation_value(&1, opts))
+
+  defp calculation_value(value, _opts), do: value
 
   # A followable link (`AshHateoas.Type.ResourceLink`) is rendered as a JSON-LD
   # reference node — `{"@id" => url}` — rather than a bare string, which is what

@@ -186,10 +186,9 @@ defmodule AshHateoas.Hydra.Context do
     with type when is_binary(type) <- AshHateoas.Resource.Info.type(resource) do
       semantic = AshHateoas.Resource.Info.semantic_properties(resource)
 
-      Map.merge(
-        attribute_terms(resource, type, semantic),
-        relationship_terms(resource, type)
-      )
+      attribute_terms(resource, type, semantic)
+      |> Map.merge(calculation_terms(resource, type, semantic))
+      |> Map.merge(relationship_terms(resource, type))
     else
       _ -> %{}
     end
@@ -205,6 +204,21 @@ defmodule AshHateoas.Hydra.Context do
     |> Map.new(fn attribute ->
       {to_string(attribute.name),
        Map.get(semantic, attribute.name) || property_iri(type, attribute.name)}
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  # A public calculation is a node key too, so it needs a term like any other.
+  # Without one the key is *silently dropped* on expansion — the defect stage 2
+  # found for relationship links, one property kind further along: present in
+  # the JSON, absent from the graph, and identical to the naked eye.
+  defp calculation_terms(resource, type, semantic) do
+    resource
+    |> Ash.Resource.Info.public_calculations()
+    |> Map.new(fn calculation ->
+      {to_string(calculation.name),
+       Map.get(semantic, calculation.name) || property_iri(type, calculation.name)}
     end)
   rescue
     _ -> %{}

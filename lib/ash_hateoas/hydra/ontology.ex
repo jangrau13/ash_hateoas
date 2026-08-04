@@ -237,7 +237,34 @@ defmodule AshHateoas.Hydra.Ontology do
   # declared here but not used there is noise, and one used there but not
   # declared here is the defect this module exists to remove.
   defp property_nodes(resource, type) do
-    attribute_nodes(resource, type) ++ relationship_nodes(resource, type)
+    attribute_nodes(resource, type) ++
+      calculation_nodes(resource, type) ++ relationship_nodes(resource, type)
+  end
+
+  # A public calculation mints a property IRI exactly as an attribute does, so it
+  # must be declared here or it dangles — the defect this module exists to
+  # remove, reached by a property kind the walk did not visit.
+  #
+  # `attribute_type/1` applies unchanged: it reads `:type`, which a calculation
+  # carries too, so a derived string is an `owl:DatatypeProperty` with an `xsd`
+  # range like any other. That it is *computed* is a storage fact, and the
+  # ontology describes meaning rather than storage.
+  defp calculation_nodes(resource, type) do
+    semantic = AshHateoas.Resource.Info.semantic_properties(resource)
+
+    resource
+    |> Ash.Resource.Info.public_calculations()
+    |> Enum.reject(&Map.has_key?(semantic, &1.name))
+    |> Enum.map(fn calculation ->
+      %{
+        "@id" => Context.property_iri(type, calculation.name),
+        "rdfs:domain" => %{"@id" => Context.class_iri(type)},
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      }
+      |> Map.merge(attribute_type(calculation))
+      |> put_unless_nil("rdfs:label", to_string(calculation.name))
+      |> put_unless_nil("rdfs:comment", Map.get(calculation, :description))
+    end)
   end
 
   defp attribute_nodes(resource, type) do

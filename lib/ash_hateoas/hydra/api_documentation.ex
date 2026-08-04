@@ -308,7 +308,32 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
         |> put_unless_nil("hydra:description", Map.get(attribute, :description))
       end)
 
-    attribute_properties ++ link_properties(resource, type)
+    # A public calculation is part of the class's shape, and a **read-only** part:
+    # it is derived from the record rather than stored, so `hydra:writable` is
+    # false and no client should be told otherwise. Declaring it is what lets a
+    # consumer know the property exists at all — the ontology and the node's
+    # `@context` follow the same list.
+    calculation_properties =
+      resource
+      |> Ash.Resource.Info.public_calculations()
+      |> Enum.map(fn calculation ->
+        property_id =
+          Map.get(semantic, calculation.name) || Context.property_iri(type, calculation.name)
+
+        %{
+          "@type" => "SupportedProperty",
+          "hydra:property" => %{"@id" => property_id},
+          "hydra:title" => to_string(calculation.name),
+          # Derived: it is computed when asked for, so it is never required on a
+          # write and never absent because somebody failed to supply it.
+          "hydra:required" => false,
+          "hydra:readable" => true,
+          "hydra:writable" => false
+        }
+        |> put_unless_nil("hydra:description", Map.get(calculation, :description))
+      end)
+
+    attribute_properties ++ calculation_properties ++ link_properties(resource, type)
   end
 
   # A relationship is advertised as a `hydra:Link` — its `hydra:property` is a
