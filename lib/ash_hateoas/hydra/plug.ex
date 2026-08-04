@@ -141,6 +141,9 @@ defmodule AshHateoas.Hydra.Plug do
       {:collection, resource, type, action} ->
         serve_collection(conn, resource, type, action, actor, opts)
 
+      {:related, resource, relationship, id} ->
+        serve_related(conn, resource, relationship, id, actor, opts)
+
       :error ->
         send_error(conn, 404, "Not Found")
     end
@@ -148,8 +151,9 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp serve_member(conn, resource, type, id, actor, opts) do
     tenant = Ash.PlugHelpers.get_tenant(conn)
+    opts = Keyword.put(opts, :load, load_params(conn, resource))
 
-    case load(resource, id, actor, tenant) do
+    case load(resource, id, actor, tenant, opts[:load]) do
       nil ->
         send_error(conn, 404, "Not Found")
 
@@ -199,8 +203,9 @@ defmodule AshHateoas.Hydra.Plug do
     tenant = Ash.PlugHelpers.get_tenant(conn)
     page = page_params(conn)
     arguments = read_arguments(conn, resource, action)
+    opts = Keyword.put(opts, :load, load_params(conn, resource))
 
-    case read(resource, action, arguments, actor, tenant, page) do
+    case read(resource, action, arguments, actor, tenant, page, opts[:load]) do
       {:ok, result} ->
         {records, total, view_map} = paginate(result, resource, type, conn, opts)
 
@@ -240,6 +245,150 @@ defmodule AshHateoas.Hydra.Plug do
         # is down). Classify by the Ash error so the status is honest, instead of
         # reporting every failure as Forbidden.
         send_ash_error(conn, error)
+    end
+  end
+
+  # One record's related collection (`/base/:id/<relationship>`) — the URL its
+  # inline collection carries as an `@id`, and the one `hydra:view` pages
+  # against.
+  #
+  # This is a read of the DESTINATION resource narrowed to one source record,
+  # not a read of the source: the members are comments, rendered exactly as the
+  # destination's own collection renders them, so a client following a link gets
+  # the same node shape either way.
+  #
+  # It addresses a **collection**, which is why it survives while member nesting
+  # did not. `/articles/7/comments` names this article's comments — a real
+  # resource with no address otherwise. `/articles/7/comments/3` would name one
+  # comment through its article, which is a second address for a record that
+  # already has one.
+  #
+  # Loading the source first is deliberate. It makes an unknown or unreadable
+  # source a 404 rather than an empty collection — "this record has no comments"
+  # and "this record does not exist" are different answers, and authorization on
+  # the source is what decides whether its related set may be seen at all.
+  defp serve_related(conn, resource, relationship, id, actor, opts) do
+    tenant = Ash.PlugHelpers.get_tenant(conn)
+
+    with %{destination: destination} = definition <-
+           Ash.Resource.Info.relationship(resource, relationship),
+         record when not is_nil(record) <- load(resource, id, actor, tenant, []),
+         {:ok, loaded} <-
+           Ash.load(record, [relationship], actor: actor, tenant: tenant, authorize?: true) do
+      all = loaded |> Map.get(relationship) |> List.wrap()
+      type = AshHateoas.Resource.Info.type(destination)
+
+      # `?limit=&offset=` applied here rather than in the query, because a
+      # relationship is loaded through its source and Ash pages a *read*, not a
+      # `load`. The whole set is read either way; what this bounds is the
+      # response. That is enough for the link `hydra:view` advertises to mean
+      # something — a `next` that returned the same page would be worse than no
+      # `next` at all — and the cost is bounded by one record's related set.
+      {offset, limit} = related_window(conn)
+      related = all |> Enum.drop(offset) |> then(&if limit, do: Enum.take(&1, limit), else: &1)
+
+      members =
+        Enum.map(related, fn member ->
+          node(member, type, destination, record_id(member), actor, tenant, opts, scope: :linked)
+        end)
+
+      # No collection-level operations: a related collection is a view onto one
+      # record's associations, and a create here would have to invent which side
+      # owns the new row. The destination's own collection is where its create
+      # affordance lives.
+      document =
+        Collection.wrap(members,
+          id: related_href(resource, definition, id, opts),
+          # The **whole** set, not this page — that is what `totalItems` means,
+          # and it is what tells a client how much a page is leaving out.
+          total_items: length(all)
+        )
+        # The DESTINATION's bindings, not the source's — the members are
+        # comments. Same rule as the destination's own collection, which is what
+        # makes "the same node shape either way" true of the triples and not
+        # only of the JSON.
+        |> Map.put("@context", document_context(conn, opts, destination))
+
+      send_json(conn, 200, document)
+    else
+      {:error, error} -> send_ash_error(conn, error)
+      _ -> send_error(conn, 404, "Not Found")
+    end
+  end
+
+  defp related_href(resource, %{name: relationship}, id, opts) do
+    case get_route(resource, &(&1.type == :related and &1.relationship == relationship)) do
+      nil -> nil
+      route -> href_prefix(opts) <> fill(route.route, id, opts)
+    end
+  end
+
+  # `?load=comments&load=authors` — the relationships a client asked to have
+  # stated in place rather than referenced.
+  #
+  # This is what the `hydra:search` template on every node advertises, and the
+  # only thing Hydra offers for a client-parameterised request. Without it a
+  # to-many is a reference and the client fetches the same record again to
+  # expand it; with it, one request carries the whole shape.
+  #
+  # **Only a public relationship is loadable.** An unknown or private name is
+  # dropped rather than refused: the parameter narrows a response and must never
+  # widen what may be read, so a client naming something it may not see gets
+  # exactly the response it would have got without asking. Same rule as
+  # `?observe=`, and the reason neither is an ungoverned second read shape.
+  #
+  # RFC 6570's explode form, so a repeated param is a list — which is what
+  # `{?load*}` in the template says and what Plug parses natively.
+  defp load_params(conn, resource) do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    allowed =
+      resource
+      |> public_relationships()
+      |> Enum.map(& &1.name)
+      |> MapSet.new()
+
+    conn.query_params
+    |> Map.get("load", [])
+    |> List.wrap()
+    |> Enum.flat_map(&String.split(to_string(&1), ","))
+    |> Enum.map(&String.trim/1)
+    |> Enum.map(&safe_atom/1)
+    |> Enum.filter(&(&1 && MapSet.member?(allowed, &1)))
+    |> Enum.uniq()
+  end
+
+  # `String.to_existing_atom/1` so a request cannot mint atoms — an unbounded
+  # atom table is a denial-of-service, and every legal value already exists as a
+  # relationship name.
+  defp safe_atom(name) do
+    String.to_existing_atom(name)
+  rescue
+    ArgumentError -> nil
+  end
+
+  # `?offset=&limit=` for a related collection, as plain integers.
+  #
+  # Separate from `page_params/1` because that builds *Ash* pagination options
+  # for a read action, and a related collection is not read through one — it is
+  # loaded through its source. Same query parameters, so a client pages both the
+  # same way.
+  defp related_window(conn) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    params = conn.query_params
+
+    offset = params["offset"] || get_in(params, ["page", "offset"])
+    limit = params["limit"] || get_in(params, ["page", "limit"])
+
+    {to_int(offset) || 0, to_int(limit)}
+  end
+
+  defp to_int(nil), do: nil
+
+  defp to_int(value) do
+    case Integer.parse(to_string(value)) do
+      {int, _rest} when int >= 0 -> int
+      _ -> nil
     end
   end
 
@@ -546,7 +695,10 @@ defmodule AshHateoas.Hydra.Plug do
       # and its own links, but no operations — an affordance belongs on the
       # node it addresses, one URL away.
       :linked ->
-        merge_relationships(base, record, resource, id, link_opts)
+        # No `hydra:search` here: a linked node is one URL away from the node
+        # that addresses it, and repeating the template on every member of every
+        # page would be noise. Follow the member's `@id` to ask it anything.
+        merge_relationships(base, record, resource, id, actor, tenant, link_opts)
 
       :member ->
         operations =
@@ -566,7 +718,14 @@ defmodule AshHateoas.Hydra.Plug do
         base
         |> Map.merge(operations)
         |> merge_navigation(nav, opts)
-        |> merge_relationships(record, resource, id, link_opts)
+        |> merge_relationships(
+          record,
+          resource,
+          id,
+          actor,
+          tenant,
+          Keyword.put(link_opts, :addressed?, true)
+        )
     end
   end
 
@@ -590,15 +749,76 @@ defmodule AshHateoas.Hydra.Plug do
   # alongside the link rather than in a separate response. The reference is the
   # identity either way, so a client may follow or read, and gets the same
   # answer.
-  defp merge_relationships(node, record, resource, id, opts) do
+  defp merge_relationships(node, record, resource, id, actor, tenant, opts) do
     resource
     |> public_relationships()
     |> Enum.reduce(node, fn relationship, acc ->
-      case relationship_link(record, relationship, id, opts) do
+      case relationship_link(record, resource, relationship, id, actor, tenant, opts) do
         nil -> acc
         value -> Map.put(acc, to_string(relationship.name), value)
       end
     end)
+    |> maybe_put_load_template(resource, id, opts)
+  end
+
+  defp maybe_put_load_template(node, resource, id, opts) do
+    if Keyword.get(opts, :addressed?, false) do
+      put_load_template(node, resource, id, opts)
+    else
+      node
+    end
+  end
+
+  # `hydra:search` — how a client asks for a relationship's members in place.
+  #
+  #     {"@type": "IriTemplate",
+  #      "hydra:template": "/articles/7{?load*}",
+  #      "hydra:mapping": [{"hydra:variable": "load",
+  #                         "hydra:property": {"@id": "…#article/comments"}}, …]}
+  #
+  # A `hydra:IriTemplate` because it is the only thing Hydra has for a
+  # client-parameterised request: the vocabulary has no term for "expand this",
+  # and inventing one would put a fact in a place no generic client looks.
+  #
+  # **One mapping per loadable relationship**, each keyed on the property IRI
+  # the ontology already declares — so the set of legal values is stated by
+  # enumeration, in terms a client can resolve, rather than by a SHACL
+  # constraint on a node that is not a shape.
+  #
+  # `{?load*}` is RFC 6570's explode form: `?load=a&load=b`, which is what Plug
+  # parses natively and what `hydra:variableRepresentation` describes.
+  #
+  # Omitted where the resource has no public to-many, since a template offering
+  # nothing is noise.
+  defp put_load_template(node, resource, id, opts) do
+    loadable = Enum.filter(public_relationships(resource), &(&1.cardinality == :many))
+    type = AshHateoas.Resource.Info.type(resource)
+
+    case {loadable, member_href(resource, id, opts)} do
+      {[], _href} ->
+        node
+
+      {_loadable, nil} ->
+        node
+
+      {loadable, href} ->
+        Map.put(node, "hydra:search", %{
+          "@type" => "IriTemplate",
+          "hydra:template" => "#{href}{?load*}",
+          "hydra:variableRepresentation" => "BasicRepresentation",
+          "hydra:mapping" =>
+            Enum.map(loadable, fn relationship ->
+              %{
+                "@type" => "IriTemplateMapping",
+                "hydra:variable" => "load",
+                "hydra:property" => %{
+                  "@id" => Context.property_iri(type, relationship.name)
+                },
+                "hydra:required" => false
+              }
+            end)
+        })
+    end
   end
 
   defp public_relationships(resource) do
@@ -607,17 +827,17 @@ defmodule AshHateoas.Hydra.Plug do
     _ -> []
   end
 
-  defp relationship_link(record, relationship, id, opts) do
+  defp relationship_link(record, resource, relationship, id, actor, tenant, opts) do
     case Map.get(record, relationship.name) do
-      %Ash.NotLoaded{} -> unloaded_link(record, relationship, id, opts)
-      nil -> unloaded_link(record, relationship, id, opts)
-      loaded -> loaded_link(loaded, relationship, id, opts)
+      %Ash.NotLoaded{} -> unloaded_link(record, resource, relationship, id, actor, tenant, opts)
+      nil -> unloaded_link(record, resource, relationship, id, actor, tenant, opts)
+      loaded -> loaded_link(loaded, resource, relationship, id, opts)
     end
   end
 
   # A `belongs_to` reference comes from the local foreign key — no read of the
   # target. A missing or unselected key yields no property: absent, not null.
-  defp unloaded_link(record, %{type: :belongs_to} = relationship, _id, opts) do
+  defp unloaded_link(record, _resource, %{type: :belongs_to} = relationship, _id, _actor, _tenant, opts) do
     case Map.get(record, relationship.source_attribute) do
       key when is_binary(key) or is_integer(key) ->
         member_ref(relationship.destination, key, opts)
@@ -629,23 +849,105 @@ defmodule AshHateoas.Hydra.Plug do
 
   # A `has_one` keeps its key on the destination, so there is nothing local to
   # reference and it appears only when loaded.
-  defp unloaded_link(_record, %{cardinality: :one}, _id, _opts), do: nil
+  defp unloaded_link(_record, _resource, %{cardinality: :one}, _id, _actor, _tenant, _opts), do: nil
 
-  # An unloaded to-many has nothing true to say, so it says nothing.
+  # An unloaded to-many renders **the way its collection URL does**: a bounded
+  # page of members, the true total, its own `@id`, and a `hydra:view` to page
+  # with.
   #
-  # The tempting alternative is an empty collection, and it is wrong: zero
-  # members asserts the record *has* none, which is a claim about the data
-  # rather than about what was loaded. Omitting the key means "not loaded",
-  # which is the honest reading and the one a client can act on.
+  #     "comments": {"@id": "/articles/7/comments", "@type": "Collection",
+  #                  "hydra:totalItems": 214,
+  #                  "hydra:member": [{"@id": "/comments/1"}, …],
+  #                  "hydra:view": {"@type": "PartialCollectionView", …}}
   #
-  # This is a real loss of expressiveness against the `:related` route this
-  # replaced, which could say "there are members; here is where" without reading
-  # them. What takes its place is a deliberate load: which read loads what
-  # becomes a public choice, and a document-shaped read carries the aggregate.
-  defp unloaded_link(_record, _relationship, _id, _opts), do: nil
+  # The `@id` is the related route, so the collection has a real identity that
+  # dereferences to exactly this collection — not the record's own URL, which
+  # would make the article and its comments one subject and turn
+  # `hydra:totalItems: 214` into a statement about the article.
+  #
+  # **The members are references.** Their `@id` and nothing else, because
+  # nothing was loaded: a client learns which comments exist and can follow any
+  # of them, without the server rendering 214 nodes. `?load=comments` expands
+  # the same members in place — so `load` controls *expansion*, never presence,
+  # which is the rule a to-one already follows.
+  #
+  # Built by `Collection.wrap/2`, the same function that renders `/articles`, so
+  # an inline collection and an addressed one cannot drift into two shapes for
+  # one concept.
+  defp unloaded_link(record, resource, relationship, id, actor, tenant, opts) do
+    case related_href(resource, relationship, id, opts) do
+      nil ->
+        nil
+
+      href ->
+        {refs, total} = preview(record, relationship, actor, tenant, opts)
+
+        Collection.wrap(refs,
+          id: href,
+          total_items: total,
+          # `:view_map`, not `:view` — this is a built `PartialCollectionView`,
+          # where `:view` takes the page links to build one from.
+          view_map: view_links(href, total)
+        )
+    end
+  end
+
+  # How many member references an unloaded to-many states before deferring to
+  # its collection URL.
+  #
+  # Small deliberately. This runs for every public to-many on every node of
+  # every collection page, so the cost multiplies — and its job is to let a
+  # client recognise the set, not to deliver it.
+  @preview_limit 10
+
+  # The first page of a relationship as bare references, and its true size.
+  #
+  # Read as the **actor**, so a member they may not see is neither referenced
+  # nor counted: an inline collection must never disclose more than a read of
+  # the destination would, which is the same rule `?observe=` follows.
+  #
+  # Degrades to `{[], nil}` rather than raising. A relationship that cannot be
+  # read here must leave a collection with an `@id` and no members — still
+  # followable, still true — rather than take the whole node down.
+  defp preview(record, relationship, actor, tenant, opts) do
+    read_opts = [actor: actor, tenant: tenant, authorize?: true]
+
+    case Ash.load(record, [relationship.name], read_opts) do
+      {:ok, loaded} ->
+        related = loaded |> Map.get(relationship.name) |> List.wrap()
+
+        refs =
+          related
+          |> Enum.take(@preview_limit)
+          |> Enum.map(&member_ref(relationship.destination, record_id(&1), opts))
+          |> Enum.reject(&is_nil/1)
+
+        {refs, length(related)}
+
+      _ ->
+        {[], nil}
+    end
+  rescue
+    _ -> {[], nil}
+  end
+
+  # A `PartialCollectionView` when the references are a page of something
+  # larger, and none when they are the whole set.
+  #
+  # `hydra:next` is what makes the truncation actionable rather than merely
+  # declared: `hydra:totalItems` says how much is missing, and this says where
+  # to get it. Both need a URL to page against, which is the related route's
+  # reason for existing.
+  defp view_links(_href, total) when is_nil(total), do: nil
+
+  defp view_links(_href, total) when total <= @preview_limit, do: nil
+
+  defp view_links(href, _total) do
+    Collection.view(id: href, first: href, next: "#{href}?offset=#{@preview_limit}")
+  end
 
   # A loaded to-one: the target node in place of its reference.
-  defp loaded_link(target, %{cardinality: :one} = relationship, _id, opts)
+  defp loaded_link(target, _resource, %{cardinality: :one} = relationship, _id, opts)
        when is_struct(target) do
     expanded_node(target, relationship.destination, opts)
   end
@@ -662,20 +964,30 @@ defmodule AshHateoas.Hydra.Plug do
   # this property on this record. Each member carries its own flat `@id`, so it
   # is a link *and* the data, and a client follows that to reach the member's
   # own affordances. The class collection is the addressable one.
-  defp loaded_link(targets, relationship, _id, opts) when is_list(targets) do
+  defp loaded_link(targets, resource, relationship, id, opts) when is_list(targets) do
     members =
       targets
       |> Enum.map(&expanded_node(&1, relationship.destination, opts))
       |> Enum.reject(&is_nil/1)
 
-    %{
+    collection = %{
       "@type" => "Collection",
       "hydra:member" => members,
       "hydra:totalItems" => length(members)
     }
+
+    # The same `@id` the unloaded form carries — the collection's own URL, not
+    # the request's. Expansion states more about the members; it never changes
+    # which collection this is, so both forms are one subject with one identity.
+    # (`?load=comments` is how a client *asked*; it is not what the collection
+    # is called.)
+    case related_href(resource, relationship, id, opts) do
+      href when is_binary(href) -> Map.put(collection, "@id", href)
+      _ -> collection
+    end
   end
 
-  defp loaded_link(_targets, _relationship, _id, _opts), do: nil
+  defp loaded_link(_targets, _resource, _relationship, _id, _opts), do: nil
 
   # A target rendered in place. Already-visited nodes degrade to a bare
   # reference: the same statement, and what stops a cycle from recursing.
@@ -831,8 +1143,9 @@ defmodule AshHateoas.Hydra.Plug do
   # segment than the member route) before member (wildcard); anything else does
   # not participate in GET read matching.
   defp route_match_rank(%Route{type: :index}), do: 0
-  defp route_match_rank(%Route{type: :get, primary?: true}), do: 1
-  defp route_match_rank(_route), do: 2
+  defp route_match_rank(%Route{type: :related}), do: 1
+  defp route_match_rank(%Route{type: :get, primary?: true}), do: 2
+  defp route_match_rank(_route), do: 3
 
   # A named index (`/base/<action>`) carries its own action so the collection
   # read runs THAT action, not the primary read.
@@ -855,6 +1168,23 @@ defmodule AshHateoas.Hydra.Plug do
     case capture_params(prefix <> route, path) do
       nil -> nil
       params -> {:member, resource, type, params["id"]}
+    end
+  end
+
+  # `/base/:id/<relationship>` — the URL an inline collection carries as its
+  # `@id`. Matching it here is what makes that identity dereferenceable; without
+  # this clause the node states an `@id` the router 404s, which is a broken
+  # contract for a client that follows links rather than constructing them.
+  defp match_route(
+         %Route{type: :related, route: route, relationship: relationship},
+         resource,
+         _type,
+         path,
+         prefix
+       ) do
+    case capture_params(prefix <> route, path) do
+      nil -> nil
+      params -> {:related, resource, relationship, params["id"]}
     end
   end
 
@@ -935,8 +1265,11 @@ defmodule AshHateoas.Hydra.Plug do
 
   # ── Ash calls ───────────────────────────────────────────────────────────────
 
-  defp load(resource, id, actor, tenant) do
-    case Ash.get(resource, id, actor: actor, tenant: tenant, authorize?: true) do
+  defp load(resource, id, actor, tenant, load \\ []) do
+    opts = [actor: actor, tenant: tenant, authorize?: true]
+    opts = if load == [], do: opts, else: Keyword.put(opts, :load, load)
+
+    case Ash.get(resource, id, opts) do
       {:ok, record} -> record
       _ -> nil
     end
@@ -947,8 +1280,9 @@ defmodule AshHateoas.Hydra.Plug do
   # Run the matched read action (the primary read for the base index, or a named
   # collection read like `semantic_search` for `/base/<name>`), with any query
   # params bound to its public arguments.
-  defp read(resource, action, arguments, actor, tenant, page) do
+  defp read(resource, action, arguments, actor, tenant, page, load) do
     read_opts = [actor: actor, tenant: tenant, authorize?: true]
+    read_opts = if load == [], do: read_opts, else: Keyword.put(read_opts, :load, load)
 
     # Paginate only when page params were supplied AND this action declares
     # pagination support — passing `page:` to an unpaginated action raises.

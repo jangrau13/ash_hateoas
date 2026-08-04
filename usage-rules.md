@@ -199,7 +199,8 @@ A link takes one of two forms, and both state the same thing:
 
 ```json
 "author":   {"@id": "/people/7"}                                  // node reference
-"comments": {"@type": "Collection", "hydra:member": [{"@id": "/comments/1"}]}
+"comments": {"@id": "/articles/3/comments", "@type": "Collection",
+              "hydra:member": [{"@id": "/comments/1"}], "hydra:totalItems": 1}
 ```
 
 ```json
@@ -225,32 +226,64 @@ with cycles degrading to a plain reference. The target's own terms travel with
 it as a scoped `@context`, so a record expands to the same triples however it
 was reached.
 
-### A to-many is a collection, and it is inline
+### A to-many is a collection
 
-A loaded to-many is a `hydra:Collection` carrying its members — **not a bare
-array**. `hydra:member` is a real predicate: with it, the property points at
-*one collection* which *has* N members. Without it the property points at N
-unrelated things and the collection, the subject `hydra:totalItems` and any
-paging describe, does not exist at all.
+A to-many link is a `hydra:Collection` — **not a bare array**. `hydra:member` is
+a real predicate: with it, the property points at *one collection* which *has* N
+members. Without it the property points at N unrelated things and the
+collection, the subject `hydra:totalItems` and any paging describe, does not
+exist at all.
+
+Its `@id` is the relationship's own route (`/articles/7/comments`), which
+resolves to exactly this collection, so it has a real identity a triple can
+name.
+
+**What varies is whether the members are expanded, not whether they are there.**
 
 ```json
-"comments": {"@type": "Collection", "hydra:totalItems": 2,
-             "hydra:member": [{"@id": "/comments/1", "body": "…"},
-                              {"@id": "/comments/2", "body": "…"}]}
+// unloaded — members as references, plus the true total and a page view
+"comments": {"@id": "/articles/7/comments", "@type": "Collection",
+             "hydra:totalItems": 214,
+             "hydra:member": [{"@id": "/comments/1"}, {"@id": "/comments/2"}],
+             "hydra:view": {"@type": "PartialCollectionView",
+                            "hydra:next": "/articles/7/comments?offset=10"}}
 ```
 
-Each member carries its own `@id`, so it is a link *and* the data: follow it to
-reach that member's own affordances.
+```json
+// loaded — the same collection, members stated in place
+"comments": {"@id": "/articles/7/comments", "@type": "Collection",
+             "hydra:totalItems": 214,
+             "hydra:member": [{"@id": "/comments/1", "body": "…", "author": {…}}]}
+```
 
-Two consequences of there being no per-relationship collection URL:
+That is the same rule a to-one follows: a reference by default, the node itself
+when the action loads it. A client always learns *which* records are related and
+can follow any of them; loading decides only whether it also gets their data.
 
-- **An unloaded to-many is absent, not empty.** Emitting zero members would
-  assert the record *has* none, which is a claim about the data rather than
-  about what was loaded. So which read loads what becomes a public choice: keep
-  the default `read` lean and load the aggregate on a document-shaped read.
-- **Pagination has nowhere to live.** An inline collection cannot page. Fine
-  while a record's children number in the hundreds; state it as a known bound
-  rather than discovering it as a slow response.
+The reference list is bounded (10) so the cost does not multiply across a
+collection page, and `hydra:totalItems` says how much is being left out —
+truncation is stated, never silent. `hydra:view` gives the client somewhere to
+go for the rest.
+
+### Asking for the members in place
+
+Two ways, and they produce the same document:
+
+```elixir
+read :with_comments do
+  prepare build(load: [:comments])   # the server decides
+end
+```
+
+```
+GET /articles/7?load=comments        # the client asks
+```
+
+The `?load` parameter is advertised as a `hydra:IriTemplate` on the node, so a
+client discovers it rather than knowing it out of band. It accepts any public
+to-many the class declares; an unknown or private name is **ignored**, never
+refused — the parameter narrows a response and must never widen what may be
+read.
 
 ### A recursive to-many travels flat
 
@@ -371,9 +404,11 @@ determine that — a wrong guess returns a wrong authorization answer.
 
 - **Expecting relationship links on a resource that declares none.** Every
   public relationship becomes a link on the node; a private one is left off the
-  surface. **No relationship is routed**: a to-many is an inline collection on
-  the node when the action loads it, and a to-one references the target member
-  from the local foreign key. `/articles/:id/comments` does not exist.
+  surface. A to-many derives a `related` route (`/articles/:id/comments`) — the
+  identity its inline collection carries and the URL `hydra:view` pages against.
+  A to-one derives none: it is referenced from the local foreign key. **No route
+  nests a member under another record**, so `/articles/7/comments/3` does not
+  exist — a record that already has an address never gets a second.
 - **Expecting affordances on a resource with no routes.** A resource with no
   routes falls back to its actions directly and affordances have no `href`. That
   is intended — the backbone is usable before route derivation has run.

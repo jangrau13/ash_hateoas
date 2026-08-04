@@ -176,13 +176,19 @@ defmodule AshHateoas.Hydra.NodeContextTest do
       # would describe nothing.
       id = article().id
 
-      expanded =
-        "/articles/with_comments"
-        |> get()
-        |> then(&JsonLd.node(&1, "/articles/#{id}"))
+      node = get("/articles/with_comments")
+      expanded = JsonLd.node(node, "/articles/#{id}")
 
-      assert [collection] = JsonLd.values(expanded, "#{@vocab}article/comments")
-      assert is_map(collection), "the value is the collection node, not a member"
+      # The collection carries an `@id` — its related route — so it is a named
+      # node in the graph rather than a blank one, and the value here is that
+      # IRI.
+      assert [collection_iri] = JsonLd.values(expanded, "#{@vocab}article/comments")
+      assert collection_iri =~ "/comments"
+
+      # Follow it within the graph: one collection subject, and its members hang
+      # off `hydra:member`. A bare array would instead have produced N
+      # `comments` triples and no collection subject at all.
+      collection = JsonLd.node(node, collection_iri)
 
       assert [_member] = JsonLd.values(collection, "#{@hydra}member")
       assert JsonLd.values(collection, "#{@hydra}totalItems") == [1]

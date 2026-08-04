@@ -216,17 +216,53 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert body(get("/documents/#{doc.id}", @admin))["title"] == "Plain"
     end
 
-    test "an unloaded to-many is absent, not empty" do
+    test "an unloaded to-many is a collection of references" do
       article =
         Article
         |> Ash.Changeset.for_create(:create, %{title: "Hydra"})
         |> Ash.create!(authorize?: false)
 
-      # This used to reference `/articles/:id/comments`. With no
-      # per-relationship route there is nothing to reference, and an empty
-      # collection would assert the article HAS no comments — a claim about the
-      # data rather than about what the action loaded. So the key is omitted.
-      refute Map.has_key?(body(get("/articles/#{article.id}", @admin)), "comments")
+      # Its own `@id`, its true size, and its members as bare `@id`s. A client
+      # learns which comments exist and can follow any of them, without the
+      # server rendering them.
+      comments = body(get("/articles/#{article.id}", @admin))["comments"]
+
+      assert comments["@id"] == "/articles/#{article.id}/comments"
+      assert comments["@type"] == "Collection"
+      assert comments["hydra:totalItems"] == 0
+    end
+
+    test "?load expands the members without changing the collection" do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Hydra"})
+        |> Ash.create!(authorize?: false)
+
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "D", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{
+        body: "mine",
+        document_id: document.id,
+        article_id: article.id
+      })
+      |> Ash.create!(authorize?: false)
+
+      referenced = body(get("/articles/#{article.id}", @admin))["comments"]
+      expanded = body(get("/articles/#{article.id}?load=comments", @admin))["comments"]
+
+      # One collection, one identity. `load` controls **expansion**, never
+      # presence — the rule a to-one already follows.
+      assert referenced["@id"] == expanded["@id"]
+      assert referenced["hydra:totalItems"] == expanded["hydra:totalItems"]
+
+      assert [%{"@id" => ref}] = referenced["hydra:member"]
+      assert [member] = expanded["hydra:member"]
+      assert member["@id"] == ref
+      assert member["body"] == "mine"
     end
 
     test "the related collection link RESOLVES, and holds only that record's related rows" do
@@ -278,17 +314,82 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert get(hd(collection["hydra:member"])["@id"], @admin).status == 200
     end
 
-    test "the per-relationship route is gone" do
+    test "the collection's @id resolves; the JSON:API linkage route does not" do
       article =
         Article
         |> Ash.Changeset.for_create(:create, %{title: "Gone"})
         |> Ash.create!(authorize?: false)
 
-      # It addressed a *relationship of the record* through path structure,
-      # which the link already states. Proving it 404s is what shows the routes
-      # were removed rather than merely unadvertised.
-      assert get("/articles/#{article.id}/comments", @admin).status == 404
+      # `/articles/7/comments` addresses this article's comments — a real
+      # resource, and the identity the inline collection carries, so it must
+      # resolve. `/relationships/comments` returned linkage without the members;
+      # the reference list the node now carries says that in place.
+      assert get("/articles/#{article.id}/comments", @admin).status == 200
       assert get("/articles/#{article.id}/relationships/comments", @admin).status == 404
+    end
+
+    test "the node advertises how to ask for expansion" do
+      # A client must discover `?load=` rather than know it out of band, which
+      # is what Level 3 requires. `hydra:IriTemplate` is the only construct
+      # Hydra has for a client-parameterised request — there is no term for
+      # "expand this" — so the template is where this is said.
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Ask"})
+        |> Ash.create!(authorize?: false)
+
+      template = body(get("/articles/#{article.id}", @admin))["hydra:search"]
+
+      assert template["@type"] == "IriTemplate"
+      assert template["hydra:template"] == "/articles/#{article.id}{?load*}"
+
+      # One mapping per loadable relationship, each keyed on the property IRI
+      # the ontology declares — so the legal values are stated by enumeration in
+      # terms a client can resolve.
+      properties =
+        template
+        |> Map.get("hydra:mapping")
+        |> Enum.map(& &1["hydra:property"]["@id"])
+
+      assert "https://ash-hateoas.org/vocab#article/comments" in properties
+      assert Enum.all?(template["hydra:mapping"], &(&1["hydra:variable"] == "load"))
+      assert Enum.all?(template["hydra:mapping"], &(&1["hydra:required"] == false))
+    end
+
+    test "the template is on the addressed node, not on every member" do
+      # Repeating it on each member of each page would be noise: a member is one
+      # URL away from the node that addresses it.
+      Article |> Ash.Changeset.for_create(:create, %{title: "M"}) |> Ash.create!(authorize?: false)
+
+      member = hd(body(get("/articles", @admin))["hydra:member"])
+
+      refute Map.has_key?(member, "hydra:search")
+    end
+
+    test "a member is never addressed through another record" do
+      # The distinction this stage draws: a collection that has no other address
+      # gets one; a record that already has an address does not get a second.
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Nested"})
+        |> Ash.create!(authorize?: false)
+
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "D", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      comment =
+        Comment
+        |> Ash.Changeset.for_create(:create, %{
+          body: "b",
+          document_id: document.id,
+          article_id: article.id
+        })
+        |> Ash.create!(authorize?: false)
+
+      assert get("/articles/#{article.id}/comments/#{comment.id}", @admin).status == 404
+      assert get("/comments/#{comment.id}", @admin).status == 200
     end
 
     test "a belongs_to surfaces as a node reference built from the foreign key" do

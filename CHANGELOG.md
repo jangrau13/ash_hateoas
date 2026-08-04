@@ -53,16 +53,29 @@ served natively as a Hydra / JSON-LD API.
   routes that serve a GET, so the URLs the API issues are the URLs it accepts.
   Foreign keys do not appear in `hydra:expects` at all — a relationship input
   is advertised as its link property, typed `sh:nodeKind: sh:IRI`.
-- **No relationship is routed.** `/articles/:id/comments` and
-  `/articles/:id/relationships/comments` are gone. Both addressed a
-  *relationship of the record* through path structure, which the link on the
-  node already states — a second spelling of one fact, kept only because it was
-  a quieter one. A loaded to-many is a blank-node `hydra:Collection` carrying
-  its members, each with its own flat `@id`, so the whole record arrives in one
-  request where it took N+1. An **unloaded** to-many is omitted rather than
-  emitted empty: zero members would assert the record has none, which is a claim
-  about the data rather than about what was loaded. The class collection remains
-  the addressable one.
+- **A to-many is a collection, referenced then expanded.** Its `@id` is the
+  relationship's own route (`/articles/7/comments`), so it has an identity that
+  resolves to exactly that collection. Unloaded, it carries its members as bare
+  `{"@id"}` references — bounded, with `hydra:totalItems` stating the true size
+  and a `hydra:PartialCollectionView` pointing at the rest. Loaded, the same
+  collection states those members in place. So **loading controls expansion,
+  never presence**: the rule a to-one already followed, now followed by both
+  cardinalities. A client always learns which records are related and can follow
+  any of them.
+- **`?load=<relationship>` lets a client ask for expansion**, advertised as a
+  `hydra:IriTemplate` on the node so it is discovered rather than known out of
+  band. It accepts any public to-many the class declares; an unknown or private
+  name is ignored rather than refused, since the parameter narrows a response
+  and must never widen what may be read. Repeated (`?load=a&load=b`) per RFC
+  6570's explode form.
+- **No route nests a member under another record.** `/articles/7/comments/3`
+  does not exist: a record that already has an address never gets a second one,
+  and its identity never depends on the path a client took to reach it. The
+  relationship's *collection* keeps its route, because a collection has no other
+  address and pagination needs one to page against.
+- The JSON:API-style `/relationships/<name>` route is no longer derived. It
+  returned linkage without the members; the reference list a collection now
+  carries says exactly that, in place, at no extra request.
 - **A to-many says what its members are.** The ontology declares a
   `hydra:Collection` subclass per to-many property, carrying a
   `hydra:memberAssertion` — Hydra's own pattern for a strongly typed

@@ -207,56 +207,78 @@ defmodule AshHateoas.Hydra.OwnedTest do
       assert get("/domain/ledger").status == 200
     end
 
-    test "it states its entries when the read loads them", %{ledger: ledger, entry: entry} do
-      # The other direction of the same edge. Being pointed at is a fact about
-      # the relationship, not a declaration either resource makes.
+    test "a declared load and ?load= agree", %{ledger: ledger, entry: entry} do
+      # Two doors to one shape: an action that declares `load: [:entries]`, and
+      # `?load=entries` on the default read. They must produce the same
+      # collection, or a client gets different answers for the same question.
       assert %{"@type" => "Collection", "hydra:member" => [member]} = loaded(ledger)["entries"]
       assert member["@id"] == "/domain/entry/#{entry.id}"
+      assert member["memo"] == "M"
     end
   end
 
-  describe "a to-many link survives having no route" do
-    test "a loaded collection carries its members", %{ledger: ledger} do
-      # The regression this stage most risks. Both `unloaded_link/5` and
-      # `loaded_link/5` fell through to `nil` without a `%Route{}`, so removing
-      # the related routes without fixing them first makes every to-many link
-      # vanish from every node — "described in the ontology and absent from the
-      # node", which is the defect first-class links were written to fix,
-      # reintroduced from the other end.
-      entries = loaded(ledger)["entries"]
+  describe "a to-many is a collection, referenced then expanded" do
+    test "an unloaded to-many carries references and a total", %{ledger: ledger, entry: entry} do
+      # Not a bare reference and not an absence: a real collection, whose
+      # members are the `@id`s of the records it holds. A client learns which
+      # entries exist and can follow any of them, without the server rendering
+      # them.
+      entries = body(get("/domain/ledger/#{ledger.id}"))["entries"]
 
+      assert entries["@id"] == "/domain/ledger/#{ledger.id}/entries"
       assert entries["hydra:totalItems"] == 1
-      assert length(entries["hydra:member"]) == 1
+      assert entries["hydra:member"] == [%{"@id" => "/domain/entry/#{entry.id}"}]
     end
 
-    test "the collection is a blank node, not a fabricated URL", %{ledger: ledger} do
-      # Honest rather than degraded: this collection is not separately
-      # addressable, it exists as the value of this property on this record.
-      # Minting an `@id` no route serves would be worse than having none.
-      refute Map.has_key?(loaded(ledger)["entries"], "@id")
+    test "a member reference resolves", %{ledger: ledger} do
+      [%{"@id" => href}] = body(get("/domain/ledger/#{ledger.id}"))["entries"]["hydra:member"]
+
+      assert get(href).status == 200
     end
 
-    test "an unloaded to-many is absent, not empty", %{ledger: ledger} do
-      # Zero members would assert the ledger *has* no entries, which is false —
-      # it has one. Omitting the key means "not loaded", which is what is true.
-      refute Map.has_key?(body(get("/domain/ledger/#{ledger.id}")), "entries")
-    end
+    test "?load expands the same members in place", %{ledger: ledger, entry: entry} do
+      # `load` controls **expansion**, never presence — the rule a to-one
+      # already follows. The collection is the same collection; its members
+      # carry their own data rather than only their identity.
+      entries = body(get("/domain/ledger/#{ledger.id}?load=entries"))["entries"]
 
-    test "members carry their own flat @id, so each is a link and the data", %{
-      ledger: ledger,
-      entry: entry
-    } do
-      [member] = loaded(ledger)["entries"]["hydra:member"]
-
+      assert [member] = entries["hydra:member"]
+      assert member["@id"] == "/domain/entry/#{entry.id}"
       assert member["memo"] == "M"
-      assert get(member["@id"]).status == 200
+    end
+
+    test "both forms are one collection with one identity", %{ledger: ledger} do
+      # Expansion states more about the members; it never changes which
+      # collection this is. `?load=entries` is how a client *asked* — it is not
+      # what the collection is called.
+      referenced = body(get("/domain/ledger/#{ledger.id}"))["entries"]
+      expanded = body(get("/domain/ledger/#{ledger.id}?load=entries"))["entries"]
+
+      assert referenced["@id"] == expanded["@id"]
+      assert referenced["hydra:totalItems"] == expanded["hydra:totalItems"]
+    end
+
+    test "the collection's @id resolves to that collection", %{ledger: ledger, entry: entry} do
+      # What makes the identity real rather than decorative.
+      collection = body(get(body(get("/domain/ledger/#{ledger.id}"))["entries"]["@id"]))
+
+      assert collection["@type"] == "Collection"
+      assert [member] = collection["hydra:member"]
       assert member["@id"] == "/domain/entry/#{entry.id}"
     end
+
+    test "an unknown load name is ignored, not refused", %{ledger: ledger} do
+      # The parameter narrows a response; it must never widen what may be read,
+      # so naming something unloadable yields exactly the unasked response.
+      asked = body(get("/domain/ledger/#{ledger.id}?load=nonsense"))["entries"]
+      unasked = body(get("/domain/ledger/#{ledger.id}"))["entries"]
+
+      assert asked == unasked
+    end
   end
 
-  # This ledger, read by an action that loads `:entries`. A named read derives a
-  # collection index rather than a member route, so the node comes out of
-  # `hydra:member` — which is the same idiom `/comments/with_document` uses.
+  # This ledger with its entries expanded. Either door works — a read that
+  # declares the load, or `?load=` on the default one — and they must agree.
   defp loaded(ledger) do
     "/domain/ledger/with_entries"
     |> get()
