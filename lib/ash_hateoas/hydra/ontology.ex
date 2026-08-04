@@ -402,8 +402,8 @@ defmodule AshHateoas.Hydra.Ontology do
   # fact and wrong on a class.
   defp collection_class(resource, type, name) do
     case Ash.Resource.Info.relationship(resource, name) do
-      %{destination: destination} ->
-        case AshHateoas.Resource.Info.type(destination) do
+      %{destination: destination} = relationship ->
+        case member_class(relationship, destination) do
           member when is_binary(member) ->
             [
               %{
@@ -425,6 +425,84 @@ defmodule AshHateoas.Hydra.Ontology do
 
       _ ->
         []
+    end
+  end
+
+  # What a to-many's members actually are — which is not always its destination.
+  #
+  # A relationship may be *narrowed* by a filter, and then the destination is a
+  # base class the members merely belong to rather than the class they have:
+  #
+  #     has_many :draft_posts, Post do
+  #       filter(expr(status == :draft))    # ← every member is a DraftPost
+  #     end
+  #
+  # Read only the destination and every narrowing of one base reports that base,
+  # so the collections are byte-identical apart from an `rdfs:label` — and a
+  # label is not a claim. A client is told each collection holds a Post, which
+  # is true of all of them and therefore distinguishes none.
+  #
+  # The narrowed class is asserted only where it is **guaranteed**, the same rule
+  # `rdfs:range` follows (rdfs3, above):
+  #
+  #   * the filter must pin an attribute to a single literal — `==` against a
+  #     bare value. Anything else (a range, an `or`, a reference to another
+  #     field) leaves members the emitter cannot vouch for, so it falls back;
+  #   * a class of that name must exist in the destination's own domain, which
+  #     is the set the ontology declares beside it. A literal naming nothing
+  #     declared would mint a dangling IRI — the defect this module was written
+  #     to remove.
+  #
+  # The fallback is the destination: weaker, never wrong. And the narrowed claim
+  # is strictly stronger rather than different — every member really is one of
+  # the narrowed class — so a consumer that only knew the base class still reads
+  # a true statement through the subclass.
+  #
+  # Nothing here learns any consumer's vocabulary. It reads "a filter equates an
+  # attribute to a literal, and a class of that name is declared", which is a
+  # statement about Ash and OWL.
+  defp member_class(%{filter: filter}, destination) do
+    with literal when not is_nil(literal) <- pinned_literal(filter),
+         module when not is_nil(module) <- declared_sibling(destination, literal) do
+      AshHateoas.Resource.Info.type(module)
+    else
+      _ -> AshHateoas.Resource.Info.type(destination)
+    end
+  end
+
+  defp member_class(_relationship, destination),
+    do: AshHateoas.Resource.Info.type(destination)
+
+  # The value a filter pins an attribute to, or `nil` if it pins none.
+  #
+  # Matched against the unparsed `expr/1` AST — a `has_many`'s filter is stored
+  # as written, not as a built expression — so this is one shape rather than the
+  # whole of `Ash.Filter`. Deliberately narrow: an unrecognised filter falls
+  # back rather than being approximated.
+  defp pinned_literal(%Ash.Query.Call{name: :==, args: [%Ash.Query.Ref{}, literal]})
+       when is_atom(literal) or is_binary(literal),
+       do: to_string(literal)
+
+  defp pinned_literal(%Ash.Query.Call{name: :==, args: [literal, %Ash.Query.Ref{}]})
+       when is_atom(literal) or is_binary(literal),
+       do: to_string(literal)
+
+  defp pinned_literal(_filter), do: nil
+
+  # A resource in the destination's own domain whose type is this literal.
+  #
+  # The domain is the right scope because it is what `Index.build/1` walks to
+  # decide which classes are declared, so a hit here is a class the same
+  # document declares.
+  defp declared_sibling(destination, literal) do
+    case Ash.Resource.Info.domain(destination) do
+      nil ->
+        nil
+
+      domain ->
+        domain
+        |> Ash.Domain.Info.resources()
+        |> Enum.find(&(AshHateoas.Resource.Info.type(&1) == literal))
     end
   end
 

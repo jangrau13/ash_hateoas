@@ -214,6 +214,7 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Paged)
     resource(AshHateoas.Test.Person)
     resource(AshHateoas.Test.Comment)
+    resource(AshHateoas.Test.Review)
     resource(AshHateoas.Test.PublicNote)
     resource(AshHateoas.Test.Unrouted)
     resource(AshHateoas.Test.Secret)

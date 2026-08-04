@@ -26,6 +26,17 @@ defmodule AshHateoas.Test.Comment do
   attributes do
     uuid_primary_key(:id)
     attribute(:body, :string, public?: true, allow_nil?: false)
+
+    # A discriminator, so `Article` can narrow one `has_many` several ways.
+    # Only `:review` has a class of its own (`AshHateoas.Test.Review`), which
+    # is what lets one fixture cover both branches of the member-class rule: a
+    # narrowing whose literal names a declared class, and one whose does not.
+    attribute(:kind, :atom,
+      public?: true,
+      constraints: [one_of: [:review, :reply, :note]]
+    )
+
+    attribute(:score, :integer, public?: true)
   end
 
   # The to-one cases: a required `belongs_to` (document) and an optional one
@@ -56,8 +67,8 @@ defmodule AshHateoas.Test.Comment do
   actions do
     defaults([
       :read,
-      create: [:body, :document_id, :article_id, :author_id],
-      update: [:body, :document_id, :article_id, :author_id]
+      create: [:body, :kind, :score, :document_id, :article_id, :author_id],
+      update: [:body, :kind, :score, :document_id, :article_id, :author_id]
     ])
 
     # A read that loads its to-one link. The link is then stated in place —

@@ -155,6 +155,47 @@ defmodule AshHateoas.Hydra.OntologyTest do
                  %{"@id" => "#{@vocab}Comment"}
       end
     end
+
+    test "a narrowed relationship asserts the class it narrows to" do
+      # `Article has_many :reviews, Comment, filter: expr(kind == :review)`. The
+      # filter states the real member class; without reading it the collection
+      # can only report the destination, which every narrowing of one base
+      # shares.
+      assert declared("#{@vocab}ArticleReviews")["hydra:memberAssertion"] == %{
+               "hydra:property" => %{"@id" => "rdf:type"},
+               "hydra:object" => %{"@id" => "#{@vocab}Review"}
+             }
+    end
+
+    test "two collections over one destination differ in what they assert" do
+      # The defect this rule fixes, stated as the property that would catch it:
+      # narrowed collections were byte-identical apart from `rdfs:label`, so a
+      # client was told each holds a Comment — true of all of them, and
+      # therefore distinguishing none. A label is not a claim.
+      reviews = declared("#{@vocab}ArticleReviews")
+      comments = declared("#{@vocab}ArticleComments")
+
+      refute reviews["rdfs:label"] == comments["rdfs:label"]
+      refute reviews["hydra:memberAssertion"] == comments["hydra:memberAssertion"]
+    end
+
+    test "a literal naming no declared class falls back to the destination" do
+      # `filter: expr(kind == :reply)` pins the attribute, but nothing declares
+      # a `reply` class — so asserting `#Reply` would mint an IRI the document
+      # never defines, which is the defect this whole module exists to remove.
+      # The destination is weaker and never wrong.
+      assert declared("#{@vocab}ArticleReplies")["hydra:memberAssertion"]["hydra:object"] ==
+               %{"@id" => "#{@vocab}Comment"}
+    end
+
+    test "a filter that pins nothing falls back to the destination" do
+      # `filter: expr(score > 5)` constrains members without giving them a
+      # common class. Only an equation to a single literal licenses the stronger
+      # claim — the same rule `rdfs:range` follows, since rdfs3 makes a member
+      # assertion an assertion rather than a hint.
+      assert declared("#{@vocab}ArticleTopComments")["hydra:memberAssertion"]["hydra:object"] ==
+               %{"@id" => "#{@vocab}Comment"}
+    end
   end
 
   describe "the ah: vocabulary declares itself" do
@@ -400,6 +441,33 @@ defmodule AshHateoas.Hydra.OntologyTest do
 
       assert JsonLd.values(property, "http://www.w3.org/2000/01/rdf-schema#range") ==
                ["http://www.w3.org/2001/XMLSchema#string"]
+    end
+
+    test "narrowed collections differ as triples, not merely as labels" do
+      # The comparison nobody made. Read as JSON, two narrowings of one
+      # destination were byte-identical apart from `rdfs:label` — and a label is
+      # an annotation a reasoner ignores as logical content, so on the graph the
+      # two collections said *exactly* the same thing about their members.
+      #
+      # Asserted here rather than only above because that is where the failure
+      # lived: the raw JSON differed (by the label), so a key-based comparison
+      # could pass while the claim being made was identical.
+      nodes = JsonLd.nodes(document())
+
+      # The member assertion is a blank node — it has no `@id`, so its object
+      # sits one level down rather than being reachable as a value. And the
+      # collection IRI appears twice: once as a bare reference from the property
+      # that ranges on it, once carrying the declaration. Take the second, the
+      # same way the `recipe/title` test above does.
+      member_of = fn iri ->
+        nodes
+        |> Enum.find(&(&1["@id"] == iri and map_size(&1) > 1))
+        |> Map.fetch!("http://www.w3.org/ns/hydra/core#memberAssertion")
+        |> Enum.flat_map(&JsonLd.values(&1, "http://www.w3.org/ns/hydra/core#object"))
+      end
+
+      assert member_of.("#{@vocab}ArticleReviews") == ["#{@vocab}Review"]
+      assert member_of.("#{@vocab}ArticleComments") == ["#{@vocab}Comment"]
     end
 
     test "no CLASS property the documentation references is undeclared" do

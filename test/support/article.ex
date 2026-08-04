@@ -39,6 +39,35 @@ defmodule AshHateoas.Test.Article do
       public? true
       destination_attribute :article_id
     end
+
+    # Three narrowings of one destination, covering each branch of the rule the
+    # ontology applies when deciding what a to-many's members are.
+    #
+    # Pinned to a literal naming a declared class, so this collection asserts
+    # `#Review` where `comments` above can only assert `#Comment`.
+    has_many :reviews, AshHateoas.Test.Comment do
+      public? true
+      destination_attribute :article_id
+      filter expr(kind == :review)
+    end
+
+    # Pinned, but `reply` names no declared class — so this falls back to
+    # `#Comment`. Weaker than it could be and still true, which is the point:
+    # a literal nothing declares must not become an IRI nothing defines.
+    has_many :replies, AshHateoas.Test.Comment do
+      public? true
+      destination_attribute :article_id
+      filter expr(kind == :reply)
+    end
+
+    # Filtered but not *pinned*. A comparison leaves members no single class
+    # covers, so it falls back too — the branch that would break if the filter
+    # reader were widened to "any filter mentioning an attribute".
+    has_many :top_comments, AshHateoas.Test.Comment do
+      public? true
+      destination_attribute :article_id
+      filter expr(score > 5)
+    end
   end
 
   actions do

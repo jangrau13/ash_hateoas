@@ -53,6 +53,16 @@ served natively as a Hydra / JSON-LD API.
   routes that serve a GET, so the URLs the API issues are the URLs it accepts.
   Foreign keys do not appear in `hydra:expects` at all — a relationship input
   is advertised as its link property, typed `sh:nodeKind: sh:IRI`.
+- **A to-many says what its members are.** The ontology declares a
+  `hydra:Collection` subclass per to-many property, carrying a
+  `hydra:memberAssertion` — Hydra's own pattern for a strongly typed
+  collection. Where the relationship is **narrowed** by a filter
+  (`has_many :reviews, Comment, filter: expr(kind == :review)`) the assertion
+  names the class the filter picks out rather than the destination, so
+  narrowings of one base are distinguishable by what they claim rather than
+  only by an `rdfs:label`. Asserted only where the filter pins an attribute to
+  a single literal *and* a class of that name is declared — every other filter
+  falls back to the destination, which is weaker and never wrong.
 - Refusals are `hydra:Status` 422s: clearing a required link, a reference to
   the wrong class, a dangling target, an identity object whose keys are not a
   declared identity, or an absolute IRI under a foreign origin. Existence is
