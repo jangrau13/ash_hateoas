@@ -191,8 +191,9 @@ defmodule AshHateoas.Resource do
     args: [:action, :iri],
     identifier: {:auto, :unique_integer},
     describe: """
-    Map one of this resource's actions to a well-known Action-type IRI, sharpening
-    the `schema:potentialAction` beyond the subtype inferred from its CRUD type.
+    Map one of this resource's actions to a well-known Action-type IRI, stating
+    what the action is *for* — the one thing Hydra has no term for. This is the
+    only source of a `schema:potentialAction`; an action without one gets none.
     """,
     examples: [~s(semantic_action :confirm, "ConfirmAction")],
     schema: [

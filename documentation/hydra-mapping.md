@@ -11,8 +11,9 @@ node offers — knowing nothing about Ash or this package.
 
 | Backbone output | Hydra / JSON-LD |
 |---|---|
-| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class — including a destroy, which returns the record it destroyed) — plus a `schema:potentialAction` (see below) |
-| an operation as a *verb* | `schema:potentialAction` — a schema.org `Action` (subtype inferred from the HTTP method: GET→`ReadAction`, POST→`CreateAction`, PATCH→`UpdateAction`, DELETE→`DeleteAction`; overridable per action with `semantic_action`) with `schema:target` (`urlTemplate`, `httpMethod`, `contentType`). See [semantic-affordances.md](semantic-affordances.md) |
+| an affordance | a `hydra:Operation` — `@type: "Operation"`, `hydra:method`, `hydra:title`, `hydra:expects` (a write) and `hydra:returns` (the resulting class — including a destroy, which returns the record it destroyed) |
+| an operation's URL | the `@id` of the node it hangs on — Hydra's own rule, and why `hydra:Operation` has no target-URL property. No `schema:target` is emitted; it restated the `@id`, `hydra:method` and a content type belonging to the API |
+| an operation's *declared role* | `schema:potentialAction` — a schema.org `Action` naming what the operation is *for*, the one thing Hydra cannot express. Emitted **only** where a `semantic_action` declared it; a subtype inferred from the HTTP method would restate `hydra:method`. See [semantic-affordances.md](semantic-affordances.md) |
 | the affordance set on a record | the node's `hydra:operation` array (same-URL ops) + one `ah:<action>` link node per named sub-action |
 | a write action's fields | `hydra:expects` → a `hydra:Class` (with its own `@id`) carrying one `hydra:SupportedProperty` per field |
 | a query/search read's fields | a `hydra:IriTemplate` (`hydra:template`, `hydra:mapping` of `hydra:IriTemplateMapping`) |

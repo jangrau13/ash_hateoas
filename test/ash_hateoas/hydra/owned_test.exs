@@ -87,6 +87,15 @@ defmodule AshHateoas.Hydra.OwnedTest do
       raw = get("/domain/ledger/#{ledger.id}/entry/#{entry.id}").resp_body
 
       refute raw =~ ":ledger_id", "a route placeholder reached the wire"
+
+      # Both spellings, because `schema:urlTemplate` now renders placeholders in
+      # RFC 6570's. That is right in the *documentation*, which describes a
+      # class and has no id to substitute — but a served node was built for one
+      # record, so an unbound `{ledger_id}` here would mean a client following
+      # `schema:target` POSTs to a literal brace. `hateoas2dsl` prefers the
+      # template over the node's own `@id` (`submit.ts:183`), so it would.
+      refute raw =~ "{ledger_id}", "an unexpanded variable reached a served node"
+      refute raw =~ "{id}", "an unexpanded variable reached a served node"
     end
   end
 

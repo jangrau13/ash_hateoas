@@ -193,11 +193,12 @@ defmodule AshHateoas.Resource.Info do
 
   @doc """
   A map of `action => well-known Action-type IRI` from the resource's
-  `semantic_action` declarations — the explicit overrides for an operation's
+  `semantic_action` declarations — the declared role for an operation's
   `schema:potentialAction` type.
 
-  Only overrides are present; an action without one falls back to the subtype
-  inferred from its CRUD type. Bare tokens are resolved against the configured
+  An action absent from this map emits no `potentialAction` at all: a subtype
+  inferred from the HTTP method would restate `hydra:method` on the same node.
+  Bare tokens are resolved against the configured
   semantic vocabulary (schema.org by default);
   absolute IRIs are used verbatim.
   """
