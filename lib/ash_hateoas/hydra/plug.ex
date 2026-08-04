@@ -60,8 +60,6 @@ defmodule AshHateoas.Hydra.Plug do
   alias AshHateoas.Hydra.Error, as: HydraError
   alias AshHateoas.{Index, Navigation, Route}
 
-  require Ash.Query
-
   @impl Plug
   def init(opts) do
     domains = opts |> Keyword.get(:domains, Keyword.get(opts, :domain)) |> List.wrap()
