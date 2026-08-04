@@ -374,7 +374,6 @@ defmodule AshHateoas.Resource do
     sections: [@hateoas, @agentic_hateoas],
     transformers: [
       AshHateoas.Resource.Transformers.DeriveActionRoutes,
-      AshHateoas.Resource.Transformers.DeriveRelationshipRoutes,
       AshHateoas.Resource.Transformers.DeriveObservables,
       AshHateoas.Resource.Transformers.EnforceNotDelegable
     ],

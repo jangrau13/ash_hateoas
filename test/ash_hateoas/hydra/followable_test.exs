@@ -149,9 +149,9 @@ defmodule AshHateoas.Hydra.FollowableTest do
     end
 
     test "a record with several has_many relationships", %{recipe: recipe} do
-      # Recipe carries three related routes — two `has_many` and one
-      # `many_to_many`. The join reaches the router by a different path than a
-      # plain `has_many`, so covering only the latter leaves it free to break.
+      # Recipe carries three public to-many relationships — two `has_many` and
+      # one `many_to_many`. The join is built differently from a plain
+      # `has_many`, so covering only the latter leaves it free to break.
       assert_all_followable("/recipes/#{recipe.id}")
     end
 
@@ -165,14 +165,23 @@ defmodule AshHateoas.Hydra.FollowableTest do
       assert_all_followable("/articles")
     end
 
-    test "a related collection, and the members it holds", %{article: article} do
-      # The two-hop case: follow the link off a record, then follow what the
-      # related collection itself advertises. A member rendered inside a related
-      # collection carries its own `@id`, and that has to resolve too.
-      node = body(get("/articles/#{article.id}"))
-      related = node["comments"]["@id"]
+    test "an inline collection's members are each followable", %{article: article} do
+      # Was the two-hop case: follow the link off a record, then follow what the
+      # related collection advertised. With the members inline there is one hop
+      # fewer and the same obligation — a member carries its own flat `@id`, so
+      # it is a link *and* the data, and that link must resolve.
+      node =
+        "/articles/with_comments"
+        |> get()
+        |> body()
+        |> Map.get("hydra:member")
+        |> Enum.find(&(&1["@id"] =~ article.id))
 
-      assert_all_followable(related)
+      members = node["comments"]["hydra:member"]
+
+      assert members != [], "the read loads :comments, so they must be here"
+
+      for member <- members, do: assert_all_followable(member["@id"])
     end
   end
 

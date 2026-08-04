@@ -73,6 +73,14 @@ defmodule AshHateoas.Test.Article do
   actions do
     defaults [:read, create: [:title], update: [:title]]
 
+    # A to-many is stated on the node only when the action loads it — there is
+    # no per-relationship collection URL to reference, and an empty collection
+    # would assert the article has no comments. So "the article with its
+    # comments" is a read a caller chooses, and the default stays lean.
+    read :with_comments do
+      prepare build(load: [:comments])
+    end
+
     update :publish do
       description "Publish this article."
       require_atomic? false

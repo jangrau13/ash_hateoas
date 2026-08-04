@@ -37,13 +37,13 @@ served natively as a Hydra / JSON-LD API.
 - Resources are connected by **links**, never by one resource's representation
   sitting inside another's. Every public Ash relationship becomes a
   `hydra:Link` property on the node; there is no link DSL.
-- A link is a **node reference** (`{"@id": …}`, plus `"@type": "Collection"`
-  for a to-many) or an **expanded node** — the same link with the target's own
-  properties stated alongside it, still carrying its `@id`. Which one is
-  decided entirely by what the action loads (`Ash.load/3`, a preparation, a
-  query load): an unloaded to-one is referenced from its foreign key without
-  reading the target, a loaded one is rendered in place, recursively, with
-  cycles degrading to a plain reference. The target's terms travel with it as a
+- A to-one link is a **node reference** (`{"@id": …}`) or an **expanded node** —
+  the same link with the target's own properties stated alongside it, still
+  carrying its `@id`. A to-many is a `hydra:Collection` carrying its members.
+  Which one is decided entirely by what the action loads (`Ash.load/3`, a
+  preparation, a query load): an unloaded to-one is referenced from its foreign
+  key without reading the target, a loaded one is rendered in place,
+  recursively, with cycles degrading to a plain reference. The target's terms travel with it as a
   scoped `@context`, so a record expands to the same triples however it is
   reached.
 - **Writes name the target, never a foreign key.** A body carries
@@ -53,6 +53,16 @@ served natively as a Hydra / JSON-LD API.
   routes that serve a GET, so the URLs the API issues are the URLs it accepts.
   Foreign keys do not appear in `hydra:expects` at all — a relationship input
   is advertised as its link property, typed `sh:nodeKind: sh:IRI`.
+- **No relationship is routed.** `/articles/:id/comments` and
+  `/articles/:id/relationships/comments` are gone. Both addressed a
+  *relationship of the record* through path structure, which the link on the
+  node already states — a second spelling of one fact, kept only because it was
+  a quieter one. A loaded to-many is a blank-node `hydra:Collection` carrying
+  its members, each with its own flat `@id`, so the whole record arrives in one
+  request where it took N+1. An **unloaded** to-many is omitted rather than
+  emitted empty: zero members would assert the record has none, which is a claim
+  about the data rather than about what was loaded. The class collection remains
+  the addressable one.
 - **A to-many says what its members are.** The ontology declares a
   `hydra:Collection` subclass per to-many property, carrying a
   `hydra:memberAssertion` — Hydra's own pattern for a strongly typed

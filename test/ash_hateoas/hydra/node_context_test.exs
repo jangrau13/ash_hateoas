@@ -164,15 +164,28 @@ defmodule AshHateoas.Hydra.NodeContextTest do
       end
     end
 
-    test "a to-many relationship link is a triple, not a dropped key" do
+    test "a to-many relationship link is ONE triple to a collection" do
       # The worst case measured: `comments` was unbound, so the relationship
       # link on every record node produced zero triples. The link was in the
       # JSON and absent from the graph.
+      #
+      # Now it must produce exactly one — pointing at a *collection* which in
+      # turn has its members. A bare array would instead produce N `comments`
+      # triples and **no collection subject at all**, which is a different graph
+      # and the easy mistake here: the JSON looks similar and `hydra:totalItems`
+      # would describe nothing.
       id = article().id
-      expanded = "/articles/#{id}" |> get() |> then(&JsonLd.node(&1, &1["@id"]))
 
-      assert [target] = JsonLd.values(expanded, "#{@vocab}article/comments")
-      assert target =~ "/articles/#{id}/comments"
+      expanded =
+        "/articles/with_comments"
+        |> get()
+        |> then(&JsonLd.node(&1, "/articles/#{id}"))
+
+      assert [collection] = JsonLd.values(expanded, "#{@vocab}article/comments")
+      assert is_map(collection), "the value is the collection node, not a member"
+
+      assert [_member] = JsonLd.values(collection, "#{@hydra}member")
+      assert JsonLd.values(collection, "#{@hydra}totalItems") == [1]
     end
 
     test "a scalar keeps its value through expansion" do
@@ -219,14 +232,22 @@ defmodule AshHateoas.Hydra.NodeContextTest do
       assert JsonLd.values(member, "#{@vocab}article/title") == ["Spec"]
     end
 
-    test "a related collection binds the DESTINATION's properties" do
+    test "an INLINE collection's members bind the DESTINATION's properties" do
       # The members are comments. Binding the source's terms would expand `body`
       # against `vocab#article/body`, declared nowhere — a dangling reference
       # reached by using the wrong resource.
-      node = get("/articles/#{article().id}/comments")
+      #
+      # This used to be read at `/articles/:id/comments`, a URL that no longer
+      # exists; the members now arrive inside the article. That makes the
+      # property *more* at risk rather than less: a member nested in a node
+      # relies on `put_scoped_terms/2` to carry its own terms, and without it
+      # the members are present in the JSON and absent from the graph — the
+      # dropped-key defect one level down.
+      article().id
 
       bodies =
-        node
+        "/articles/with_comments"
+        |> get()
         |> JsonLd.nodes()
         |> Enum.flat_map(&JsonLd.values(&1, "#{@vocab}comment/body"))
 

@@ -317,20 +317,20 @@ defmodule AshHateoas.Hydra.Ontology do
   # The target is `rdfs:range`, not a per-usage `sh:class`. The range is a fact
   # about the property and belongs on it; restating the same target at every
   # site the property appears is a shape that permits drift.
+  # Cardinality comes from the relationship, not from whether a route was
+  # derived for it. Those agreed while every to-many had a `:related` route, and
+  # reading the route was a proxy for reading the relationship — so when the
+  # per-relationship routes went, every to-many would have silently stopped
+  # being declared, taking its collection class with it. Ash already states the
+  # cardinality; ask it.
   defp relationship_nodes(resource, type) do
-    routed = MapSet.new(routes(resource), & &1.relationship)
-
-    to_many =
-      resource
-      |> routes()
-      |> Enum.filter(&(&1.type == :related))
-      |> Enum.map(& &1.relationship)
-
-    to_one =
+    {to_many, to_one} =
       resource
       |> Ash.Resource.Info.public_relationships()
-      |> Enum.filter(&(&1.cardinality == :one and &1.name not in routed))
-      |> Enum.map(& &1.name)
+      |> Enum.split_with(&(&1.cardinality == :many))
+
+    to_many = Enum.map(to_many, & &1.name)
+    to_one = Enum.map(to_one, & &1.name)
 
     properties =
       Enum.map(to_many ++ to_one, fn name ->
@@ -609,12 +609,6 @@ defmodule AshHateoas.Hydra.Ontology do
 
   defp public_attributes(resource) do
     Ash.Resource.Info.public_attributes(resource)
-  rescue
-    _ -> []
-  end
-
-  defp routes(resource) do
-    AshHateoas.Resource.Info.routes(resource)
   rescue
     _ -> []
   end

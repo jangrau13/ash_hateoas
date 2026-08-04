@@ -216,18 +216,17 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert body(get("/documents/#{doc.id}", @admin))["title"] == "Plain"
     end
 
-    test "a to-many relationship is a followable hydra:Link to its related collection" do
+    test "an unloaded to-many is absent, not empty" do
       article =
         Article
         |> Ash.Changeset.for_create(:create, %{title: "Hydra"})
         |> Ash.create!(authorize?: false)
 
-      node = body(get("/articles/#{article.id}", @admin))
-
-      # the public has_many :comments surfaces as a link to the related collection
-      comments = node["comments"]
-      assert comments["@id"] =~ "/articles/#{article.id}/comments"
-      assert comments["@type"] == "Collection"
+      # This used to reference `/articles/:id/comments`. With no
+      # per-relationship route there is nothing to reference, and an empty
+      # collection would assert the article HAS no comments — a claim about the
+      # data rather than about what the action loaded. So the key is omitted.
+      refute Map.has_key?(body(get("/articles/#{article.id}", @admin)), "comments")
     end
 
     test "the related collection link RESOLVES, and holds only that record's related rows" do
@@ -256,24 +255,40 @@ defmodule AshHateoas.Hydra.PlugTest do
         |> Ash.create!(authorize?: false)
       end
 
-      # Follow the link the node itself advertised. Asserting only that the key
-      # is present would leave the URL free to 404 — a broken contract for
-      # every client that follows links rather than constructing them.
-      node = body(get("/articles/#{article.id}", @admin))
-      collection = body(get(node["comments"]["@id"], @admin))
+      # The members arrive IN the node rather than one fetch away, so this is
+      # one request where it was N+1. Each member still carries its own flat
+      # `@id`, so it is a link and the data at once.
+      node =
+        "/articles/with_comments"
+        |> get(@admin)
+        |> body()
+        |> Map.get("hydra:member")
+        |> Enum.find(&(&1["@id"] =~ article.id))
+
+      collection = node["comments"]
 
       assert collection["@type"] == "Collection"
 
-      # Scoped to the source record: a related collection that returned every
-      # row would resolve without erroring while still being wrong.
+      # Scoped to the source record: a collection holding every comment would
+      # be present and well-formed while still being wrong.
       assert Enum.map(collection["hydra:member"], & &1["body"]) == ["mine"]
       assert collection["hydra:totalItems"] == 1
+
+      # And each member resolves on its own.
+      assert get(hd(collection["hydra:member"])["@id"], @admin).status == 200
     end
 
-    test "a related collection for an unknown source record is a 404, not an empty list" do
-      unknown = Ash.UUID.generate()
+    test "the per-relationship route is gone" do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Gone"})
+        |> Ash.create!(authorize?: false)
 
-      assert get("/articles/#{unknown}/comments", @admin).status == 404
+      # It addressed a *relationship of the record* through path structure,
+      # which the link already states. Proving it 404s is what shows the routes
+      # were removed rather than merely unadvertised.
+      assert get("/articles/#{article.id}/comments", @admin).status == 404
+      assert get("/articles/#{article.id}/relationships/comments", @admin).status == 404
     end
 
     test "a belongs_to surfaces as a node reference built from the foreign key" do

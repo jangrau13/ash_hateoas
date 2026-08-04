@@ -371,9 +371,9 @@ determine that — a wrong guess returns a wrong authorization answer.
 
 - **Expecting relationship links on a resource that declares none.** Every
   public relationship becomes a link on the node; a private one is left off the
-  surface. A to-many additionally derives `related`/`relationship` routes, since
-  its link points at a collection; a to-one needs no route — it references the
-  target member directly.
+  surface. **No relationship is routed**: a to-many is an inline collection on
+  the node when the action loads it, and a to-one references the target member
+  from the local foreign key. `/articles/:id/comments` does not exist.
 - **Expecting affordances on a resource with no routes.** A resource with no
   routes falls back to its actions directly and affordances have no `href`. That
   is intended — the backbone is usable before route derivation has run.

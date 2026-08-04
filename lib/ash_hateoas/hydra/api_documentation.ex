@@ -315,31 +315,30 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   # node typed `hydra:Link`, so a client knows the key on a record is a
   # followable link rather than a literal value.
   #
-  # Both cardinalities are described. A to-MANY has a routed `:related` route,
-  # so the link is to a collection. A to-ONE has no route: it is carried on the
-  # record itself as a node reference. Either way it is part of the class's
-  # shape and belongs in the catalogue — omitting the to-one would leave
-  # roughly half the graph edges undescribed, invisible to any client deriving
-  # structure from the documentation.
+  # Both cardinalities are described. A to-MANY's link is an inline collection
+  # carrying its members; a to-ONE is a node reference built from the local
+  # foreign key. Either way it is part of the class's shape and belongs in the
+  # catalogue — omitting the to-one would leave roughly half the graph edges
+  # undescribed, invisible to any client deriving structure from the
+  # documentation.
+  #
+  # Cardinality is read from the relationship, never from whether a route was
+  # derived. A to-many used to have a `:related` route and the two agreed, so
+  # the route stood in for the cardinality; with the per-relationship routes
+  # gone that proxy would have silently dropped every to-many from the
+  # documentation.
   #
   # What the link points AT is `rdfs:range` on the property's own declaration
   # in the ontology, stated once rather than restated at every site the
   # property appears.
   defp link_properties(resource, type) do
-    routed = MapSet.new(routes(resource), fn %Route{} = route -> route.relationship end)
-
-    to_many =
-      resource
-      |> routes()
-      |> Enum.filter(&(&1.type == :related))
-      |> Enum.map(&link_property(resource, type, &1.relationship))
-
-    # Public to-one relationships, which are never routed.
-    to_one =
+    {to_many, to_one} =
       resource
       |> Ash.Resource.Info.public_relationships()
-      |> Enum.filter(&(&1.cardinality == :one and &1.name not in routed))
-      |> Enum.map(&link_property(resource, type, &1.name))
+      |> Enum.split_with(&(&1.cardinality == :many))
+
+    to_many = Enum.map(to_many, &link_property(resource, type, &1.name))
+    to_one = Enum.map(to_one, &link_property(resource, type, &1.name))
 
     to_many ++ to_one
   end

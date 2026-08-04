@@ -159,77 +159,61 @@ defmodule AshHateoas.ResourceTest do
     end
   end
 
-  describe "walking the data graph" do
+  describe "no relationship is routed" do
     alias AshHateoas.Test.Comment
 
-    test "a public to-many relationship gets related and relationship routes" do
-      # The relationship is public, its destination is routed, and the source
-      # has a read action: nothing is left for the author to decide.
-      types =
-        Article
-        |> routes()
-        |> Enum.filter(&(&1.relationship == :comments))
-        |> Enum.map(& &1.type)
-        |> Enum.sort()
-
-      assert types == [:related, :relationship]
+    test "a to-many relationship gets no route of its own" do
+      # `/articles/:id/comments` and `/articles/:id/relationships/comments` are
+      # gone. Both addressed a *relationship of the record* through path
+      # structure, which the link on the node already states — and this package
+      # does not keep a second spelling of a fact because it is a quieter one.
+      #
+      # What replaces them is not a different URL but no URL: a loaded to-many
+      # is an inline collection carrying its members, each with its own flat
+      # `@id`.
+      refute Article
+             |> routes()
+             |> Enum.any?(&(&1.relationship == :comments)),
+             "a relationship is carried by a link, not by an address"
     end
 
-    test "a to-one relationship is left alone" do
+    test "a to-one relationship is left alone, as it always was" do
       refute Comment
              |> routes()
              |> Enum.any?(&(&1.relationship == :document))
     end
 
-    test "the derived relationship route paths follow the convention" do
-      relationship_routes =
-        Article
-        |> routes()
-        |> Enum.filter(&(&1.relationship == :comments))
-        |> Map.new(&{&1.type, &1.route})
+    test "no route anywhere names a relationship" do
+      # Document-wide rather than by example, because the failure mode is one
+      # surviving derivation path rather than one wrong route.
+      named =
+        [Article, Comment, AshHateoas.Test.Document, AshHateoas.Test.Recipe]
+        |> Enum.flat_map(&routes/1)
+        |> Enum.reject(&is_nil(&1.relationship))
 
-      assert relationship_routes[:related] =~ "/comments"
-      assert relationship_routes[:relationship] =~ "/relationships/comments"
+      assert named == []
     end
 
-    test "a private relationship is not routed" do
-      defmodule Hidden do
-        @moduledoc false
-        use Ash.Resource,
-          domain: nil,
-          validate_domain_inclusion?: false,
-          data_layer: Ash.DataLayer.Ets,
-          extensions: [AshHateoas.Resource]
+    test "the class collection is still the addressable one" do
+      # Removing the per-relationship routes takes nothing away from the
+      # destination's own collection, which is where its members are listed and
+      # where its create affordance lives.
+      assert Enum.any?(routes(Comment), &(&1.type == :index))
+    end
 
-        ets do
-          private?(true)
-        end
+    test "a private relationship is not on the surface at all" do
+      # This used to be asserted of routes, where it is now trivially true —
+      # nothing is routed. The property it was really protecting moved down a
+      # layer with the mechanism: links are emitted from
+      # `public_relationships/1`, so that is the list a private relationship
+      # must stay out of, or the link becomes the leak the route was.
+      linkable =
+        AshHateoas.Test.Recipe
+        |> Ash.Resource.Info.public_relationships()
+        |> Enum.map(& &1.name)
 
-        hateoas do
-          type("hidden")
-          base("/hiddens")
-          warn_on_missing_authorizers?(false)
-        end
-
-        attributes do
-          uuid_primary_key(:id)
-        end
-
-        relationships do
-          belongs_to :document, AshHateoas.Test.Document do
-            public?(false)
-          end
-        end
-
-        actions do
-          defaults([:read])
-        end
-      end
-
-      refute Hidden
-             |> AshHateoas.Resource.Info.routes()
-             |> Enum.any?(&(&1.relationship == :document)),
-             "a private relationship is not part of the API surface"
+      assert :steps in linkable, "a public to-many is on the surface"
+      refute :audits in linkable, "a private one is not"
     end
   end
 
