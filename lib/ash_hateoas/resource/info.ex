@@ -95,6 +95,46 @@ defmodule AshHateoas.Resource.Info do
   end
 
   @doc """
+  The `belongs_to` relationship whose destination owns this resource, or `nil`
+  when it stands on its own.
+
+  A declared owner nests the resource's URLs under the owner's, so a record is
+  addressed *through* the thing it belongs to.
+  """
+  @spec owned_by(Ash.Resource.t() | map()) :: atom() | nil
+  def owned_by(resource_or_dsl) do
+    case hateoas_owned_by(resource_or_dsl) do
+      {:ok, name} -> name
+      _ -> nil
+    end
+  end
+
+  @doc """
+  The owning relationship as a `%{name, destination}`, or `nil`.
+
+  Resolved rather than taken on trust: the declaration names a relationship and
+  everything else — which resource owns this one, and therefore what the URL
+  nests under — is read from that relationship. So the declaration cannot
+  disagree with the data model.
+
+  Returns `nil` when nothing is declared, when the name matches no
+  relationship, or when it matches one that is not `belongs_to`. A to-many
+  owner is rejected because it identifies no single parent to put in a path.
+  """
+  @spec owner(Ash.Resource.t() | map()) :: %{name: atom(), destination: module()} | nil
+  def owner(resource_or_dsl) do
+    with name when is_atom(name) and not is_nil(name) <- owned_by(resource_or_dsl),
+         %{type: :belongs_to, destination: destination} <-
+           Ash.Resource.Info.relationship(resource_or_dsl, name) do
+      %{name: name, destination: destination}
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc """
   A well-known type IRI to advertise alongside the resource's own class, or
   `nil` when none is declared.
 

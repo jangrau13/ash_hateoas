@@ -37,7 +37,9 @@ defmodule AshHateoas.Hydra.FollowableTest do
     Comment,
     Document,
     HydraEndpoint,
+    Entry,
     Ingredient,
+    Ledger,
     Recipe,
     RecipeTechnique,
     Step,
@@ -169,6 +171,40 @@ defmodule AshHateoas.Hydra.FollowableTest do
       related = node["comments"]["@id"]
 
       assert_all_followable(related)
+    end
+  end
+
+  describe "an owned resource's nested URLs are followable" do
+    setup do
+      ledger =
+        Ledger |> Ash.Changeset.for_create(:create, %{name: "L"}) |> Ash.create!(authorize?: false)
+
+      entry =
+        Entry
+        |> Ash.Changeset.for_create(:create, %{memo: "M", ledger_id: ledger.id})
+        |> Ash.create!(authorize?: false)
+
+      {:ok, ledger: ledger, entry: entry}
+    end
+
+    test "every URL a nested member advertises resolves", %{ledger: ledger, entry: entry} do
+      # The case that makes this test worth having. Nesting introduced a second
+      # placeholder into every route, and three separate href builders
+      # substituted only `:id` — so a node advertised
+      # `/ledger/:ledger_id/entry/<id>` for each of its operations: a pattern,
+      # not an address. Each was a 404 a key-presence assertion would have
+      # called fine.
+      assert_all_followable("/domain/ledger/#{ledger.id}/entry/#{entry.id}")
+    end
+
+    test "every URL a nested collection advertises resolves", %{ledger: ledger} do
+      assert_all_followable("/domain/ledger/#{ledger.id}/entry")
+    end
+
+    test "the owner's own URLs are unaffected", %{ledger: ledger} do
+      # Being an owner changes nothing about the owner: only the child declares
+      # the relationship, and only the child's routes nest.
+      assert_all_followable("/domain/ledger/#{ledger.id}")
     end
   end
 

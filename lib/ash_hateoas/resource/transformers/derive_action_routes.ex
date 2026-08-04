@@ -109,10 +109,41 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
     with nil <- AshHateoas.Resource.Info.base(dsl_state),
          type when is_binary(type) <- AshHateoas.Resource.Info.type(dsl_state),
          domain when is_binary(domain) <- domain_short_name(dsl_state) do
-      "/#{domain}/#{type}"
+      "#{owner_prefix(dsl_state, domain)}/#{type}"
     else
       declared when is_binary(declared) -> declared
       _ -> nil
+    end
+  end
+
+  # What an owned resource's routes hang off: the owner's own base plus its id.
+  #
+  #     /blog/comment            without an owner
+  #     /blog/document/:document_id/comment    owned by :document
+  #
+  # The owner's id is named after the relationship rather than called `:id`,
+  # because a nested path has two and `:id` is the record's own. Which is which
+  # has to survive into `capture_id/2`, and a second bare `:id` would make that
+  # unrecoverable.
+  #
+  # ## Derived from the module, never by reading the owner's DSL
+  #
+  # The same constraint `domain_short_name/1` documents below, and the same
+  # reason: reading the owner's declared `base` would force that module to
+  # finish compiling while it may be waiting on this one. `Info.type/1` is safe
+  # — it falls back to the module name — which is why
+  # `DeriveRelationshipRoutes.has_type?/1` uses it on a still-compiling
+  # destination too.
+  #
+  # The cost is that an owner declaring a custom `base` is not honoured in its
+  # children's paths. That is a real limitation, and the alternative is
+  # deadlocking every app that nests.
+  defp owner_prefix(dsl_state, domain) do
+    with %{name: name, destination: destination} <- AshHateoas.Resource.Info.owner(dsl_state),
+         owner_type when is_binary(owner_type) <- AshHateoas.Resource.Info.type(destination) do
+      "/#{domain}/#{owner_type}/:#{name}_id"
+    else
+      _ -> "/#{domain}"
     end
   end
 
