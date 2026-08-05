@@ -1073,16 +1073,29 @@ defmodule AshHateoas.Hydra.Plug do
       case Map.get(record, calculation.name) do
         %Ash.NotLoaded{} -> []
         nil -> []
-        value -> [{to_string(calculation.name), calculation_value(value, opts)}]
+        value -> [{to_string(calculation.name), calculation_value(calculation, value, opts)}]
       end
     end)
     |> Map.new()
   end
 
-  defp calculation_value(value, opts) when is_list(value),
-    do: Enum.map(value, &calculation_value(&1, opts))
+  defp calculation_value(calculation, value, opts) when is_list(value),
+    do: Enum.map(value, &calculation_value(calculation, &1, opts))
 
-  defp calculation_value(value, _opts), do: value
+  # A calculation typed `AshHateoas.Type.ResourceLink` is a **link**, and is
+  # rendered as one — `{"@id" => url}` — exactly as an attribute of that type is.
+  #
+  # The two paths agreeing matters more than it looks. A reference a resource
+  # cannot express as a relationship has to travel some other way, and a
+  # calculation is how: an `Ash.Type.Union` over several resources has no single
+  # `destination` for a `belongs_to` to name, so the address is *derived* rather
+  # than declared. Rendering it as a bare string would make it the one reference
+  # in a document that a client cannot follow.
+  defp calculation_value(%{type: type}, value, _opts) when is_binary(value) do
+    if link_type?(type), do: %{"@id" => value}, else: value
+  end
+
+  defp calculation_value(_calculation, value, _opts), do: value
 
   # A followable link (`AshHateoas.Type.ResourceLink`) is rendered as a JSON-LD
   # reference node — `{"@id" => url}` — rather than a bare string, which is what

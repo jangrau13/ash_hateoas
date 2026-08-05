@@ -370,6 +370,28 @@ defmodule AshHateoas.Hydra.LinkInput do
 
   def resolve_member(_iri, _opts), do: :error
 
+  @doc """
+  The IRI this API serves a record at — the inverse of `resolve_member/2`.
+
+  Exposed for the same reason and as its exact counterpart: a domain that stores
+  a reference somewhere a relationship cannot go must be able to *render* the
+  address as well as read one back, and both directions must use the one route
+  table. A reference the API emits but will not accept, or accepts but will not
+  emit, is a link that only works one way.
+
+  Returns `nil` when the resource serves no member route, so a caller can fall
+  back rather than emit a URL that resolves to nothing.
+  """
+  @spec member_iri(Ash.Resource.t(), String.t()) :: String.t() | nil
+  def member_iri(resource, id) when is_binary(id) do
+    case member_route(resource) do
+      %Route{route: route} -> String.replace(route, ":id", id)
+      _ -> nil
+    end
+  end
+
+  def member_iri(_resource, _id), do: nil
+
   # The member route of every routed resource, tried against the path. This is
   # the same route table `Plug.match/2` reads, so a URL this API issues is a URL
   # it accepts back.
