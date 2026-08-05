@@ -140,6 +140,18 @@ served natively as a Hydra / JSON-LD API.
   `ah:scriptLanguage` rather than `xsd:string`, so a client learns the value is
   code and which grammar reads it — `ah:Script` is an `rdfs:Datatype` restricting
   `xsd:string`, so a consumer that does not know the term still reads a string.
+- **`AshHateoas.LuaScript`** — an extension declaring what the names *inside* a
+  script mean. `bind :author, Author` makes `author["Ada"]` a reference that
+  resolves; `functions SomeResource` publishes the callable signatures so a
+  client fetches them rather than guessing. A subscript naming nothing bound, an
+  unknown function, or a wrong arity is refused where it is written.
+
+  Four declarations fail the build, each of them a way the section could be
+  configured and inert: a `script` naming no attribute or one not typed
+  `AshHateoas.Type.Lua`, two binds sharing a name, a bind keyed on a missing
+  attribute, and a bind keyed on a **non-unique** attribute — a reference names
+  one record, so a key two records can share resolves to whichever comes back
+  first.
 
 ### DSL
 

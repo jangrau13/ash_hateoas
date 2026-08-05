@@ -87,9 +87,15 @@ defmodule AshHateoas.Lua.Parser do
   def parse(source, :chunk) when is_binary(source), do: chunk(source)
 
   defp chunk(source) do
-    charlist = String.to_charlist(source)
-
-    with {:ok, tokens, _line} <- :luerl_scan.string(charlist) do
+    # **Bytes, not codepoints.** `String.to_charlist/1` yields codepoints, and
+    # the scanner writes each back as a single byte — so `née` returns as
+    # Latin-1 and every accented name is silently corrupted. Handing it the
+    # bytes makes the scanner byte-transparent, and a UTF-8 literal survives
+    # unchanged.
+    #
+    # Measured, not reasoned about: an ASCII name round-trips identically under
+    # either, which is why this needs a test with an accent in it.
+    with {:ok, tokens, _line} <- :luerl_scan.string(:binary.bin_to_list(source)) do
       case :luerl_parse.chunk(tokens) do
         {:ok, ast} -> {:ok, ast}
         {:error, reason} -> {:error, format(reason)}

@@ -374,6 +374,53 @@ nothing breaks, it just learns less.
 This is the same move `AshHateoas.Type.ResourceLink` makes for URLs: state it,
 rather than leaving a consumer to infer it.
 
+### Declaring what a script may reference
+
+The type parses the source. `AshHateoas.LuaScript` says what the **names
+inside** mean:
+
+```elixir
+use Ash.Resource,
+  extensions: [AshHateoas.Resource, AshHateoas.LuaScript]
+
+lua do
+  script :formula
+  bind :author, MyApp.People.Author
+  bind :publisher, MyApp.People.Publisher
+  functions MyApp.Formulas.Function
+end
+```
+
+`bind` maps a Lua subscript to a resource, so `author["Ada Lovelace"]` is a
+reference that resolves and `publisher["Ada"]` is a *different* one — the class
+is in the syntax, so no prefix convention is needed to keep two same-named
+records apart. A subscript naming nothing bound is refused where it is written.
+
+`functions` names a resource whose records are the callable signatures, so a
+client **fetches** what it may call instead of being handed bare names it cannot
+check against. With none declared, no call is allowed — an unchecked call is a
+failure deferred to whoever reads the script next.
+
+Four things fail the build, each a way the section could be configured and
+inert:
+
+- `script` naming no attribute, or one **not** typed `AshHateoas.Type.Lua` —
+  then nothing parses and the wire says the value is prose;
+- two binds sharing a name — the second shadows the first, and which wins is not
+  something an author should have to know;
+- a bind whose `key` names no attribute of its resource;
+- a bind whose `key` is **not unique**. A reference names one record; if two can
+  share the key it resolves to whichever comes back first, so the same script
+  means different things at different times. A *composite* identity does not
+  satisfy this — a name unique only within a parent still matches several
+  records when the parent is not named, and a reference does not name one.
+
+**A key is quoted.** `author[Ada Lovelace]` cannot parse — Lua reads two bare
+words as two variables — and the only unquoted form that works, `author.Ada`,
+is limited to identifiers. On a real corpus of 495 names 82% carry a space or
+punctuation, so quoting is one rule that always works rather than a shorter one
+that covers a sixth of cases.
+
 ## Field descriptors
 
 Fields derive from an action's **public** arguments, carrying `description`,

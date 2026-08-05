@@ -1,0 +1,320 @@
+defmodule AshHateoas.LuaScriptTest do
+  @moduledoc """
+  Declaring what a script may reference, and reading a script for what it does.
+
+  The type parses; this extension says what the *names inside* mean. Without it
+  a reference is a string that happens to look structured, and every consumer
+  has to guess — which is the state the whole stage exists to end.
+  """
+
+  use ExUnit.Case, async: true
+
+  alias AshHateoas.Lua.{Parser, Walk}
+  alias AshHateoas.LuaScript.Info
+  alias AshHateoas.Test.Scripted.{Author, Formula, Function}
+
+  defp ast!(source) do
+    {:ok, ast} = Parser.parse(source)
+    ast
+  end
+
+  describe "the declaration" do
+    test "the script attribute is readable" do
+      assert Info.script(Formula) == :body
+      assert Info.script?(Formula)
+    end
+
+    test "a resource without the extension answers rather than raising" do
+      # Every accessor answers for a resource that never opted in, so a caller
+      # does not have to check for the extension first.
+      refute Info.script?(Author)
+      assert Info.script(Author) == nil
+      assert Info.binds(Author) == []
+      assert Info.functions(Author) == nil
+    end
+
+    test "binds name their resource and key" do
+      assert [%{name: :author, resource: Author, key: :name}] = Info.binds(Formula)
+    end
+
+    test "the callable functions are a resource, not a list" do
+      # A resource can be *fetched*, so a client reads the signatures instead of
+      # being handed names it cannot check against.
+      assert Info.functions(Formula) == Function
+    end
+
+    test "binds are keyed for the walk" do
+      assert %{author: %{resource: Author}} = Info.bind_map(Formula)
+    end
+  end
+
+  describe "reading a script" do
+    test "a reference is extracted with its bind and key" do
+      ast = ast!(~s|author["Ada Lovelace"] * 2|)
+      assert Walk.references(ast, [:author]) == [author: "Ada Lovelace"]
+    end
+
+    test "a name with spaces and punctuation needs no escaping" do
+      # It is a string key, which is most of why Lua's syntax was adopted: 82%
+      # of real names cannot be written as bare identifiers.
+      ast = ast!(~s|author["Ada (née Byron), Lovelace"]|)
+      assert Walk.references(ast, [:author]) == [author: "Ada (née Byron), Lovelace"]
+    end
+
+    test "an accented name survives as UTF-8" do
+      # The regression this needs a test for: `luerl`'s scanner takes a
+      # charlist and writes each element back as one *byte*, so a codepoint
+      # list turns `née` into Latin-1 and every accented name is silently
+      # corrupted. Handing it the bytes instead keeps UTF-8 intact.
+      #
+      # Invisible on ASCII — which is why the assertion is on validity, not
+      # only on equality.
+      ast = ast!(~s|author["Ada née Byron"]|)
+      assert [{:author, name}] = Walk.references(ast, [:author])
+
+      assert String.valid?(name)
+      assert name == "Ada née Byron"
+    end
+
+    test "two binds may hold the same name without collision" do
+      # The kind is in the syntax, so no prefix convention is needed to keep
+      # `author["Ada"]` and `publisher["Ada"]` apart.
+      ast = ast!(~s|author["Ada"] + publisher["Ada"]|)
+
+      assert Walk.references(ast, [:author, :publisher]) == [
+               author: "Ada",
+               publisher: "Ada"
+             ]
+    end
+
+    test "a reference inside a call is still found" do
+      # The walk descends into argument lists, so nesting does not hide a
+      # reference. A clause-per-construct walk would miss this by finding
+      # nothing rather than by failing.
+      ast = ast!(~s|round(author["Ada"])|)
+      assert Walk.references(ast, [:author]) == [author: "Ada"]
+    end
+
+    test "a call is read with its arity" do
+      assert Walk.calls(ast!(~s|min(1, 2, 3)|)) == [{"min", 3}]
+    end
+
+    test "a subscript and a call are told apart" do
+      # `luerl` spells both `:.`, distinguished by what follows the name. This
+      # is the trap: matching on `:functioncall` alone finds zero calls, and
+      # fails by finding nothing rather than by raising.
+      ast = ast!(~s|sqrt(author["Ada"])|)
+
+      assert Walk.references(ast, [:author]) == [author: "Ada"]
+      assert Walk.calls(ast) == [{"sqrt", 1}]
+    end
+  end
+
+  describe "checking a script" do
+    test "a bound reference and a declared call pass" do
+      ast = ast!(~s|sqrt(author["Ada"]) * 2|)
+      assert Walk.check(ast, binds: [:author], functions: %{"sqrt" => [1]}) == :ok
+    end
+
+    test "an unbound subscript is refused, and says what is bound" do
+      ast = ast!(~s|publisher["Ada"]|)
+
+      assert {:error, [message]} = Walk.check(ast, binds: [:author], functions: %{})
+      assert message =~ "publisher is not bound"
+      assert message =~ "bound: author"
+    end
+
+    test "a bare name is refused with the spelling that would work" do
+      # In an expression there is nothing a bare name can be: no variable was
+      # declared, and a reference needs a key.
+      ast = ast!(~s|author + 1|)
+
+      assert {:error, [message]} = Walk.check(ast, binds: [:author], functions: %{})
+      assert message =~ ~s|write author["…"]|
+    end
+
+    test "a valid reference is not reported as a bare name" do
+      # The head of a subscript is a `{:NAME, …}` node the walk reaches like any
+      # other child, so reading it as a bare name refuses every correct script.
+      # Found by probing, and the failure is that valid input is rejected.
+      ast = ast!(~s|author["Ada"] * sqrt(2)|)
+      assert Walk.check(ast, binds: [:author], functions: %{"sqrt" => [1]}) == :ok
+    end
+
+    test "an unknown function is refused" do
+      ast = ast!(~s|frobnicate(1)|)
+
+      assert {:error, [message]} = Walk.check(ast, binds: [], functions: %{"sqrt" => [1]})
+      assert message =~ "there is no function named frobnicate"
+    end
+
+    test "a wrong arity is refused, naming what is accepted" do
+      ast = ast!(~s|min(1)|)
+
+      assert {:error, [message]} = Walk.check(ast, binds: [], functions: %{"min" => [2, 3]})
+      assert message =~ "min takes 2 or 3 arguments, given 1"
+    end
+
+    test "every problem is reported, not the first" do
+      # An author fixing one at a time learns about the next only by trying
+      # again, which turns one round trip into several.
+      ast = ast!(~s|publisher["Ada"] + frobnicate(1)|)
+
+      assert {:error, messages} = Walk.check(ast, binds: [:author], functions: %{})
+      assert length(messages) == 2
+    end
+
+    test "no function declared means no call is allowed" do
+      # The honest default: an unchecked call is a failure deferred to whoever
+      # reads the script next.
+      ast = ast!(~s|sqrt(1)|)
+      assert {:error, [_]} = Walk.check(ast, binds: [], functions: %{})
+    end
+  end
+
+  describe "what the declaration refuses at compile time" do
+    # Each of these is a way the section could be configured and inert — a
+    # script that looks bound and resolves to nothing, or to the wrong record.
+
+    # Spark reports a verifier failure through the parallel module checker, so
+    # it reaches stderr rather than raising at the compile call — the idiom
+    # `derive_action_routes_test` already uses.
+    defp compile(body) do
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        Code.compile_string("""
+        defmodule AshHateoasBadScript#{System.unique_integer([:positive])} do
+          use Ash.Resource,
+            domain: nil,
+            data_layer: Ash.DataLayer.Ets,
+            extensions: [AshHateoas.Resource, AshHateoas.LuaScript]
+
+          hateoas do
+            warn_on_missing_authorizers?(false)
+          end
+
+        #{body}
+        end
+        """)
+      end)
+    end
+
+    test "a script naming no attribute fails the build" do
+      stderr =
+        compile("""
+          lua do
+            script :missing
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+        """)
+
+      assert stderr =~ "DslError"
+      assert stderr =~ "does not exist"
+      assert stderr =~ ":missing", "the diagnostic must name the offending attribute"
+    end
+
+    test "a script on a plain string fails the build" do
+      # The type is what parses and what declares `ah:Script`. Pointed at a
+      # `:string` the section would be configured and do nothing at all — every
+      # value unparsed, and the wire saying the value is prose.
+      stderr =
+        compile("""
+          lua do
+            script :body
+          end
+
+          attributes do
+            uuid_primary_key :id
+            attribute :body, :string
+          end
+        """)
+
+      assert stderr =~ "DslError"
+      assert stderr =~ "AshHateoas.Type.Lua"
+    end
+
+    test "two binds sharing a name fail the build" do
+      stderr =
+        compile("""
+          lua do
+            script :body
+            bind :author, AshHateoas.Test.Scripted.Author
+            bind :author, AshHateoas.Test.Scripted.Function
+          end
+
+          attributes do
+            uuid_primary_key :id
+            attribute :body, AshHateoas.Type.Lua
+          end
+        """)
+
+      assert stderr =~ "DslError"
+      assert stderr =~ "More than one `bind`"
+      assert stderr =~ ":author"
+    end
+
+    test "a bind keyed on a missing attribute fails the build" do
+      stderr =
+        compile("""
+          lua do
+            script :body
+            bind :author, AshHateoas.Test.Scripted.Author, key: :nickname
+          end
+
+          attributes do
+            uuid_primary_key :id
+            attribute :body, AshHateoas.Type.Lua
+          end
+        """)
+
+      assert stderr =~ "DslError"
+      assert stderr =~ "does not declare"
+      assert stderr =~ ":nickname"
+    end
+
+    test "a bind keyed on a non-unique attribute fails the build" do
+      # The one that matters most, and the reason this is compile-time rather
+      # than a runtime error. A reference names *one* record; if two can share
+      # the key it resolves to whichever comes back first, so the same script
+      # means different things at different times and nothing reports it.
+      #
+      # `Formula.name` carries no identity, which is exactly that shape.
+      stderr =
+        compile("""
+          lua do
+            script :body
+            bind :formula, AshHateoas.Test.Scripted.Formula
+          end
+
+          attributes do
+            uuid_primary_key :id
+            attribute :body, AshHateoas.Type.Lua
+          end
+        """)
+
+      assert stderr =~ "DslError"
+      assert stderr =~ "is not unique"
+    end
+
+    test "a unique key is accepted" do
+      # The positive half, so the check above is not passing for an unrelated
+      # reason. `Author.name` carries `identity :unique_name`.
+      stderr =
+        compile("""
+          lua do
+            script :body
+            bind :author, AshHateoas.Test.Scripted.Author
+          end
+
+          attributes do
+            uuid_primary_key :id
+            attribute :body, AshHateoas.Type.Lua
+          end
+        """)
+
+      refute stderr =~ "DslError", "a unique key must be accepted, got: #{stderr}"
+    end
+  end
+end
