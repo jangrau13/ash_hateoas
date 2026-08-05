@@ -1,3 +1,29 @@
+defmodule AshHateoas.Test.RecordsContext do
+  @moduledoc """
+  A change that reports what `AshHateoas.DslRoot.document_context/1` prepared.
+
+  Stands in for the real thing — a change that would otherwise query per element
+  — because what has to be tested is that the context *arrives*, not what a
+  domain puts in it. Sending it to the test process is the smallest way to
+  observe that, and it also counts: a hook computed per element rather than per
+  document shows up as one message per element.
+  """
+
+  use Ash.Resource.Change
+
+  @impl true
+  def change(changeset, _opts, _context) do
+    case changeset.context do
+      %{test_pid: pid} when is_pid(pid) ->
+        send(pid, {:document_context, Map.get(changeset.context, :prepared)})
+        changeset
+
+      _ ->
+        changeset
+    end
+  end
+end
+
 defmodule AshHateoas.Test.Ingredient do
   @moduledoc """
   A part of a `AshHateoas.Test.Recipe` aggregate, carrying the two shapes that
@@ -51,9 +77,18 @@ defmodule AshHateoas.Test.Ingredient do
     defaults([
       :read,
       :destroy,
-      create: [:name, :unit, :quantity, :recipe_id],
       update: [:name, :unit, :quantity]
     ])
+
+    create :create do
+      primary?(true)
+      accept([:name, :unit, :quantity, :recipe_id])
+
+      # Reports the document context it was cast with — see `RecordsContext`.
+      # A change is the only vantage point from which that is observable, since
+      # it is the thing the context exists for.
+      change(AshHateoas.Test.RecordsContext)
+    end
   end
 
   policies do

@@ -87,4 +87,29 @@ defmodule AshHateoas.Test.Recipe do
       authorize_if(always())
     end
   end
+
+  @behaviour AshHateoas.DslRoot
+
+  @doc """
+  Prepares context for every element of a document, once.
+
+  A real implementation reads whatever its elements would otherwise read per
+  element — that is what the hook is for. This one summarises the document and
+  passes the test's pid through, since what needs asserting is that the context
+  *arrives at every element* and is computed *once*, not what a domain chooses
+  to put in it.
+
+  The pid comes from the process dictionary rather than an argument because the
+  callback's shape is fixed: the library hands it the document and nothing else.
+  """
+  @impl AshHateoas.DslRoot
+  def document_context(document) do
+    %{
+      test_pid: Process.get(:ash_hateoas_test_pid),
+      prepared: %{
+        size: length(document),
+        names: document |> Enum.filter(&is_map/1) |> Enum.map(&(&1["name"] || &1[:name]))
+      }
+    }
+  end
 end

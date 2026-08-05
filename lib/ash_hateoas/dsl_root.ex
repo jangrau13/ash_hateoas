@@ -68,7 +68,67 @@ defmodule AshHateoas.DslRoot do
   that name, so a hand-written `:validate` is used as-is and `:save` is still
   generated. The declaration and the override coexist rather than the author
   having to choose for the pair.
+
+  ## An element's changes run per element — `c:document_context/1` is the escape
+
+  Every element of a document is cast through its own
+  `Ash.Changeset.for_create/4`, which runs that resource's `change` modules. A
+  change is ordinary code, so a change that reads the database **reads it once
+  per element** — and a document is the one place where that multiplication is
+  guaranteed rather than incidental.
+
+  This is not a hypothetical cost. Measured on a real domain whose elements
+  resolve a reference by name: one lookup per element meant a 1,000-element
+  document spent 2s in the database and a 10,000-element one 8.5s, against 6ms
+  of actual parsing. Nothing about the work was expensive; asking for it a
+  thousand times was.
+
+  A change cannot fix this itself, because it cannot see the document — by
+  construction, since it is handed one changeset. So the root, which *can* see
+  it, is given one chance to prepare whatever its elements will need:
+
+      @behaviour AshHateoas.DslRoot
+
+      @impl true
+      def document_context(document) do
+        %{targets: MyApp.Target.fetch_many(referenced_ids(document))}
+      end
+
+  What it returns becomes the changeset `context` for every element, so a change
+  reads it with `changeset.context[:targets]` instead of querying. **The library
+  never learns what the context holds** — it collects it, passes it down, and
+  the meaning stays entirely in the domain.
+
+  Two properties this must keep, and they are the reason it is a callback rather
+  than something the library does automatically:
+
+    * **It runs on `:validate` as well as `:save`**, and `:validate` writes
+      nothing — so an implementation must read, never write. It is called before
+      any element is cast, which is exactly when there is nothing to write yet.
+    * **A change must still work without it.** The context is absent when a
+      resource is written through its own action rather than through a document,
+      so a change reads it as a *cache* and falls back to its own lookup. An
+      implementation that made the context mandatory would break every
+      single-record write.
+
+  Optional: a root that does not implement it is cast exactly as before.
   """
+
+  @doc """
+  Prepares context shared by every element of a document, once.
+
+  Called with the whole document before any element is cast, on `:validate` and
+  on `:save`. The returned map becomes each element changeset's `context`, so a
+  `change` can read what it needs instead of querying per element.
+
+  Must not write — `:validate` is a generic action that persists nothing, and an
+  implementation that wrote here would break that guarantee.
+
+  Returning `%{}` is the same as not implementing it.
+  """
+  @callback document_context(document :: list()) :: map()
+
+  @optional_callbacks document_context: 1
 
   use Spark.Dsl.Extension,
     transformers: [AshHateoas.DslRoot.Transformers.DeriveRootActions]

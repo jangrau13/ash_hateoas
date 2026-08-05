@@ -152,7 +152,8 @@ defmodule AshHateoas.RootActions do
   defp errors_for(document, root, _input) when is_list(document) do
     index = index_for(root)
 
-    element_errors(document, index, root) ++ graph_errors(document, index)
+    element_errors(document, index, root, document_context(root, document)) ++
+      graph_errors(document, index)
   end
 
   defp errors_for(_document, _root, _input) do
@@ -167,15 +168,35 @@ defmodule AshHateoas.RootActions do
     ]
   end
 
-  defp element_errors(document, index, root) do
+  # Whatever the root wants every element to have in hand, computed **once**.
+  #
+  # A `change` runs per element and cannot see the document, so a change that
+  # reads the database reads it once per element — the multiplication a document
+  # makes certain. This is where a root gets to do that reading once instead.
+  # See `AshHateoas.DslRoot.document_context/1`; the library never inspects what
+  # comes back.
+  defp document_context(root, document) do
+    if function_exported?(root, :document_context, 1) do
+      root.document_context(document)
+    else
+      %{}
+    end
+  rescue
+    # A root that raises while preparing context must not take the whole
+    # validation with it: every element is still castable without it, since a
+    # change reads the context as a cache and falls back to its own lookup.
+    _ -> %{}
+  end
+
+  defp element_errors(document, index, root, context) do
     document
     |> Enum.with_index()
     |> Enum.flat_map(fn {element, position} ->
-      element_error(element, position, index, root)
+      element_error(element, position, index, root, context)
     end)
   end
 
-  defp element_error(element, position, index, root) when is_map(element) do
+  defp element_error(element, position, index, root, context) when is_map(element) do
     kind = element["kind"] || element[:kind]
 
     case Index.fetch(index, to_string(kind)) do
@@ -187,7 +208,7 @@ defmodule AshHateoas.RootActions do
 
         unknown_key_errors(element, resource, root, position, kind) ++
           (resource
-           |> changeset_errors(authorable(element, resource, root))
+           |> changeset_errors(authorable(element, resource, root), context)
         # The owning foreign key is filtered from the *errors*, not merely from
         # the input. A part declaring `belongs_to :root, allow_nil?: false`
         # fails its own `allow_nil?` check whenever it is cast standalone —
@@ -201,7 +222,7 @@ defmodule AshHateoas.RootActions do
     end
   end
 
-  defp element_error(_element, position, _index, _root) do
+  defp element_error(_element, position, _index, _root, _context) do
     [error_at(position, nil, %{}, nil, "element must be a map")]
   end
 
@@ -246,9 +267,9 @@ defmodule AshHateoas.RootActions do
   # It is a dry run of *Ash's* machinery, not of the resource's. `for_create/4`
   # also runs every `change` the action declares, and a change is ordinary code
   # — one that writes, writes here. See the warning on `validate/2`.
-  defp changeset_errors(resource, attributes) do
+  defp changeset_errors(resource, attributes, context) do
     resource
-    |> Ash.Changeset.for_create(create_action(resource), attributes)
+    |> Ash.Changeset.for_create(create_action(resource), attributes, context: context)
     |> Map.get(:errors, [])
     |> Enum.map(fn error -> {Map.get(error, :field), message_for(error)} end)
     |> Enum.reject(fn {field, _message} -> is_nil(field) end)
@@ -403,7 +424,12 @@ defmodule AshHateoas.RootActions do
         record
         |> Ash.Changeset.for_update(update_action(root), %{},
           actor: actor(input),
-          tenant: input.tenant
+          tenant: input.tenant,
+          # The same context `validate` computes, and computed the same way —
+          # once for the document. `manage_relationship` propagates a
+          # changeset's context to the changesets it creates for each element,
+          # so an element's `change` reads it without knowing a document exists.
+          context: document_context(root, document)
         )
         |> manage_all(grouped, root)
         |> Ash.update(authorize?: true)

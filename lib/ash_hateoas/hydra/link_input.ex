@@ -340,6 +340,36 @@ defmodule AshHateoas.Hydra.LinkInput do
     end
   end
 
+  @doc """
+  Resolves an IRI this API issued to the `{resource, id}` it addresses.
+
+  The public form of what a link write already does, exposed because a
+  *relationship* is not the only thing that can hold a reference. A domain may
+  store one in an attribute — a citation inside an expression, say — and it must
+  resolve the IRI the same way a link does, or the API accepts two spellings of
+  the same reference and only one of them round-trips.
+
+  **No query.** The path is matched against the derived route table, which is
+  the same table `Plug.match/2` reads, so the answer comes from the routes alone
+  — the kind from which route matched, the id from the path. That is what makes
+  an IRI affordable where a name is not: resolving a name asks the database
+  which resource holds it, and resolving an IRI asks nobody.
+
+  Returns `:error` for anything this API does not serve — an unparseable IRI, a
+  foreign origin, or a path matching no member route. A caller that wants to
+  accept *external* references must handle them as such rather than reading
+  `:error` as "does not exist"; the two are different claims.
+  """
+  @spec resolve_member(String.t(), keyword()) ::
+          {:ok, Ash.Resource.t(), String.t()} | :error
+  def resolve_member(iri, opts) when is_binary(iri) do
+    with {:ok, path} <- request_path(iri, opts) do
+      match_member(path, opts)
+    end
+  end
+
+  def resolve_member(_iri, _opts), do: :error
+
   # The member route of every routed resource, tried against the path. This is
   # the same route table `Plug.match/2` reads, so a URL this API issues is a URL
   # it accepts back.
