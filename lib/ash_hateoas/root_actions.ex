@@ -487,29 +487,36 @@ defmodule AshHateoas.RootActions do
   """
   @spec manage_opts(map(), Ash.Resource.t()) :: keyword()
   def manage_opts(%{type: :many_to_many} = relationship, _root) do
-    # A shared element is **referenced, never edited**, through a document.
+    # A shared element is **edited where it is written**, and the edit reaches
+    # every aggregate holding it.
     #
-    # `on_match: :ignore` is the load-bearing part. A `many_to_many` says the
-    # element is reachable from other aggregates, so letting one document write
-    # its attributes would let an author change what another author's document
-    # refers to — invisibly, from a file that says nothing about them. Renaming
-    # is the sharpest case: under identity matching a rename is indistinguishable
-    # from a delete plus a create, so it cannot even be detected, let alone
-    # handled. Making the element read-only here removes the question rather
-    # than guessing at an answer.
+    # `on_match: :update` — and this reverses what stood here. The argument for
+    # `:ignore` was that one document must not change what another document
+    # refers to, so a shared element was read-only and edited only at its own
+    # URL. That protects a reader at a price nobody agreed to pay: a document
+    # carrying an edited element saved **clean and discarded the edit**, so an
+    # author changed a value, was told it saved, and found it unchanged. Silent
+    # loss is worse than a visible consequence.
+    #
+    # The visible consequence is the honest one: linking an element into two
+    # aggregates says they hold *the same element*, so editing it changes both.
+    # A caller wanting an independent copy copies it — the two operations are
+    # different and both exist.
+    #
+    # A rename is still the sharp case, and it is unchanged by this: identity
+    # matching cannot tell a rename from a delete plus a create, so a renamed
+    # element is created anew and the old one unlinked. That is a property of
+    # matching by name, not of `on_match`.
     #
     # `on_lookup: :relate` is what makes sharing work at all. Without it an
     # element not yet linked to *this* aggregate is created fresh, so two
     # documents naming the same technique produce two records rather than one
     # shared one — silently on a data layer that does not enforce identities,
     # and as a constraint violation on one that does.
-    #
-    # A shared element's own attributes are edited through its own resource,
-    # which is where the authority for them lives.
     [
       on_lookup: :relate,
       on_no_match: :create,
-      on_match: :ignore,
+      on_match: :update,
       on_missing: :unrelate,
       use_identities: identities_for(relationship.destination)
     ]

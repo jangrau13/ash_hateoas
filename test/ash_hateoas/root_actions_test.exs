@@ -10,7 +10,7 @@ defmodule AshHateoas.RootActionsTest do
 
   use ExUnit.Case, async: false
 
-  alias AshHateoas.Test.{Ingredient, Recipe, Step}
+  alias AshHateoas.Test.{Ingredient, Recipe, Step, Technique}
 
   setup do
     for resource <- [
@@ -467,19 +467,69 @@ defmodule AshHateoas.RootActionsTest do
       assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
     end
 
-    test "a shared element is referenced, never edited" do
+    test "a shared element is edited where it is written" do
       relationship = Ash.Resource.Info.relationship(Recipe, :techniques)
       opts = AshHateoas.RootActions.manage_opts(relationship, Recipe)
 
-      # The load-bearing pair. `on_match: :ignore` means a document can link a
-      # shared element but not write its attributes — so one author cannot
-      # change what another author's document refers to. `on_lookup: :relate`
-      # is what makes sharing work at all: without it, an element not yet
-      # linked to this aggregate is created fresh, so two documents naming the
-      # same technique produce two records rather than one shared one.
-      assert opts[:on_match] == :ignore
+      # `on_match: :update` reverses what this asserted. Under `:ignore` a
+      # document carrying an edited element saved **clean and discarded the
+      # edit** — an author changed a value, was told it saved, and found it
+      # unchanged. See the behavioural test below, which is what an
+      # option-level assertion could not catch.
+      #
+      # `on_lookup: :relate` is what makes sharing work at all: without it, an
+      # element not yet linked to this aggregate is created fresh, so two
+      # documents naming the same technique produce two records rather than one
+      # shared one.
+      assert opts[:on_match] == :update
       assert opts[:on_lookup] == :relate
       assert opts[:on_missing] == :unrelate
+    end
+
+    test "editing a shared element through a document persists the edit" do
+      # The property the option exists for, asserted on the *persisted* record
+      # rather than on the response — a save that discards an edit still
+      # returns success, which is how this went unseen.
+      bread = recipe!()
+
+      {:ok, _} =
+        save([%{"kind" => "technique", "name" => "Kneading", "summary" => "fold and press"}], %{
+          id: bread.id
+        })
+
+      {:ok, _} =
+        save([%{"kind" => "technique", "name" => "Kneading", "summary" => "stretch and fold"}], %{
+          id: bread.id
+        })
+
+      technique =
+        Technique |> Ash.read!() |> Enum.find(&(&1.name == "Kneading"))
+
+      assert technique.summary == "stretch and fold"
+    end
+
+    test "an edit through one aggregate is visible from another holding it" do
+      # The consequence, stated rather than left implicit: linking an element
+      # into two aggregates says they hold the *same* element, so editing it
+      # changes both. A caller wanting an independent copy copies it.
+      bread = recipe!()
+      cake = Recipe |> Ash.Changeset.for_create(:create, %{title: "Cake"}) |> Ash.create!()
+
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: bread.id})
+      {:ok, _} = save([%{"kind" => "technique", "name" => "Kneading"}], %{id: cake.id})
+
+      {:ok, _} =
+        save([%{"kind" => "technique", "name" => "Kneading", "summary" => "edited via cake"}], %{
+          id: cake.id
+        })
+
+      from_bread =
+        bread.id
+        |> then(&Ash.get!(Recipe, &1, load: [:techniques]))
+        |> Map.fetch!(:techniques)
+        |> Enum.find(&(&1.name == "Kneading"))
+
+      assert from_bread.summary == "edited via cake"
     end
 
     test "two aggregates naming the same element share one record" do

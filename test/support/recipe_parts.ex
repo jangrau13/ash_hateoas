@@ -140,6 +140,13 @@ defmodule AshHateoas.Test.Technique do
   attributes do
     uuid_primary_key(:id)
     attribute(:name, :string, public?: true, allow_nil?: false)
+
+    # A second attribute, so a shared element has something *editable*. With
+    # `name` alone there was nothing to change that was not the identity — a
+    # changed name is a different element — so no test could tell whether a
+    # document's edits reached the record. They did not, and the save reported
+    # success anyway.
+    attribute(:summary, :string, public?: true)
   end
 
   identities do
@@ -152,7 +159,7 @@ defmodule AshHateoas.Test.Technique do
   # aggregate, which is the direction a document is authored in.
 
   actions do
-    defaults([:read, :destroy, create: [:name], update: [:name]])
+    defaults([:read, :destroy, create: [:name, :summary], update: [:name, :summary]])
   end
 
   policies do
