@@ -53,6 +53,32 @@ defmodule AshHateoas.Type.LuaTest do
       # than in any domain. An attribute wanting programs asks for `:chunk`.
       assert {:ok, _ast} = Parser.parse("local x = 1", :chunk)
     end
+
+    test "a numeral in scientific notation keeps its exact value" do
+      # `luerl_scan.xrl:255` *computes* `DF * math:pow(10, Exp)` rather than
+      # reading the literal, so `9.22e5` scans as `922000.0000000001`. Measured:
+      # 54 of 891 two-digit mantissa/exponent pairs are affected.
+      #
+      # It matters because the value is **stored**. Rendering a parsed numeral
+      # writes the error back into the text, so it is permanent rather than a
+      # rounding artefact of one calculation.
+      assert {:ok, {:NUMERAL, _line, 922_000.0}} = Parser.parse("9.22e5")
+      assert {:ok, {:NUMERAL, _line, 1.0e-8}} = Parser.parse("1e-8")
+    end
+
+    test "repairing one numeral does not disturb another" do
+      # The pairing is keyed on what the scanner made of each literal, not on
+      # position: a numeral token carries no text, so matching the nth literal
+      # to the nth float token hands `1.5` the repair meant for `9.22e5`. That
+      # produced a wrong tree silently, which is why the assertion is on every
+      # numeral in one expression rather than on a single value.
+      assert {:ok, ast} = Parser.parse("2013 + 9.22e5 * 1.5 + 3.3e6")
+
+      assert {:op, _, :+,
+              {:op, _, :+, {:NUMERAL, _, 2013},
+               {:op, _, :*, {:NUMERAL, _, 922_000.0}, {:NUMERAL, _, 1.5}}},
+              {:NUMERAL, _, 3_300_000.0}} = ast
+    end
   end
 
   describe "the cast" do

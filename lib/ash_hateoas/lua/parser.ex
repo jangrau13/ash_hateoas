@@ -96,12 +96,72 @@ defmodule AshHateoas.Lua.Parser do
     # Measured, not reasoned about: an ASCII name round-trips identically under
     # either, which is why this needs a test with an accent in it.
     with {:ok, tokens, _line} <- :luerl_scan.string(:binary.bin_to_list(source)) do
-      case :luerl_parse.chunk(tokens) do
+      case :luerl_parse.chunk(exact_numerals(tokens, source)) do
         {:ok, ast} -> {:ok, ast}
         {:error, reason} -> {:error, format(reason)}
       end
     else
       {:error, reason, _line} -> {:error, format(reason)}
+    end
+  end
+
+  # **The scanner computes exponents rather than parsing them**, so a numeral in
+  # scientific notation can come back a ULP wrong: `luerl_scan.xrl:255` evaluates
+  # `DF * math:pow(10, Exp)`, and `9.22e5` becomes `922000.0000000001` where
+  # Erlang's own `list_to_float/1` yields exactly `922000.0`. Measured: 54 of 891
+  # two-digit mantissa/exponent pairs are affected — 6%, not a rare corner.
+  #
+  # It matters because a numeral is *stored*: a value parsed on write and
+  # rendered on read comes back with the error baked into its text, so the
+  # corruption is permanent rather than a rounding artefact of one calculation.
+  #
+  # The tokens are re-read against the source rather than recomputed, since the
+  # scanner is the only thing that knows where each numeral began.
+  defp exact_numerals(tokens, source) do
+    # Only an exponent literal can be wrong, so a source without one is left
+    # alone entirely — which is every formula the seed carries but three.
+    case Regex.scan(~r/\d+\.?\d*[eE][+-]?\d+/, source) do
+      [] ->
+        tokens
+
+      literals ->
+        # Keyed by what the *scanner* made of each literal, not by position: a
+        # numeral token carries no text, and pairing the nth literal with the nth
+        # float token desyncs on the first ordinary decimal — `2013 + 9.22e5 *
+        # 1.5` would hand `1.5` the repair meant for `9.22e5`. Measured, and it
+        # silently produced a wrong tree.
+        repairs =
+          literals
+          |> List.flatten()
+          |> Map.new(fn literal -> {scanned(literal), exact(literal)} end)
+
+        Enum.map(tokens, fn
+          {:NUMERAL, line, value} = token when is_float(value) ->
+            case Map.get(repairs, value) do
+              nil -> token
+              exact -> {:NUMERAL, line, exact}
+            end
+
+          other ->
+            other
+        end)
+    end
+  end
+
+  # What the scanner computes for a literal, and what it should be. A literal
+  # both agree on maps to itself, so the lookup is a no-op rather than a special
+  # case — and one Erlang cannot read is left exactly as the scanner had it.
+  defp scanned(literal) do
+    case :luerl_scan.string(:binary.bin_to_list(literal)) do
+      {:ok, [{:NUMERAL, _line, value}], _end} -> value
+      _other -> :none
+    end
+  end
+
+  defp exact(literal) do
+    case Float.parse(literal) do
+      {value, ""} -> value
+      _other -> scanned(literal)
     end
   end
 
