@@ -202,7 +202,7 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
     if Transformer.get_persisted(dsl_state, :data_layer) == AshPostgres.DataLayer do
       quote do
         postgres do
-          table(unquote(table(module)))
+          table(unquote(table(module, dsl_state)))
           # The script resource's own repo — read from its DSL rather than from
           # a persisted key, which `repo` is not.
           repo(unquote(Transformer.get_option(dsl_state, [:postgres], :repo)))
@@ -216,7 +216,7 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
           check_constraints do
             check_constraint(unquote(Enum.map(kinds, &:"#{&1}_id")),
               check: unquote(at_most_one(kinds)),
-              name: unquote("#{table(module)}_one_target"),
+              name: unquote("#{table(module, dsl_state)}_one_target"),
               message: "a citation names at most one thing"
             )
           end
@@ -225,14 +225,21 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
     end
   end
 
-  # Derived from the script resource's own table, so the two stay together
-  # without the domain naming either.
-  defp table(module) do
-    module
-    |> Module.split()
-    |> List.last()
-    |> Macro.underscore()
-    |> Kernel.<>("_citation")
+  # Derived from the script resource's **own table**, so the two sit together
+  # under whatever prefix that domain uses — `simulation_value` yields
+  # `simulation_value_citation`, not `value_citation`.
+  #
+  # The module name is the fallback and not the source: a domain that prefixes
+  # its tables would get a citation table outside its own namespace, which is a
+  # naming a migration then makes permanent.
+  defp table(module, dsl_state) do
+    base =
+      case Transformer.get_option(dsl_state, [:postgres], :table) do
+        table when is_binary(table) -> table
+        _ -> module |> Module.split() |> List.last() |> Macro.underscore()
+      end
+
+    base <> "_citation"
   end
 
   defp at_most_one(kinds) do

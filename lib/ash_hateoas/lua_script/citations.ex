@@ -130,12 +130,23 @@ defmodule AshHateoas.LuaScript.Citations do
   # The subscript is rewritten by its exact spelling — `author["Ada"]` — rather
   # than by replacing the name wherever it appears, so a name that also occurs
   # inside a string literal is left alone.
-  defp rewrite(%{script: %{} = record, name: name}, bind, marked, script, update)
-       when is_atom(script) and not is_nil(script) do
-    source = Map.get(record, script)
+  #
+  # **`%Ash.NotLoaded{}` is matched explicitly rather than left to a catch-all.**
+  # It is a struct, so a `%{script: %{}}` pattern accepts it: the clause matched,
+  # `Map.get` returned nil, and the rewrite silently did nothing while the
+  # citation row was already cleared — leaving the two halves disagreeing, which
+  # is exactly the state this function exists to prevent. Measured, not
+  # reasoned about: the row was right and the source was untouched.
+  defp rewrite(%{script: %Ash.NotLoaded{}}, _bind, _marked, _script, _update) do
+    raise ArgumentError, "the citation's script must be loaded before it can be rewritten"
+  end
 
+  defp rewrite(%{script: record, name: name}, bind, marked, script, update)
+       when is_struct(record) and is_atom(script) and not is_nil(script) do
     rewritten =
-      String.replace(source, ~s|#{bind}["#{name}"]|, ~s|#{bind}["#{marked}"]|)
+      record
+      |> Map.get(script)
+      |> String.replace(~s|#{bind}["#{name}"]|, ~s|#{bind}["#{marked}"]|)
 
     record
     |> Ash.Changeset.for_update(update, %{script => rewritten})

@@ -113,6 +113,11 @@ defmodule AshHateoas.Lua.Walk do
     * `:functions` — `%{name => [arity]}`. A call to an undeclared function, or
       at an arity it does not accept, is refused here rather than at the point
       something tries to evaluate it.
+    * `:normalize` — how a written function name is matched against that map.
+      Defaults to identity, because **Lua is case-sensitive and this library
+      must not adopt any engine's convention**. A domain whose backend folds
+      case passes `&String.downcase/1` and keys its map the same way — which is
+      a statement about that backend, made where it is true.
 
   Returns `:ok` or `{:error, [message]}` — every problem, not the first, since
   an author fixing one at a time learns about the next only by trying again.
@@ -121,8 +126,9 @@ defmodule AshHateoas.Lua.Walk do
   def check(ast, opts) do
     bound = Keyword.get(opts, :binds, [])
     functions = Keyword.get(opts, :functions, %{})
+    normalize = Keyword.get(opts, :normalize, & &1)
 
-    errors = unbound_errors(ast, bound) ++ call_errors(ast, functions)
+    errors = unbound_errors(ast, bound) ++ call_errors(ast, functions, normalize)
 
     if errors == [], do: :ok, else: {:error, errors}
   end
@@ -162,11 +168,11 @@ defmodule AshHateoas.Lua.Walk do
     end)
   end
 
-  defp call_errors(ast, functions) do
+  defp call_errors(ast, functions, normalize) do
     ast
     |> calls()
     |> Enum.flat_map(fn {name, arity} ->
-      case Map.fetch(functions, name) do
+      case Map.fetch(functions, normalize.(name)) do
         {:ok, arities} ->
           if arity in arities do
             []
