@@ -199,7 +199,22 @@ defmodule AshHateoas.LuaScriptTest do
       # Not to the *cited* resource's owner: a citation names a record, and the
       # script belongs to one too, so hanging both off the same columns would
       # make `author_id` mean two things at once.
-      assert %{destination: Formula} = Ash.Resource.Info.relationship(Citation, :value)
+      # Named `script` rather than after the script *attribute*: the attribute
+      # is a domain's word — `value`, `body`, `rule` — and putting it in a
+      # generated relationship would make every consumer read a different name
+      # for the same edge.
+      assert %{destination: Formula} = Ash.Resource.Info.relationship(Citation, :script)
+    end
+
+    test "every generated foreign key is writable" do
+      # `:*` accepts only *public* attributes, so a non-public `belongs_to`
+      # generates a column no create can set — every citation write refused,
+      # reported as a missing input rather than a missing declaration. Found by
+      # writing one: the resource looked correct in every other respect.
+      for name <- [:script, :author] do
+        assert %{public?: true} = Ash.Resource.Info.relationship(Citation, name),
+               "#{name} must be public, or its foreign key cannot be written"
+      end
     end
 
     test "kind is constrained to exactly the declared binds" do

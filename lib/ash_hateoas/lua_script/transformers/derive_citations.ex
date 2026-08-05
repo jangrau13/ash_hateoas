@@ -120,7 +120,11 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
 
     relationships =
       for %{name: name, resource: resource} <- binds do
-        quote do: belongs_to(unquote(name), unquote(resource))
+        # **Public**, or the foreign key cannot be written at all: `:*` accepts
+        # only public attributes, so a non-public `belongs_to` generates a
+        # column no create can set — every citation write refused, for a reason
+        # that reads as a missing input rather than a missing declaration.
+        quote do: belongs_to(unquote(name), unquote(resource), public?: true)
       end
 
     quote do
@@ -171,7 +175,12 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
       end
 
       relationships do
-        belongs_to(:value, unquote(module), allow_nil?: false)
+        # `script`, not the script attribute's name: this is the citation's
+        # link back to the record holding the source, and that record is a
+        # script whatever its domain calls the field. Naming it after the field
+        # would put a domain's word — `value`, `formula`, `rule` — in a
+        # generated relationship every consumer has to read.
+        belongs_to(:script, unquote(module), public?: true, allow_nil?: false)
         unquote_splicing(relationships)
       end
 
@@ -200,7 +209,7 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
 
           references do
             # A citation has no meaning without the script it is part of.
-            reference(:value, on_delete: :delete)
+            reference(:script, on_delete: :delete)
             unquote_splicing(references)
           end
 
