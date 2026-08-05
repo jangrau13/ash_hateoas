@@ -93,11 +93,27 @@ defmodule AshHateoas.RootActions do
         }
 
   @doc """
-  Validates a document and **writes nothing**.
+  Validates a document and **writes nothing of its own**.
 
-  Wired as the body of the generated `:validate` generic action, which returns
-  a value and therefore cannot write by construction. Safe to call on every
-  editor save, and callable by an actor with no write permission.
+  Wired as the body of the generated `:validate` generic action, which returns a
+  value and therefore persists nothing itself: the changesets built below are
+  never run. Safe to call on every editor save, and callable by an actor with no
+  write permission.
+
+  > #### A change module can still write {: .warning}
+  >
+  > That guarantee covers this module, not the resources it casts. A `change`
+  > runs during `Ash.Changeset.for_create/4` — which is what distinguishes it
+  > from a hook — so anything it does happens while a document is merely being
+  > checked, and no amount of not-running the changeset undoes it.
+  >
+  > Measured: a change that wrote its parsed input leaked roughly 600 rows per
+  > validation of a 214-element document, while reporting `valid?` and leaving
+  > every record correct. Only the row count moved, so nothing noticed.
+  >
+  > **A change that writes belongs in `before_action`**, which runs when the
+  > action does — and inside its transaction, so a later failure rolls the write
+  > back instead of stranding it.
   """
   @spec validate(Ash.ActionInput.t(), term()) :: {:ok, map()}
   def validate(input, _context) do
@@ -224,8 +240,12 @@ defmodule AshHateoas.RootActions do
   end
 
   # A changeset that is never run. `for_create/4` casts, applies constraints and
-  # runs the action's own validations, collecting every problem — and touches no
-  # data layer, so this is a true dry run.
+  # runs the action's own validations, collecting every problem without reaching
+  # the data layer itself.
+  #
+  # It is a dry run of *Ash's* machinery, not of the resource's. `for_create/4`
+  # also runs every `change` the action declares, and a change is ordinary code
+  # — one that writes, writes here. See the warning on `validate/2`.
   defp changeset_errors(resource, attributes) do
     resource
     |> Ash.Changeset.for_create(create_action(resource), attributes)
