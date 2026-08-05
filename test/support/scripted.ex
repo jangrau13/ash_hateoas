@@ -124,5 +124,10 @@ defmodule AshHateoas.Test.Scripted do
     resource(AshHateoas.Test.Scripted.Author)
     resource(AshHateoas.Test.Scripted.Function)
     resource(AshHateoas.Test.Scripted.Formula)
+
+    # Generated from `Formula`'s binds by `AshHateoas.LuaScript`. Listing it is
+    # the one thing generation cannot do for a domain: without it the data
+    # layer never sees the resource and no migration is produced.
+    resource(AshHateoas.Test.Scripted.Formula.Citation)
   end
 end

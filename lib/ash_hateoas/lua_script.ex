@@ -132,9 +132,26 @@ defmodule AshHateoas.LuaScript do
   the domain *means* by any of it: a function's effect, a reference's
   significance, and any check over the two are the domain's, reached by
   callback. The traversal is the library's; the meaning never is.
+
+  ## The citations are a resource, and it is generated
+
+  A script's references are stored as rows with real foreign keys, in a
+  resource this extension **generates** from the binds — `MyApp.Formula` gets
+  `MyApp.Formula.Citation`, with one nullable relationship per bind and a check
+  constraint that at most one is set.
+
+  Generated rather than hand-written because every column is a restatement of a
+  bind, and the two drift: a bind with no column is a reference that cannot be
+  stored, a column with no bind is a foreign key to something no script can
+  name, and neither shows until a write fails.
+
+  The domain still lists it in its `resources` block — otherwise the data layer
+  never sees it and no migration is generated. See
+  `AshHateoas.LuaScript.Transformers.DeriveCitations`.
   """
 
   use Spark.Dsl.Extension,
     sections: [@lua],
+    transformers: [AshHateoas.LuaScript.Transformers.DeriveCitations],
     verifiers: [AshHateoas.LuaScript.Verifiers.VerifyScript]
 end

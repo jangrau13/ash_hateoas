@@ -172,6 +172,59 @@ defmodule AshHateoas.LuaScriptTest do
     end
   end
 
+  describe "the citation resource is generated from the binds" do
+    alias AshHateoas.Test.Scripted.Formula.Citation
+
+    test "a resource is generated beside the script" do
+      # Ash has no precedent for generating a resource — even `many_to_many`
+      # requires the join resource hand-written and named via `through` — so
+      # this asserts the generated module really is one, rather than a module
+      # that merely exists.
+      assert Ash.Resource.Info.resource?(Citation)
+    end
+
+    test "each bind becomes a relationship and a foreign key" do
+      # The reason for generating rather than hand-writing: every column here
+      # restates a bind, and written by hand the two drift. A bind with no
+      # column is a reference that cannot be stored; a column with no bind is a
+      # foreign key to something no script can name. Neither shows until a
+      # write fails.
+      assert %{destination: Author} = Ash.Resource.Info.relationship(Citation, :author)
+
+      names = Citation |> Ash.Resource.Info.attributes() |> Enum.map(& &1.name)
+      assert :author_id in names
+    end
+
+    test "the citation links back to the script it belongs to" do
+      # Not to the *cited* resource's owner: a citation names a record, and the
+      # script belongs to one too, so hanging both off the same columns would
+      # make `author_id` mean two things at once.
+      assert %{destination: Formula} = Ash.Resource.Info.relationship(Citation, :value)
+    end
+
+    test "kind is constrained to exactly the declared binds" do
+      kind = Ash.Resource.Info.attribute(Citation, :kind)
+
+      assert kind.constraints[:one_of] == [:author]
+    end
+
+    test "the name outlives the record it named" do
+      # While the citation resolves this is redundant with the target's own
+      # name, and that is not what it is for: a cited record may be deleted,
+      # the foreign key nilified, and the script still says what it referred to
+      # — a visible hole rather than a silently lost reference.
+      assert %{allow_nil?: false} = Ash.Resource.Info.attribute(Citation, :name)
+    end
+
+    test "a citation is not creatable over HTTP" do
+      # Cast with the script it belongs to. A citation with no script around it
+      # references nothing.
+      actions = Citation |> AshHateoas.Resource.Info.routes() |> Enum.map(& &1.action)
+
+      assert Enum.uniq(actions) == [:read]
+    end
+  end
+
   describe "what the declaration refuses at compile time" do
     # Each of these is a way the section could be configured and inert — a
     # script that looks bound and resolves to nothing, or to the wrong record.
