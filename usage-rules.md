@@ -336,6 +336,44 @@ Rules the write path enforces:
   Cross-API links are `AshHateoas.Type.ResourceLink` attributes, where the
   open-world assumption applies and a target may legitimately vanish.
 
+## Scripts
+
+An attribute may hold **source code** rather than prose:
+
+```elixir
+attribute :formula, AshHateoas.Type.Lua, public?: true
+
+attribute :rule, AshHateoas.Type.Lua, public?: true, constraints: [form: :chunk]
+```
+
+The value is stored as an ordinary string and **parsed on write**, so a syntax
+error is a 422 at the moment an author makes it rather than a failure at
+whatever later point something reads it. `:form` is `:expression` (the default —
+a single value) or `:chunk` (a full program); the distinction is Lua's own.
+
+**Nothing is executed.** Only `luerl`'s scanner and parser are used, never its
+virtual machine, so a stored script is analysed the way a compiler analyses
+source. There is no sandbox to configure because there is nothing to confine.
+
+### Why a type rather than a validation
+
+A validation would reject the same values. What it cannot do is **say so on the
+wire** — and that is the half a client needs.
+
+An attribute typed `:string` is declared `owl:DatatypeProperty` with
+`rdfs:range xsd:string`: true, and the reason a client renders a formula as
+text. To do anything better it would have to *guess* that this particular string
+is code — a guess that is wrong on any `description` containing punctuation.
+
+A script property is instead declared with `rdfs:range ah:Script` and
+`ah:scriptLanguage`, so a consumer learns the value is source code and which
+grammar to read it with. `ah:Script` is an `rdfs:Datatype` restricting
+`xsd:string`, so a client that does not know the term still reads a string —
+nothing breaks, it just learns less.
+
+This is the same move `AshHateoas.Type.ResourceLink` makes for URLs: state it,
+rather than leaving a consumer to infer it.
+
 ## Field descriptors
 
 Fields derive from an action's **public** arguments, carrying `description`,

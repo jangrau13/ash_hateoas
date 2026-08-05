@@ -293,6 +293,7 @@ defmodule AshHateoas.Hydra.OntologyTest do
       range = AshHateoas.Hydra.Ontology.union_range(["#{@vocab}Stock", "#{@vocab}Flow"])
 
       assert range["@type"] == "owl:Class"
+
       assert range["owl:unionOf"]["@list"] == [
                %{"@id" => "#{@vocab}Stock"},
                %{"@id" => "#{@vocab}Flow"}
@@ -315,6 +316,8 @@ defmodule AshHateoas.Hydra.OntologyTest do
         ah:RunAction
         ah:ValidationReport
         ah:ValidationError
+        ah:Script
+        ah:scriptLanguage
       )
 
       doc = ApiDocumentation.build([AshHateoas.Test.Domain])

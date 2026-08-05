@@ -5,6 +5,11 @@ defmodule AshHateoas.Hydra.TypeMapper do
   `rdfs:range` with `jsonschema:` for structural types (`ArraySchema`,
   `ObjectSchema`), and `schema:rangeIncludes` for unions.
 
+  One term is this package's own: a script's `sh:datatype` is `ah:Script`,
+  declared in `AshHateoas.Hydra.Ontology` as an `rdfs:Datatype` restricting
+  `xsd:string`. There is no published datatype for "source code", and
+  `xsd:string` is the statement that leaves a client reading a formula as prose.
+
   `AshHateoas.TypeMapper` remains the single authority for Ash type → wire name.
   This module carries only the wire-name → standard-ontology-IRI mapping.
   """
@@ -38,7 +43,12 @@ defmodule AshHateoas.Hydra.TypeMapper do
       iex> type_info("unknown_thing")
       :none
   """
-  @spec type_info(String.t()) :: {:sh_datatype, String.t()} | {:sh_node_kind, String.t()} | {:rdfs_range, String.t()} | :union | :none
+  @spec type_info(String.t()) ::
+          {:sh_datatype, String.t()}
+          | {:sh_node_kind, String.t()}
+          | {:rdfs_range, String.t()}
+          | :union
+          | :none
   def type_info(wire) when is_binary(wire) do
     cond do
       Map.has_key?(@sh_datatype_table, wire) ->
@@ -46,6 +56,19 @@ defmodule AshHateoas.Hydra.TypeMapper do
 
       wire == "link" ->
         {:sh_node_kind, "sh:IRI"}
+
+      # A script's values are literals, so this is a datatype like any other —
+      # but a *narrower* one than `xsd:string`, which is what tells a client the
+      # value is source code rather than prose. The ontology declares
+      # `ah:Script` as an `rdfs:Datatype` restricting `xsd:string`, so a
+      # consumer that does not know the term still reads a string.
+      #
+      # This matters most on an operation's **inputs**, which keep their
+      # `sh:datatype` (a class property's moved to the ontology in stage 2, but
+      # an argument is not a property of any class). Without it, writing a
+      # formula through a save operation would advertise plain text.
+      wire == "script" ->
+        {:sh_datatype, "ah:Script"}
 
       wire == "array" ->
         {:rdfs_range, "jsonschema:ArraySchema"}
@@ -81,6 +104,7 @@ defmodule AshHateoas.Hydra.TypeMapper do
     cond do
       Map.has_key?(@sh_datatype_table, wire) -> @sh_datatype_table[wire]
       wire == "link" -> "rdfs:Resource"
+      wire == "script" -> "ah:Script"
       wire == "array" -> "jsonschema:ArraySchema"
       wire == "map" -> "jsonschema:ObjectSchema"
       true -> nil

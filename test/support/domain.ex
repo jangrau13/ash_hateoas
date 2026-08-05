@@ -43,6 +43,12 @@ defmodule AshHateoas.Test.Document do
     # requesting host — so the URL is stored and the type marks it followable.
     attribute(:related_order, AshHateoas.Type.ResourceLink, public?: true)
 
+    # Source code, not prose. Typed `:string` this would be declared
+    # `xsd:string` — true, and the reason a client renders a formula as text
+    # rather than as something it can parse. The type is what puts
+    # `ah:Script` and the language on the wire.
+    attribute(:formula, AshHateoas.Type.Lua, public?: true)
+
     attribute(:state, :atom,
       public?: true,
       default: :draft,
@@ -62,12 +68,12 @@ defmodule AshHateoas.Test.Document do
 
     create :create do
       primary?(true)
-      accept([:title, :body, :owner_id, :related_order])
+      accept([:title, :body, :owner_id, :related_order, :formula])
     end
 
     update :update do
       primary?(true)
-      accept([:title, :body])
+      accept([:title, :body, :formula])
     end
 
     update :approve do

@@ -1,0 +1,160 @@
+defmodule AshHateoas.Type.LuaTest do
+  @moduledoc """
+  A script attribute, and what it puts on the wire.
+
+  Three things are asserted, and the third is the one that matters: a validation
+  could reject the same values, but only a *type* can say on the wire that the
+  value is source code. That statement is what lets a generic client render a
+  formula as something it can parse, without knowing anything about the domain
+  the formula belongs to.
+  """
+
+  use ExUnit.Case, async: true
+
+  alias AshHateoas.Hydra.ApiDocumentation
+  alias AshHateoas.Lua.Parser
+  alias AshHateoas.Test.JsonLd
+
+  @vocab "https://ash-hateoas.org/vocab#"
+
+  defp document, do: ApiDocumentation.build([AshHateoas.Test.Domain])
+
+  defp declared(id) do
+    Enum.find(document()["@included"], &(&1["@id"] == id))
+  end
+
+  defp create(attrs) do
+    AshHateoas.Test.Document
+    |> Ash.Changeset.for_create(:create, Map.merge(%{title: "t"}, attrs))
+    |> Ash.create(authorize?: false)
+  end
+
+  describe "parsing" do
+    test "an expression parses" do
+      assert {:ok, _ast} = Parser.parse("variable[\"MI_Li\"] * 2")
+    end
+
+    test "a syntax error says where the parse stopped" do
+      # An author can act on this. `luerl`'s own wording is kept for exactly
+      # that reason — it names the token the parser choked on.
+      assert {:error, message} = Parser.parse("1 +")
+      assert message =~ "syntax error"
+    end
+
+    test "a statement is not an expression" do
+      # Not a blocklist: `return local x = 1` simply does not parse, so Lua's
+      # own grammar refuses this and no rule of ours has to.
+      assert {:error, _} = Parser.parse("local x = 1")
+      assert {:error, _} = Parser.parse("for i = 1, 10 do end")
+    end
+
+    test "a chunk admits what an expression does not" do
+      # The distinction is Lua's, which is why it lives in the parser rather
+      # than in any domain. An attribute wanting programs asks for `:chunk`.
+      assert {:ok, _ast} = Parser.parse("local x = 1", :chunk)
+    end
+  end
+
+  describe "the cast" do
+    test "a parsing script is stored unchanged" do
+      assert {:ok, document} = create(%{formula: "stock[\"Prey\"] * 2"})
+      assert document.formula == "stock[\"Prey\"] * 2"
+    end
+
+    test "a syntax error is refused at the moment it is written" do
+      # The point of the type over a later check: this fails on the write, not
+      # at whatever future moment something tries to read the value.
+      assert {:error, %Ash.Error.Invalid{} = error} = create(%{formula: "1 +"})
+      assert Exception.message(error) =~ "syntax error"
+    end
+
+    test "nil is allowed" do
+      assert {:ok, document} = create(%{formula: nil})
+      assert is_nil(document.formula)
+    end
+
+    test "a stored value reads back without re-parsing" do
+      # Re-parsing on read would spend the cost again to learn what the write
+      # already established, and would make a bad row unreadable rather than
+      # findable.
+      {:ok, written} = create(%{formula: "1 + 2"})
+      assert {:ok, read} = Ash.get(AshHateoas.Test.Document, written.id, authorize?: false)
+      assert read.formula == "1 + 2"
+    end
+  end
+
+  describe "the wire says the value is a script" do
+    test "ah:Script is declared as a datatype restricting xsd:string" do
+      # A datatype rather than a class: the values are literals. A consumer that
+      # does not know the term still reads a string, because that is what it is
+      # declared to restrict.
+      script = declared("ah:Script")
+
+      assert script["@type"] == "rdfs:Datatype"
+      assert script["owl:onDatatype"] == %{"@id" => "xsd:string"}
+    end
+
+    test "a script property ranges on ah:Script, not xsd:string" do
+      property = declared("#{@vocab}document/formula")
+
+      assert property["@type"] == "owl:DatatypeProperty"
+      assert property["rdfs:range"] == %{"@id" => "ah:Script"}
+    end
+
+    test "the property states which language it is" do
+      # "It is code" is not actionable on its own — a client that wants to
+      # parse, highlight or complete needs to know the grammar.
+      assert declared("#{@vocab}document/formula")["ah:scriptLanguage"] == "lua"
+    end
+
+    test "an ordinary string property still ranges on xsd:string" do
+      # The negative half: this must narrow scripts specifically, not widen
+      # every string into a script.
+      assert declared("#{@vocab}document/body")["rdfs:range"] == %{"@id" => "xsd:string"}
+    end
+
+    test "the declaration survives expansion as triples" do
+      # The standing rule, and the reason for it: `"ah:Script"` is a *string*
+      # until a processor resolves the prefix, and an unbound prefix is dropped
+      # in silence — leaving JSON that reads perfectly and means nothing.
+      property =
+        document()
+        |> JsonLd.nodes()
+        |> Enum.find(&(&1["@id"] == "#{@vocab}document/formula" and map_size(&1) > 1))
+
+      assert JsonLd.values(property, "http://www.w3.org/2000/01/rdf-schema#range") ==
+               ["#{@vocab}Script"]
+
+      assert JsonLd.values(property, "#{@vocab}scriptLanguage") == ["lua"]
+    end
+
+    test "ah:Script resolves to a datatype in the graph" do
+      node =
+        document()
+        |> JsonLd.nodes()
+        |> Enum.find(&(&1["@id"] == "#{@vocab}Script" and map_size(&1) > 1))
+
+      assert "http://www.w3.org/2000/01/rdf-schema#Datatype" in List.wrap(node["@type"])
+
+      assert JsonLd.values(node, "http://www.w3.org/2002/07/owl#onDatatype") ==
+               ["http://www.w3.org/2001/XMLSchema#string"]
+    end
+  end
+
+  describe "the wire type" do
+    test "a script does not collapse to string" do
+      # `Lua` is a `NewType` over `:string`, so it sits *before* the unwrapping
+      # in the table — exactly as `ResourceLink` does. Unwrapped it would be
+      # "string", which is the state that leaves a client reading prose.
+      assert AshHateoas.TypeMapper.to_wire(AshHateoas.Type.Lua) == "script"
+    end
+
+    test "a write input advertises the script datatype" do
+      # A class property's `sh:datatype` moved to the ontology in stage 2, but
+      # an argument is not a property of any class — so an input keeps its own,
+      # and without this a formula written through an operation would advertise
+      # plain text.
+      assert AshHateoas.Hydra.TypeMapper.type_info("script") == {:sh_datatype, "ah:Script"}
+    end
+  end
+end

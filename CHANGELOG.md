@@ -133,6 +133,13 @@ served natively as a Hydra / JSON-LD API.
   forces named types internal.
 - A `AshHateoas.Type.ResourceLink` value renders as a JSON-LD reference node
   (`{"@id": url}`); internal vs external is the `@id`'s host, not a separate flag.
+- **`AshHateoas.Type.Lua`** — an attribute holding source code, parsed on write
+  (`luerl`'s scanner and parser only; nothing is ever executed). `constraints:
+  [form: :chunk]` admits a full program where the default `:expression` admits a
+  single value. The wire declares such a property with `rdfs:range ah:Script` and
+  `ah:scriptLanguage` rather than `xsd:string`, so a client learns the value is
+  code and which grammar reads it — `ah:Script` is an `rdfs:Datatype` restricting
+  `xsd:string`, so a consumer that does not know the term still reads a string.
 
 ### DSL
 

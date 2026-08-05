@@ -24,6 +24,10 @@ defmodule AshHateoas.TypeMapper do
     # resolve this to its `:string` subtype and discard the one thing the
     # wire format needs to carry: that the value is followable.
     AshHateoas.Type.ResourceLink => "link",
+    # Same reason, and the same placement: unwrapped this is a `:string`, and
+    # "string" is exactly the state that leaves a client reading a formula as
+    # prose. The wire has to keep the fact that the value is source code.
+    AshHateoas.Type.Lua => "script",
     Ash.Type.String => "string",
     Ash.Type.CiString => "string",
     Ash.Type.Atom => "string",

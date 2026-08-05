@@ -195,6 +195,36 @@ defmodule AshHateoas.Hydra.Ontology do
         "rdfs:subClassOf" => %{"@id" => "schema:Action"},
         "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
       },
+      # A **datatype**, not a class: the values are literals — source code is
+      # text — so what needs saying is which strings, not which resources.
+      # `rdfs:Datatype` restricting `xsd:string` is how OWL says that, and it is
+      # what an attribute typed `AshHateoas.Type.Lua` ranges on instead of
+      # `xsd:string`.
+      #
+      # `xsd:string` is true of a script and useless: it tells a consumer the
+      # value is text, so a client renders a formula as prose. It would have to
+      # *guess* that this particular string contains references — and a guess
+      # that is wrong on a `description` full of brackets is worse than no
+      # guess at all. The narrower datatype is the statement that replaces it.
+      #
+      # `ah:scriptLanguage` says which language, because "it is code" is not
+      # actionable on its own: a client that wants to highlight, parse or
+      # complete needs to know what grammar it is reading.
+      %{
+        "@id" => "ah:Script",
+        "@type" => "rdfs:Datatype",
+        "owl:onDatatype" => %{"@id" => "xsd:string"},
+        "rdfs:label" => "Script",
+        "rdfs:comment" => "A string whose value is source code in a stated language.",
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      },
+      %{
+        "@id" => "ah:scriptLanguage",
+        "@type" => "owl:AnnotationProperty",
+        "rdfs:label" => "scriptLanguage",
+        "rdfs:comment" => "The language a script property's values are written in.",
+        "rdfs:isDefinedBy" => %{"@id" => Context.vocab_iri("")}
+      },
       %{"@id" => "hydra:Resource", "@type" => "owl:Class"}
     ]
   end
@@ -301,6 +331,18 @@ defmodule AshHateoas.Hydra.Ontology do
       resource_link?(attribute) ->
         %{"@type" => ["owl:ObjectProperty", "hydra:Link"]}
 
+      # A script is a datatype property like any other — its values are
+      # literals. What differs is the range: `ah:Script` rather than
+      # `xsd:string`, plus the language, so a consumer learns the value is
+      # source code *and* what grammar to read it with. Both are declared in
+      # `ah_terms/0`.
+      script?(attribute) ->
+        %{
+          "@type" => "owl:DatatypeProperty",
+          "rdfs:range" => %{"@id" => "ah:Script"},
+          "ah:scriptLanguage" => script_language(attribute)
+        }
+
       wire == "union" ->
         # A union's arms are datatypes as often as not, and OWL keeps object
         # and datatype properties strictly apart (§5.8.1 forbids punning
@@ -314,6 +356,18 @@ defmodule AshHateoas.Hydra.Ontology do
         %{"@type" => "owl:DatatypeProperty"}
         |> put_unless_nil("rdfs:range", datatype_range(wire))
     end
+  end
+
+  # Asks the *type* what language it is, rather than matching the module name,
+  # so a second script type needs no edit here.
+  defp script?(%{type: type}), do: not is_nil(script_language(%{type: type}))
+
+  defp script_language(%{type: type}) do
+    if is_atom(type) and not is_nil(type) and function_exported?(type, :script_language, 0) do
+      type.script_language()
+    end
+  rescue
+    _ -> nil
   end
 
   defp resource_link?(%{type: type}) do

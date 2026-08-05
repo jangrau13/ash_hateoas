@@ -72,6 +72,16 @@ defmodule AshHateoas.MixProject do
       # bypass no HTTP caller can satisfy. Optional: a consumer without
       # authentication never loads it, and the check degrades to a no-op.
       {:ash_authentication, "~> 4.0", optional: true},
+      # Lua's scanner and parser, for `AshHateoas.Type.Lua`. **Only the parser
+      # is used** — `luerl_scan` and `luerl_parse` yield an AST and nothing ever
+      # runs it, so a stored script is analysed the way a compiler analyses
+      # source, and there is no sandbox question to answer.
+      #
+      # `ash_lua` was read and rejected for the same reason: it generates an
+      # `:eval` action so a client POSTs a script and it *executes* against your
+      # Ash actions. That is the opposite direction — a script here is stored,
+      # analysed and edited, never run.
+      {:luerl, "~> 1.5"},
       # Igniter powers `mix igniter.install ash_hateoas` and the
       # `mix ash_hateoas.gen.schema_org` generator; optional so consumers who
       # install by hand are not forced to take it.
