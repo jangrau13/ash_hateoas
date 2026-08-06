@@ -111,6 +111,61 @@ defmodule AshHateoas.TypeMapper do
     end
   end
 
+  @doc """
+  The language a script type's values are written in, or `nil`.
+
+  Asked of the *type*, by calling `script_language/0` on it, rather than
+  matched against a module name — so a second script type is understood here
+  with no edit.
+
+  This is the other half of `to_wire/1` for a script. `to_wire/1` answers "is
+  it code", which stops a client rendering a formula as prose; this answers
+  "which grammar", which is what a client needs before it can parse, highlight
+  or complete one. Neither is recoverable from the other.
+
+  An array of scripts reports its element's language, matching `to_wire/1`'s
+  own unwrapping: an array is a container, and the language belongs to what it
+  contains.
+
+      iex> AshHateoas.TypeMapper.script_language(AshHateoas.Type.Lua)
+      "lua"
+
+      iex> AshHateoas.TypeMapper.script_language(:string)
+      nil
+  """
+  @spec script_language(term()) :: String.t() | nil
+  def script_language({:array, inner}), do: script_language(inner)
+
+  def script_language(type) when is_atom(type) and not is_nil(type) do
+    module = normalize(type)
+
+    cond do
+      exports?(module, :script_language) ->
+        module.script_language()
+
+      # A NewType over a script is still a script. Unwrap once and retry, the
+      # same descent `lookup/1` makes for the wire name.
+      exports?(module, :subtype_of) ->
+        module |> apply(:subtype_of, []) |> script_language()
+
+      true ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  def script_language(_other), do: nil
+
+  # `function_exported?/3` answers for a *loaded* module and says false for one
+  # merely compiled, so under lazy loading a type is asked before it is loaded
+  # and reports no language — leaving the wire silent about a script while
+  # `to_wire/1`, which is a table lookup, still calls it one. Loading first is
+  # what makes the two agree.
+  defp exports?(module, function) do
+    Code.ensure_loaded?(module) and function_exported?(module, function, 0)
+  end
+
   @doc "The full module → wire-name table, for tests and documentation."
   @spec table() :: %{module() => wire_type()}
   def table, do: @table

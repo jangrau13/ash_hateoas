@@ -48,6 +48,11 @@ ontology as an `rdfs:Datatype` restricting `xsd:string`, with
 and useless — it is what leaves a client rendering a formula as prose — while
 the restriction keeps a consumer that does not know the term reading a string.
 
+An **operation's inputs** carry the same pair as `sh:datatype` +
+`ah:scriptLanguage`, since an argument is not a property of any class and so
+has no declaration to carry a range. Both are read from the type itself, so the
+declaration and the usage site state one fact rather than two that can drift.
+
 ### On term spelling (`hydra:` prefix vs bare)
 
 Every Hydra term is emitted **with the `hydra:` prefix**. Under the referenced

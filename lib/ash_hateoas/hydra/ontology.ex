@@ -359,16 +359,12 @@ defmodule AshHateoas.Hydra.Ontology do
   end
 
   # Asks the *type* what language it is, rather than matching the module name,
-  # so a second script type needs no edit here.
+  # so a second script type needs no edit here. Shared with the renderer, which
+  # states the same fact on an operation's inputs — a declaration and a usage
+  # site reading one source cannot disagree about the language.
   defp script?(%{type: type}), do: not is_nil(script_language(%{type: type}))
 
-  defp script_language(%{type: type}) do
-    if is_atom(type) and not is_nil(type) and function_exported?(type, :script_language, 0) do
-      type.script_language()
-    end
-  rescue
-    _ -> nil
-  end
+  defp script_language(%{type: type}), do: AshHateoas.TypeMapper.script_language(type)
 
   defp resource_link?(%{type: type}) do
     type == AshHateoas.Type.ResourceLink or

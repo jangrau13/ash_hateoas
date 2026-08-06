@@ -140,6 +140,12 @@ served natively as a Hydra / JSON-LD API.
   `ah:scriptLanguage` rather than `xsd:string`, so a client learns the value is
   code and which grammar reads it — `ah:Script` is an `rdfs:Datatype` restricting
   `xsd:string`, so a consumer that does not know the term still reads a string.
+
+  An **operation's inputs** state the same pair, as `sh:datatype` +
+  `ah:scriptLanguage`: an argument is not a property of any class, so nothing
+  declares a range for it and the language would otherwise be unrecoverable —
+  a client writing a formula through a save was told it was code but not that
+  it was Lua. Both sides ask the type, so they cannot drift.
 - **`AshHateoas.LuaScript`** — an extension declaring what the names *inside* a
   script mean. `bind :author, Author` makes `author["Ada"]` a reference that
   resolves; `functions SomeResource` publishes the callable signatures so a

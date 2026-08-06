@@ -371,6 +371,28 @@ grammar to read it with. `ah:Script` is an `rdfs:Datatype` restricting
 `xsd:string`, so a client that does not know the term still reads a string —
 nothing breaks, it just learns less.
 
+Both halves are needed and neither implies the other. `ah:Script` says the
+value is code, which is enough to stop rendering it as prose;
+`ah:scriptLanguage` says which grammar, which is what a client needs before it
+can parse, highlight or complete one.
+
+**An operation's inputs carry both too.** A class property's type moved to the
+ontology, but an argument is not a property of any class — nothing declares a
+range for it — so an input states `sh:datatype` and `ah:scriptLanguage` on the
+usage site:
+
+```jsonc
+{"@type": "SupportedProperty",
+ "hydra:property": {"@id": "…#flow/value_text"},
+ "hydra:title": "value_text",
+ "sh:datatype": "ah:Script",
+ "ah:scriptLanguage": "lua"}
+```
+
+Both sides read the language from the *type*, by asking it, so a declaration
+and a usage site cannot disagree — and a second script type is understood with
+no emitter change.
+
 This is the same move `AshHateoas.Type.ResourceLink` makes for URLs: state it,
 rather than leaving a consumer to infer it.
 

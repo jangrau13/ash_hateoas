@@ -153,10 +153,15 @@ defmodule AshHateoas.Descriptor do
 
   defp public?(input), do: Map.get(input, :public?, false)
 
+  # `type` collapses the Ash type to a wire name, so a script becomes "script"
+  # and the language is lost. It is read here, while the type is still in hand,
+  # because nothing downstream can recover it: an argument is not a property of
+  # any class, so the ontology declares no range to look it up in.
   defp to_field(argument) do
     %Field{
       name: argument.name,
       type: TypeMapper.to_wire(argument.type),
+      script_language: TypeMapper.script_language(argument.type),
       allow_nil?: Map.get(argument, :allow_nil?, true),
       description: Map.get(argument, :description),
       default: default_for(argument),

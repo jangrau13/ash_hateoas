@@ -24,6 +24,18 @@ defmodule AshHateoas.Field do
   `hydra:SupportedProperty` is described by `hydra:required` — so the inversion
   lives at the boundary, and everything upstream reads the way the resource DSL
   does.
+
+  ## `script_language` is carried, not re-derived
+
+  `type` collapses an Ash type to a wire name, and `"script"` says the value is
+  source code without saying in what. The language cannot be recovered further
+  downstream: an argument is not a property of any class, so the ontology
+  declares no range for it and there is nothing to look it up in.
+
+  So it is read here, where the Ash type is still in hand, and travels beside
+  the type it qualifies. `nil` for anything that is not a script — which is the
+  reason it is a field rather than a constraint: it says what the value *is*,
+  not what it must satisfy.
   """
 
   @type t :: %__MODULE__{
@@ -32,13 +44,15 @@ defmodule AshHateoas.Field do
           allow_nil?: boolean(),
           description: String.t() | nil,
           default: {:ok, term()} | :error,
-          constraints: map()
+          constraints: map(),
+          script_language: String.t() | nil
         }
 
   defstruct [
     :name,
     :type,
     :description,
+    :script_language,
     allow_nil?: true,
     default: :error,
     constraints: %{}

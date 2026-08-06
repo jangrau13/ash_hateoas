@@ -478,15 +478,31 @@ defmodule AshHateoas.Hydra.Renderer do
     end
   end
 
-  defp put_type_info(map, %Field{type: type}) do
+  defp put_type_info(map, %Field{type: type} = field) do
     case TypeMapper.type_info(type) do
-      {:sh_datatype, iri} -> Map.put(map, "sh:datatype", iri)
+      {:sh_datatype, iri} -> map |> Map.put("sh:datatype", iri) |> put_script_language(field)
       {:sh_node_kind, kind} -> Map.put(map, "sh:nodeKind", kind)
       {:rdfs_range, iri} -> Map.put(map, "rdfs:range", %{"@id" => iri})
       :union -> map
       :none -> map
     end
   end
+
+  # `ah:Script` says the value is code; this says which language, and the two
+  # are one statement split in half. A client told only the first knows to stop
+  # rendering a formula as prose and still cannot parse, highlight or complete
+  # it — the grammar is the actionable part.
+  #
+  # It rides on the usage site rather than being looked up, for the same reason
+  # `sh:datatype` does: an argument is not a property of any class, so the
+  # ontology declares nothing about it. Where the property *is* declared — a
+  # class attribute — `AshHateoas.Hydra.Ontology` states the same fact against
+  # the declaration, and both read it from the type.
+  defp put_script_language(map, %Field{script_language: language})
+       when is_binary(language),
+       do: Map.put(map, "ah:scriptLanguage", language)
+
+  defp put_script_language(map, _field), do: map
 
   # An operation attaches inline when its href is the node's own URL (or it has operation attaches inline when its href is the node's own URL (or it has
   # no href at all — the fallback path, where the node URL is all a client has).

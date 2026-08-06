@@ -16,6 +16,7 @@ defmodule AshHateoas.Type.LuaTest do
   alias AshHateoas.Test.JsonLd
 
   @vocab "https://ash-hateoas.org/vocab#"
+  @hydra "http://www.w3.org/ns/hydra/core#"
 
   defp document, do: ApiDocumentation.build([AshHateoas.Test.Domain])
 
@@ -181,6 +182,79 @@ defmodule AshHateoas.Type.LuaTest do
       # and without this a formula written through an operation would advertise
       # plain text.
       assert AshHateoas.Hydra.TypeMapper.type_info("script") == {:sh_datatype, "ah:Script"}
+    end
+  end
+
+  describe "a write input states its language too" do
+    # The datatype and the language are one statement split in half, and an
+    # input was getting only the first half. A client reading `ah:Script`
+    # learned the value is code and not which grammar to read it with — enough
+    # to stop rendering it as prose, not enough to parse, highlight or
+    # complete it.
+    #
+    # It cannot be recovered from the ontology the way a class property's
+    # range is: an argument is not a property of any class, so nothing
+    # declares it. The language travels on the usage site for the same reason
+    # `sh:datatype` does.
+    defp inputs(title) do
+      document()["hydra:supportedClass"]
+      |> Enum.flat_map(&List.wrap(&1["hydra:supportedOperation"]))
+      |> Enum.flat_map(fn operation ->
+        operation["hydra:expects"]
+        |> List.wrap()
+        |> Enum.flat_map(&List.wrap(&1["hydra:supportedProperty"]))
+      end)
+      |> Enum.filter(&(&1["hydra:title"] == title))
+    end
+
+    test "a script input names the language beside the datatype" do
+      properties = inputs("formula")
+      assert properties != [], "the fixture no longer writes a script through an operation"
+
+      for property <- properties do
+        assert property["sh:datatype"] == "ah:Script"
+        assert property["ah:scriptLanguage"] == "lua"
+      end
+    end
+
+    test "every operation accepting it says so, not merely the first" do
+      # `formula` is accepted by both `create` and `update`, and the failure
+      # mode here is one emitter path left silent while another is fixed.
+      assert length(inputs("formula")) >= 2
+    end
+
+    test "an ordinary string input names no language" do
+      # The negative half. `body` is prose and must stay prose — a language on
+      # it would tell a client to parse a description as Lua.
+      for property <- inputs("body") do
+        refute Map.has_key?(property, "ah:scriptLanguage")
+      end
+    end
+
+    test "the language survives expansion as a triple" do
+      # The standing rule: `"ah:scriptLanguage"` is a string until a processor
+      # resolves the prefix, and an unbound prefix is dropped in silence —
+      # leaving JSON that reads perfectly and says nothing.
+      #
+      # Anchored to the *input* node specifically, by the property it describes
+      # and by `hydra:writable`, so the class property's own declaration cannot
+      # satisfy it. That declaration states the same fact from the ontology
+      # side and is asserted separately above; this is the usage site, which is
+      # the only place an argument's language can live.
+      inputs =
+        document()
+        |> JsonLd.nodes()
+        |> Enum.filter(fn node ->
+          "#{@vocab}document/formula" in JsonLd.values(node, "#{@hydra}property") and
+            JsonLd.values(node, "#{@hydra}writable") == [true] and
+            JsonLd.values(node, "#{@hydra}readable") == [false]
+        end)
+
+      assert inputs != [], "the formula input did not survive expansion at all"
+
+      for node <- inputs do
+        assert JsonLd.values(node, "#{@vocab}scriptLanguage") == ["lua"]
+      end
     end
   end
 end
