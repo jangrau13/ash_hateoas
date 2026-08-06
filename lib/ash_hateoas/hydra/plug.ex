@@ -105,7 +105,7 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp dispatch(%{method: "GET"} = conn, segments, actor, _tenant, opts) do
     if segments == doc_segments(opts) do
-      send_json(conn, 200, ApiDocumentation.build(opts[:domains], doc_opts(conn, opts)))
+      send_json(conn, 200, ApiDocumentation.build(opts[:domains], doc_opts(conn, opts)), opts)
     else
       serve_get(conn, segments, actor, opts)
     end
@@ -161,7 +161,7 @@ defmodule AshHateoas.Hydra.Plug do
         node = node(record, type, resource, id, actor, tenant, opts)
         node = maybe_project_observed(node, conn, resource)
         context = document_context(conn, opts, resource)
-        send_json(conn, 200, Map.put(node, "@context", context))
+        send_json(conn, 200, Map.put(node, "@context", context), opts)
     end
   end
 
@@ -237,7 +237,7 @@ defmodule AshHateoas.Hydra.Plug do
           # `hydra:title` here while resolving correctly one URL away.
           |> Map.put("@context", document_context(conn, opts, resource))
 
-        send_json(conn, 200, document)
+        send_json(conn, 200, document, opts)
 
       {:error, error} ->
         # A read can fail for very different reasons — a policy denial, invalid
@@ -309,7 +309,7 @@ defmodule AshHateoas.Hydra.Plug do
         # only of the JSON.
         |> Map.put("@context", document_context(conn, opts, destination))
 
-      send_json(conn, 200, document)
+      send_json(conn, 200, document, opts)
     else
       {:error, error} -> send_ash_error(conn, error)
       _ -> send_error(conn, 404, "Not Found")
@@ -588,7 +588,7 @@ defmodule AshHateoas.Hydra.Plug do
     node = record |> forget_links(resource) |> node(type, resource, id, actor, tenant, opts)
     context = document_context(conn, opts, resource)
     status = if Keyword.get(write_opts, :created, false), do: 201, else: 200
-    send_json(conn, status, Map.put(node, "@context", context))
+    send_json(conn, status, Map.put(node, "@context", context), opts)
   end
 
   defp respond_write({:error, error}, conn, _resource, _type, _actor, _tenant, _opts, _write_opts) do
@@ -637,7 +637,8 @@ defmodule AshHateoas.Hydra.Plug do
       200,
       node
       |> Map.drop(["hydra:operation"])
-      |> Map.put("@context", context)
+      |> Map.put("@context", context),
+      opts
     )
   end
 
@@ -662,7 +663,7 @@ defmodule AshHateoas.Hydra.Plug do
           %{"@type" => "Result", "schema:result" => encodable(other)}
       end
 
-    send_json(conn, 200, Map.put(body, "@context", document_context(conn, opts)))
+    send_json(conn, 200, Map.put(body, "@context", document_context(conn, opts)), opts)
   end
 
   defp respond_generic(:ok, conn, _opts), do: send_json(conn, 200, %{"@type" => "Result"})
@@ -1548,11 +1549,26 @@ defmodule AshHateoas.Hydra.Plug do
     )
   end
 
-  defp send_json(conn, status, body) do
+  # Every JSON body this package emits passes through here, which is why the
+  # vocabulary is localised at this one point rather than at the fifty-odd sites
+  # that mint an IRI — one pass cannot miss a path, and the three sites that run
+  # in a compile-time transformer have no request to read an origin from.
+  defp send_json(conn, status, body, opts \\ []) do
     conn
     |> Plug.Conn.put_resp_content_type(Context.content_type(), nil)
-    |> Plug.Conn.send_resp(status, Jason.encode!(body))
+    |> Plug.Conn.send_resp(status, Jason.encode!(Context.localise(body, vocab_origin(conn, opts))))
     |> Plug.Conn.halt()
+  end
+
+  # What an API's own classes are named after: the public origin it states, or
+  # the one this request arrived on. The same rule `@base` follows, and for the
+  # same reason — a relative identity has to resolve against the API rather than
+  # against whatever the reader happened to load last.
+  defp vocab_origin(conn, opts) do
+    case base_url(opts) do
+      "" -> request_origin(conn)
+      url -> url
+    end
   end
 
   defp send_error(conn, status, title) do

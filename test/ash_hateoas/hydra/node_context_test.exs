@@ -34,14 +34,16 @@ defmodule AshHateoas.Hydra.NodeContextTest do
 
   import Plug.Test
 
-  alias AshHateoas.Hydra.ApiDocumentation
   alias AshHateoas.Test.JsonLd
 
   alias AshHateoas.Test.{Actor, Article, Comment, Document, HydraEndpoint, Person}
 
   @admin %Actor{id: "admin-1", role: :admin}
   @hydra "http://www.w3.org/ns/hydra/core#"
-  @vocab "https://ash-hateoas.org/vocab#"
+  # An API's classes are named after where it is served, so the namespace here
+  # is the test connection's own origin — not the library's, which now carries
+  # only the library's own terms (`ah:Script`, `ah:identity`).
+  @vocab "http://www.example.com/vocab#"
 
   defp get(path) do
     conn(:get, path)
@@ -53,9 +55,14 @@ defmodule AshHateoas.Hydra.NodeContextTest do
   # Every property IRI the ApiDocumentation declares. A node asserting a
   # predicate outside this set is a dangling reference — the defect `Ontology`
   # exists to remove, reached from the instance side.
+  # Fetched over HTTP rather than built directly, because an API's classes are
+  # named after where it is served — so a document built in-process carries the
+  # library namespace and one served to a client carries the API's own. Building
+  # it here compared a node against a description in a different namespace, and
+  # every IRI looked undeclared.
   defp declared_iris do
-    [AshHateoas.Test.Domain]
-    |> ApiDocumentation.build()
+    "/doc"
+    |> get()
     |> Map.get("@included")
     |> Enum.map(& &1["@id"])
     |> MapSet.new()

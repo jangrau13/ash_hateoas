@@ -236,6 +236,126 @@ defmodule AshHateoas.Hydra.Context do
   end
 
   @doc """
+  This API's own vocabulary namespace, derived from where it is served.
+
+  **A class belongs to the API that describes it, not to this library.** The
+  namespace used to be a module constant, so every API built on this package
+  minted its classes under one namespace — and a collision was not
+  hypothetical: two services in one system, each declaring a `user` and an
+  `api_key`, both emitted `vocab#User`. One IRI, two different classes, which is
+  precisely what the "unambiguous grounding" this module opens by claiming rules
+  out. It is invisible from inside either service, since one document's IRIs
+  look well-formed on their own.
+
+  Derived rather than configured separately, on the same rule `@base` follows:
+  the public `base_url` when a deployment states one, the request's own origin
+  otherwise. So it needs no new setting to be correct in development, and
+  setting `base_url` is what stops a class IRI moving when the service does —
+  worth doing, since an IRI is an identity and one that changes with the host
+  is several identities.
+
+  `ah:` is unaffected and stays where it is. Terms like `ah:Script` and
+  `ah:identity` are the *library's*, shared by every API it serves, and that is
+  the one case a shared namespace states correctly.
+
+      iex> AshHateoas.Hydra.Context.api_vocab("https://sim.example.org")
+      "https://sim.example.org/vocab#"
+
+      iex> AshHateoas.Hydra.Context.api_vocab(nil)
+      "https://ash-hateoas.org/vocab#"
+  """
+  @spec api_vocab(String.t() | nil) :: String.t()
+  def api_vocab(nil), do: @vocab
+  def api_vocab(""), do: @vocab
+
+  def api_vocab(origin) when is_binary(origin) do
+    String.trim_trailing(origin, "/") <> "/vocab#"
+  end
+
+  @doc """
+  Rewrite every library-namespaced vocabulary IRI to this API's own.
+
+  Applied once, to a whole built document, rather than threaded through the
+  fifty-odd sites that mint an IRI. Two reasons, and the second is the one that
+  decided it: a document is emitted through exactly one function, so one pass
+  cannot miss a path; and three of those sites are **compile-time
+  transformers**, which have no request to read an origin from. Two of them
+  emit the `sh:class` list a client reads to decide what a document may hold,
+  so leaving them behind would have the save operation naming classes in a
+  namespace the classes are not declared in — a client would resolve nothing.
+
+  Rewriting the *string prefix* is safe because the namespace only ever appears
+  as the head of an IRI this package minted. It is not a general find-replace
+  over content: keys and values are walked structurally, and only a binary that
+  starts with the namespace is touched.
+  """
+  @spec localise(term(), String.t() | nil) :: term()
+  def localise(document, origin) do
+    case api_vocab(origin) do
+      @vocab ->
+        document
+
+      vocab ->
+        document
+        |> rewrite(vocab)
+        |> restore_context(document)
+        |> declare(vocab)
+    end
+  end
+
+  # **Only the prefix binding is put back, never the whole context.**
+  #
+  # A context carries two different things and they need opposite treatment. The
+  # prefix map binds `"ah"` to the library namespace as a *value*, so rewriting
+  # it repoints the prefix itself and every `ah:Script` in the document resolves
+  # into this API's namespace instead of the library's — silent, and it breaks
+  # the terms this change exists to keep shared.
+  #
+  # The **term bindings** are the opposite case: `context_for/1` appends a map
+  # of a node's flat keys to *this API's own property IRIs*, and those must move
+  # with everything else. Restoring the whole context left them behind, so a
+  # node's keys bound to IRIs the document no longer declared — the keys then
+  # expanded to nothing, which is the silent-drop defect `node_terms/1` exists
+  # to prevent, reintroduced from the other end. Caught by the expansion tests,
+  # which is what they are for: the raw JSON reads identically either way.
+  defp restore_context(%{"@context" => rewritten} = document, %{"@context" => original})
+       when is_list(rewritten) and is_list(original) do
+    Map.put(document, "@context", Enum.map(rewritten, &restore_prefixes(&1, original)))
+  end
+
+  defp restore_context(document, _original), do: document
+
+  # A prefix map is the one whose entries bind a *namespace*, which is exactly
+  # what the original said. Matched by position rather than by inspecting the
+  # values, since a term binding and a prefix binding are both string→string.
+  defp restore_prefixes(part, original) do
+    Enum.find(original, part, fn candidate ->
+      is_map(candidate) and is_map(part) and Map.keys(candidate) == Map.keys(part) and
+        Map.has_key?(candidate, "ah")
+    end)
+  end
+
+  # A namespace a consumer cannot resolve is a namespace it cannot use, so the
+  # document declares its own under the empty prefix — the JSON-LD spelling of
+  # SPARQL's `PREFIX : <…>`, and what lets a client name this API's vocabulary
+  # without knowing where the API is deployed.
+  defp declare(%{"@context" => context} = document, vocab) when is_list(context) do
+    Map.put(document, "@context", context ++ [%{"vocab" => vocab}])
+  end
+
+  defp declare(document, _vocab), do: document
+
+  defp rewrite(value, vocab) when is_map(value) and not is_struct(value) do
+    Map.new(value, fn {key, inner} -> {rewrite(key, vocab), rewrite(inner, vocab)} end)
+  end
+
+  defp rewrite(value, vocab) when is_list(value), do: Enum.map(value, &rewrite(&1, vocab))
+
+  defp rewrite(@vocab <> segment, vocab), do: vocab <> segment
+
+  defp rewrite(value, _vocab), do: value
+
+  @doc """
   The vocabulary IRI for a term (`"ah:…"` expands to the vocab namespace).
 
       iex> AshHateoas.Hydra.Context.vocab_iri("ValidationReport")

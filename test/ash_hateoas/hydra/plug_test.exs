@@ -26,6 +26,11 @@ defmodule AshHateoas.Hydra.PlugTest do
     ReadFailure
   }
 
+  # An API's classes are named after where it is served, so this is the test
+  # connection's own origin. The library namespace carries only the library's
+  # own terms (`ah:Script`, `ah:identity`), which every implementation shares.
+  @vocab "http://www.example.com/vocab#"
+
   @admin %Actor{id: "admin-1", role: :admin}
   @viewer %Actor{id: "viewer-1", role: :viewer}
 
@@ -107,7 +112,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert is_list(doc["hydra:supportedClass"])
 
       document =
-        Enum.find(doc["hydra:supportedClass"], &(&1["@id"] == Context.class_iri("document")))
+        Enum.find(doc["hydra:supportedClass"], &(&1["@id"] == "#{@vocab}Document"))
 
       assert document["@type"] == "Class"
       assert Enum.any?(document["hydra:supportedProperty"], &(&1["hydra:title"] == "title"))
@@ -129,7 +134,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       node = body(get("/documents/#{doc.id}", @admin))
 
       assert node["@id"] =~ "/documents/#{doc.id}"
-      assert node["@type"] == Context.class_iri("document")
+      assert node["@type"] == "#{@vocab}Document"
       assert node["title"] == "Spec"
       assert node["@context"]
     end
@@ -351,7 +356,7 @@ defmodule AshHateoas.Hydra.PlugTest do
         |> Map.get("hydra:mapping")
         |> Enum.map(& &1["hydra:property"]["@id"])
 
-      assert "https://ash-hateoas.org/vocab#article/comments" in properties
+      assert "#{@vocab}article/comments" in properties
       assert Enum.all?(template["hydra:mapping"], &(&1["hydra:variable"] == "load"))
       assert Enum.all?(template["hydra:mapping"], &(&1["hydra:required"] == false))
     end
@@ -943,14 +948,14 @@ defmodule AshHateoas.Hydra.PlugTest do
       # and finding something else.
       operation =
         body(get("/doc", @admin))["hydra:supportedClass"]
-        |> Enum.find(&(&1["@id"] == "https://ash-hateoas.org/vocab#Document"))
+        |> Enum.find(&(&1["@id"] == "#{@vocab}Document"))
         |> Map.fetch!("hydra:supportedOperation")
         |> Enum.find(&(&1["hydra:method"] == "DELETE"))
 
-      assert operation["hydra:returns"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
+      assert operation["hydra:returns"] == %{"@id" => "#{@vocab}Document"}
 
       declared = Jason.decode!(conn.resp_body)["@type"]
-      assert "https://ash-hateoas.org/vocab#Document" in List.wrap(declared)
+      assert "#{@vocab}Document" in List.wrap(declared)
     end
 
     test "an unauthorized write is refused, not performed" do
@@ -1018,7 +1023,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       node = body(get("/people/#{person.id}", @admin))
 
       assert node["@type"] == [
-               "https://ash-hateoas.org/vocab#Person",
+               "#{@vocab}Person",
                "https://schema.org/Person"
              ]
     end
@@ -1044,7 +1049,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       person_class =
         Enum.find(
           doc["hydra:supportedClass"],
-          &(&1["@id"] == "https://ash-hateoas.org/vocab#Person")
+          &(&1["@id"] == "#{@vocab}Person")
         )
 
       # Not `owl:equivalentClass`, which asserts the two are the same set. A
@@ -1057,7 +1062,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       # The honest claim, asserted once in the ontology: a local Person *is a*
       # schema.org Person, without the converse.
       declared =
-        Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#Person"))
+        Enum.find(doc["@included"], &(&1["@id"] == "#{@vocab}Person"))
 
       assert declared["rdfs:subClassOf"] == %{"@id" => "https://schema.org/Person"}
       assert declared["@type"] == ["owl:Class", "hydra:Class"]
