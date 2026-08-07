@@ -247,27 +247,71 @@ defmodule AshHateoas.LuaScriptTest do
     # Spark reports a verifier failure through the parallel module checker, so
     # it reaches stderr rather than raising at the compile call — the idiom
     # `derive_action_routes_test` already uses.
+    #
+    # **`capture_io(:stderr, …)` captures the group leader, not this module.**
+    # Under `async: true` another file compiling a module at the same moment
+    # writes into the same capture, so the output is this compile's *plus*
+    # whatever a neighbour happened to emit. Harmless for a positive match —
+    # a `DslError` naming this module is still in there — and fatal for a
+    # `refute`, which reads a stray warning from an unrelated test as a
+    # failure here. Measured: seed 226336 caught `AshHateoasBogusUnrouted1991`
+    # and `AshHateoas.ResourceTest.SoleGet` in this capture.
+    #
+    # So the module's own name comes back with the output, and an assertion
+    # that must be sure the compile was *clean* scopes to it.
     defp compile(body) do
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        Code.compile_string("""
-        defmodule AshHateoasBadScript#{System.unique_integer([:positive])} do
-          use Ash.Resource,
-            domain: nil,
-            data_layer: Ash.DataLayer.Ets,
-            extensions: [AshHateoas.Resource, AshHateoas.LuaScript]
+      name = "AshHateoasBadScript#{System.unique_integer([:positive])}"
 
-          hateoas do
-            warn_on_missing_authorizers?(false)
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          Code.compile_string("""
+          defmodule #{name} do
+            use Ash.Resource,
+              domain: nil,
+              data_layer: Ash.DataLayer.Ets,
+              extensions: [AshHateoas.Resource, AshHateoas.LuaScript]
+
+            hateoas do
+              warn_on_missing_authorizers?(false)
+            end
+
+          #{body}
           end
+          """)
+        end)
 
-        #{body}
+      {name, stderr}
+    end
+
+    # The whole capture. Safe for a *positive* match: this module's own error
+    # is in there, and a neighbour cannot supply the wording being asserted —
+    # every message below names the offending attribute or bind.
+    defp stderr({_name, stderr}), do: stderr
+
+    # The lines of `stderr` belonging to `name`'s own compilation.
+    #
+    # A message is one or more lines, and only the first names the module —
+    # so a blank line ends the message rather than the next line starting a
+    # new one. Anything naming a *different* module starts a message this
+    # compile did not produce.
+    defp own_output({name, stderr}) do
+      stderr
+      |> String.split("\n")
+      |> Enum.reduce({[], false}, fn line, {kept, mine?} ->
+        cond do
+          String.trim(line) == "" -> {kept, false}
+          String.contains?(line, name) -> {[line | kept], true}
+          mine? -> {[line | kept], true}
+          true -> {kept, false}
         end
-        """)
       end)
+      |> elem(0)
+      |> Enum.reverse()
+      |> Enum.join("\n")
     end
 
     test "a script naming no attribute fails the build" do
-      stderr =
+      compiled =
         compile("""
           lua do
             script :missing
@@ -278,16 +322,16 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      assert stderr =~ "DslError"
-      assert stderr =~ "does not exist"
-      assert stderr =~ ":missing", "the diagnostic must name the offending attribute"
+      assert stderr(compiled) =~ "DslError"
+      assert stderr(compiled) =~ "does not exist"
+      assert stderr(compiled) =~ ":missing", "the diagnostic must name the offending attribute"
     end
 
     test "a script on a plain string fails the build" do
       # The type is what parses and what declares `ah:Script`. Pointed at a
       # `:string` the section would be configured and do nothing at all — every
       # value unparsed, and the wire saying the value is prose.
-      stderr =
+      compiled =
         compile("""
           lua do
             script :body
@@ -299,12 +343,12 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      assert stderr =~ "DslError"
-      assert stderr =~ "AshHateoas.Type.Lua"
+      assert stderr(compiled) =~ "DslError"
+      assert stderr(compiled) =~ "AshHateoas.Type.Lua"
     end
 
     test "two binds sharing a name fail the build" do
-      stderr =
+      compiled =
         compile("""
           lua do
             script :body
@@ -318,13 +362,13 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      assert stderr =~ "DslError"
-      assert stderr =~ "More than one `bind`"
-      assert stderr =~ ":author"
+      assert stderr(compiled) =~ "DslError"
+      assert stderr(compiled) =~ "More than one `bind`"
+      assert stderr(compiled) =~ ":author"
     end
 
     test "a bind keyed on a missing attribute fails the build" do
-      stderr =
+      compiled =
         compile("""
           lua do
             script :body
@@ -337,9 +381,9 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      assert stderr =~ "DslError"
-      assert stderr =~ "does not declare"
-      assert stderr =~ ":nickname"
+      assert stderr(compiled) =~ "DslError"
+      assert stderr(compiled) =~ "does not declare"
+      assert stderr(compiled) =~ ":nickname"
     end
 
     test "a bind keyed on a non-unique attribute fails the build" do
@@ -349,7 +393,7 @@ defmodule AshHateoas.LuaScriptTest do
       # means different things at different times and nothing reports it.
       #
       # `Formula.name` carries no identity, which is exactly that shape.
-      stderr =
+      compiled =
         compile("""
           lua do
             script :body
@@ -362,14 +406,14 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      assert stderr =~ "DslError"
-      assert stderr =~ "is not unique"
+      assert stderr(compiled) =~ "DslError"
+      assert stderr(compiled) =~ "is not unique"
     end
 
     test "a unique key is accepted" do
       # The positive half, so the check above is not passing for an unrelated
       # reason. `Author.name` carries `identity :unique_name`.
-      stderr =
+      compiled =
         compile("""
           lua do
             script :body
@@ -382,7 +426,8 @@ defmodule AshHateoas.LuaScriptTest do
           end
         """)
 
-      refute stderr =~ "DslError", "a unique key must be accepted, got: #{stderr}"
+      refute own_output(compiled) =~ "DslError",
+             "a unique key must be accepted, got: #{own_output(compiled)}"
     end
   end
 end

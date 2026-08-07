@@ -272,10 +272,18 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
     end
 
     test "declaring the method silences the warning" do
+      # Scoped to this module's own output. `capture_io(:stderr, …)` captures
+      # the group leader, so under `async: true` a module another file compiles
+      # at the same moment writes into this capture too — and a `refute` reads
+      # a neighbour's warning as a failure here. Latent rather than live (no
+      # other runtime compile emits this phrase today), and one fixture away
+      # from being live.
+      name = "AshHateoasDeclaredMethod#{System.unique_integer([:positive])}"
+
       stderr =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
           Code.compile_string("""
-          defmodule AshHateoasDeclaredMethod#{System.unique_integer([:positive])} do
+          defmodule #{name} do
             use Ash.Resource,
               domain: nil,
               data_layer: Ash.DataLayer.Ets,
@@ -303,8 +311,14 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
           """)
         end)
 
-      refute stderr =~ "by assumption",
-             "declaring the method must silence it, got: #{stderr}"
+      own =
+        stderr
+        |> String.split("\n")
+        |> Enum.filter(&String.contains?(&1, name))
+        |> Enum.join("\n")
+
+      refute own =~ "by assumption",
+             "declaring the method must silence it, got: #{own}"
     end
   end
 
