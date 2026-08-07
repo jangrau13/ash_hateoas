@@ -684,10 +684,12 @@ defmodule AshHateoas.Hydra.Ontology do
     }
   end
 
+  # Shared with every other emitter path — see
+  # `AshHateoas.Resource.Info.public_attributes/1`. Declaring a property for a
+  # generated foreign key would put a second, weaker statement of an edge in
+  # the ontology beside the object property that already ranges on the target.
   defp public_attributes(resource) do
-    Ash.Resource.Info.public_attributes(resource)
-  rescue
-    _ -> []
+    AshHateoas.Resource.Info.public_attributes(resource)
   end
 
   defp put_unless_nil(map, _key, nil), do: map

@@ -1044,9 +1044,12 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
+  # A generated foreign key is excluded here as it is from the documentation —
+  # the node and the class it claims to be an instance of must agree about what
+  # properties exist. See `AshHateoas.Resource.Info.public_attributes/1`.
   defp attributes(record, resource, opts) do
     resource
-    |> Ash.Resource.Info.public_attributes()
+    |> AshHateoas.Resource.Info.public_attributes()
     |> Map.new(fn attribute ->
       value = Map.get(record, attribute.name)
       {to_string(attribute.name), attribute_value(attribute, value, opts)}

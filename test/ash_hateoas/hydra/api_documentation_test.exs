@@ -285,7 +285,7 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     refute Map.has_key?(link, "ah:targetKind")
   end
 
-  test "the raw foreign-key attribute stays alongside the link" do
+  test "the link replaces the raw foreign key rather than joining it" do
     doc = ApiDocumentation.build([AshHateoas.Test.Domain])
 
     comment =
@@ -296,10 +296,14 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
 
     titles = Enum.map(comment["hydra:supportedProperty"], & &1["hydra:title"])
 
-    # The link is added, not substituted: `document_id` is a real writable
-    # attribute a client still needs in order to set the relationship.
-    assert "document_id" in titles
+    # This asserted the opposite until the write path caught up, on the reading
+    # that `document_id` was "a real writable attribute a client still needs in
+    # order to set the relationship". It is not: the create and update inputs
+    # advertise `document`, and `AshHateoas.Hydra.LinkInput` resolves an IRI or
+    # a declared identity back to the key. So the key was the one shape the
+    # write path would refuse, published as though it were the way in.
     assert "document" in titles
+    refute "document_id" in titles
   end
 
   describe "ah:action" do

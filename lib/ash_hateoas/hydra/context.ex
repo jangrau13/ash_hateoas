@@ -200,7 +200,7 @@ defmodule AshHateoas.Hydra.Context do
   # documentation advertises for it; everything else binds to ours.
   defp attribute_terms(resource, type, semantic) do
     resource
-    |> Ash.Resource.Info.public_attributes()
+    |> AshHateoas.Resource.Info.public_attributes()
     |> Map.new(fn attribute ->
       {to_string(attribute.name),
        Map.get(semantic, attribute.name) || property_iri(type, attribute.name)}

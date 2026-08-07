@@ -226,6 +226,25 @@ with cycles degrading to a plain reference. The target's own terms travel with
 it as a scoped `@context`, so a record expands to the same triples however it
 was reached.
 
+**The key backing a relationship is not published.** `belongs_to :author,
+Person, public?: true` makes Ash define an `author_id` attribute that
+*inherits* the relationship's `public?` — so nobody chose to publish it, and
+a node carrying both would state one edge twice. The link is the description;
+the key is storage:
+
+```json
+{"@id": "/comments/3", "author": {"@id": "/people/7"}}   // ✅
+{"@id": "/comments/3", "author_id": "7", "author": {…}}  // ❌ two spellings
+```
+
+They are not equally usable either. `author` is followable and resolvable by a
+declared identity, while `author_id` is a bare id — and it is the one shape the
+write path *refuses*, so advertising it points a client at a dead end.
+
+An attribute the domain declared **in its own right** stays, whatever it is
+called: the rule reads the relationship (a `belongs_to` that defines its own
+attribute owns that key), never the `_id` suffix.
+
 ### A to-many is a collection
 
 A to-many link is a `hydra:Collection` — **not a bare array**. `hydra:member` is

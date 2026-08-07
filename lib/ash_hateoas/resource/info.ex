@@ -308,6 +308,65 @@ defmodule AshHateoas.Resource.Info do
   def extension?(_resource), do: false
 
   @doc """
+  A resource's public attributes, without the foreign keys its own public
+  `belongs_to` relationships generated.
+
+  **A relationship is described by its URI-valued property; the key backing it
+  is not part of the API surface.** `belongs_to :author, Person, public?: true`
+  makes Ash define an `author_id` attribute whose `public?` is *inherited from
+  the relationship*, so nobody chose to publish it — every path reading
+  `Ash.Resource.Info.public_attributes/1` picked it up and the wire carried
+  Ash's storage mechanism beside the link stating the same edge.
+
+  The two spellings are not equally usable. `author` is followable and
+  resolvable by a declared identity; `author_id` is a bare id a client can only
+  hand back. And it is the one shape the **write** path does not take —
+  `AshHateoas.Hydra.LinkInput` resolves `{"author": {"@id": …}}` — so
+  advertising the key tells a client to send something that will be refused.
+
+  ## Read from the relationship, never from the name
+
+  A key stays when the domain declared that attribute **in its own right**: it
+  is then a real part of the surface, whatever it is called. So the signal is
+  the relationship — a `belongs_to` that defines its own attribute owns that
+  key — and never the `_id` suffix, which would also delete an ordinary
+  attribute that happens to be named that way.
+
+  Every path that renders a resource's own properties reads this rather than
+  `Ash.Resource.Info.public_attributes/1`, so the documentation, the ontology,
+  the node context and the served node cannot disagree about what a resource
+  has.
+  """
+  @spec public_attributes(Ash.Resource.t()) :: [struct()]
+  def public_attributes(resource) do
+    keys = generated_foreign_keys(resource)
+
+    resource
+    |> Ash.Resource.Info.public_attributes()
+    |> Enum.reject(&(&1.name in keys))
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  The attribute names Ash generated to back this resource's public `belongs_to`
+  relationships.
+
+  `define_attribute?` defaults to true, so a relationship that says nothing
+  still owns its key; one declared `define_attribute?: false` points at an
+  attribute the domain wrote itself, which stays.
+  """
+  @spec generated_foreign_keys(Ash.Resource.t()) :: [atom()]
+  def generated_foreign_keys(resource) do
+    resource
+    |> Ash.Resource.Info.public_relationships()
+    |> Enum.filter(&(&1.type == :belongs_to and Map.get(&1, :define_attribute?, true)))
+    |> Enum.map(& &1.source_attribute)
+  rescue
+    _ -> []
+  end
+
+  @doc """
   The options `AshHateoas.affordances/3` should be called with for this
   resource — its exclusions and overrides, ready to merge with caller options.
   """

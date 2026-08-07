@@ -544,11 +544,12 @@ defmodule AshHateoas.Hydra.ApiDocumentation do
   defp method(_route, %{type: :destroy}), do: :delete
   defp method(_route, _action), do: :post
 
+  # Not `Ash.Resource.Info.public_attributes/1`: that includes the foreign keys
+  # a public `belongs_to` generated, which the link already describes. See
+  # `AshHateoas.Resource.Info.public_attributes/1` for why the key is not
+  # surface and why the signal is the relationship rather than the name.
   defp public_attributes(resource) do
-    resource
-    |> Ash.Resource.Info.public_attributes()
-  rescue
-    _ -> []
+    AshHateoas.Resource.Info.public_attributes(resource)
   end
 
   defp routes(resource) do

@@ -53,6 +53,16 @@ served natively as a Hydra / JSON-LD API.
   routes that serve a GET, so the URLs the API issues are the URLs it accepts.
   Foreign keys do not appear in `hydra:expects` at all — a relationship input
   is advertised as its link property, typed `sh:nodeKind: sh:IRI`.
+- **Nor do they appear on the read surface.** `belongs_to :author, Person,
+  public?: true` makes Ash define an `author_id` attribute that *inherits* the
+  relationship's `public?`, so every path reading `public_attributes/1` picked
+  it up and published Ash's storage beside the link describing the same edge —
+  two spellings of one fact, and the one a client cannot use, since the write
+  path takes the link. Excluded now from the documentation, the ontology, the
+  node context and the served node alike, through one shared
+  `AshHateoas.Resource.Info.public_attributes/1` so they cannot disagree.
+  An attribute the domain declared **in its own right** stays: the signal is
+  the relationship's `define_attribute?`, never the `_id` suffix.
 - **A to-many is a collection, referenced then expanded.** Its `@id` is the
   relationship's own route (`/articles/7/comments`), so it has an identity that
   resolves to exactly that collection. Unloaded, it carries its members as bare
