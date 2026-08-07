@@ -554,7 +554,10 @@ defmodule AshHateoas.Hydra.Plug do
 
         safe(fn ->
           record
-          |> Ash.Changeset.for_update(action, Map.merge(input, keys), actor: actor, tenant: tenant)
+          |> Ash.Changeset.for_update(action, Map.merge(input, keys),
+            actor: actor,
+            tenant: tenant
+          )
           |> LinkInput.manage(managed)
           |> Ash.update(authorize?: true)
         end)
@@ -838,7 +841,15 @@ defmodule AshHateoas.Hydra.Plug do
 
   # A `belongs_to` reference comes from the local foreign key — no read of the
   # target. A missing or unselected key yields no property: absent, not null.
-  defp unloaded_link(record, _resource, %{type: :belongs_to} = relationship, _id, _actor, _tenant, opts) do
+  defp unloaded_link(
+         record,
+         _resource,
+         %{type: :belongs_to} = relationship,
+         _id,
+         _actor,
+         _tenant,
+         opts
+       ) do
     case Map.get(record, relationship.source_attribute) do
       key when is_binary(key) or is_integer(key) ->
         member_ref(relationship.destination, key, opts)
@@ -850,7 +861,8 @@ defmodule AshHateoas.Hydra.Plug do
 
   # A `has_one` keeps its key on the destination, so there is nothing local to
   # reference and it appears only when loaded.
-  defp unloaded_link(_record, _resource, %{cardinality: :one}, _id, _actor, _tenant, _opts), do: nil
+  defp unloaded_link(_record, _resource, %{cardinality: :one}, _id, _actor, _tenant, _opts),
+    do: nil
 
   # An unloaded to-many renders **the way its collection URL does**: a bounded
   # page of members, the true total, its own `@id`, and a `hydra:view` to page
@@ -1527,7 +1539,8 @@ defmodule AshHateoas.Hydra.Plug do
   # A document's `@context`, with the base every relative `@id` in it resolves
   # against. Every send site goes through here so none can drift — an `@id` is
   # only as good as the base it resolves under.
-  defp document_context(conn, opts), do: Context.put_base(Context.context(), document_base(conn, opts))
+  defp document_context(conn, opts),
+    do: Context.put_base(Context.context(), document_base(conn, opts))
 
   defp document_context(conn, opts, resource),
     do: Context.put_base(Context.context_for(resource), document_base(conn, opts))
@@ -1559,7 +1572,10 @@ defmodule AshHateoas.Hydra.Plug do
   defp send_json(conn, status, body, opts \\ []) do
     conn
     |> Plug.Conn.put_resp_content_type(Context.content_type(), nil)
-    |> Plug.Conn.send_resp(status, Jason.encode!(Context.localise(body, vocab_origin(conn, opts))))
+    |> Plug.Conn.send_resp(
+      status,
+      Jason.encode!(Context.localise(body, vocab_origin(conn, opts)))
+    )
     |> Plug.Conn.halt()
   end
 

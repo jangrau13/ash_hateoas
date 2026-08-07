@@ -103,7 +103,9 @@ defmodule AshHateoas.Hydra.FollowableTest do
 
   setup do
     article =
-      Article |> Ash.Changeset.for_create(:create, %{title: "Followed"}) |> Ash.create!(authorize?: false)
+      Article
+      |> Ash.Changeset.for_create(:create, %{title: "Followed"})
+      |> Ash.create!(authorize?: false)
 
     document =
       Document
@@ -188,7 +190,9 @@ defmodule AshHateoas.Hydra.FollowableTest do
   describe "a record with a required link is followable flatly" do
     setup do
       ledger =
-        Ledger |> Ash.Changeset.for_create(:create, %{name: "L"}) |> Ash.create!(authorize?: false)
+        Ledger
+        |> Ash.Changeset.for_create(:create, %{name: "L"})
+        |> Ash.create!(authorize?: false)
 
       entry =
         Entry
@@ -273,5 +277,4 @@ defmodule AshHateoas.Hydra.FollowableTest do
            so an advertised link that 404s is a broken contract.
            """
   end
-
 end

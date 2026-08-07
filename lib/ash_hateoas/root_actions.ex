@@ -209,13 +209,13 @@ defmodule AshHateoas.RootActions do
         unknown_key_errors(element, resource, root, position, kind) ++
           (resource
            |> changeset_errors(authorable(element, resource, root), context)
-        # The owning foreign key is filtered from the *errors*, not merely from
-        # the input. A part declaring `belongs_to :root, allow_nil?: false`
-        # fails its own `allow_nil?` check whenever it is cast standalone —
-        # nothing the author wrote is wrong, and `save/2` supplies the value.
-        # Filtering the input alone leaves the error, which would put an
-        # unfixable problem on every element in the document.
-        |> Enum.reject(fn {field, _message} -> to_string(field) == owner end)
+           # The owning foreign key is filtered from the *errors*, not merely from
+           # the input. A part declaring `belongs_to :root, allow_nil?: false`
+           # fails its own `allow_nil?` check whenever it is cast standalone —
+           # nothing the author wrote is wrong, and `save/2` supplies the value.
+           # Filtering the input alone leaves the error, which would put an
+           # unfixable problem on every element in the document.
+           |> Enum.reject(fn {field, _message} -> to_string(field) == owner end)
            |> Enum.map(fn {field, message} ->
              error_at(position, kind, element, to_string(field), message)
            end))
@@ -479,7 +479,9 @@ defmodule AshHateoas.RootActions do
   destination compiled after the root does not exist yet, and asking it anything
   raises.
   """
-  @spec managed_relationships(Ash.Resource.t() | map()) :: [Ash.Resource.Relationships.relationship()]
+  @spec managed_relationships(Ash.Resource.t() | map()) :: [
+          Ash.Resource.Relationships.relationship()
+        ]
   def managed_relationships(root) do
     relationships =
       root

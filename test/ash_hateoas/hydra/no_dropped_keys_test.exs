@@ -95,13 +95,18 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
     Enum.reject(keys, fn key ->
       local = key |> String.split(":") |> List.last()
 
-      Enum.any?(preds, &(String.ends_with?(&1, "#" <> local) or String.ends_with?(&1, "/" <> local)))
+      Enum.any?(
+        preds,
+        &(String.ends_with?(&1, "#" <> local) or String.ends_with?(&1, "/" <> local))
+      )
     end)
   end
 
   setup do
     article =
-      Article |> Ash.Changeset.for_create(:create, %{title: "T"}) |> Ash.create!(authorize?: false)
+      Article
+      |> Ash.Changeset.for_create(:create, %{title: "T"})
+      |> Ash.create!(authorize?: false)
 
     document =
       Document

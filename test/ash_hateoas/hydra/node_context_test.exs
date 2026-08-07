@@ -70,7 +70,9 @@ defmodule AshHateoas.Hydra.NodeContextTest do
 
   defp article do
     a =
-      Article |> Ash.Changeset.for_create(:create, %{title: "Spec"}) |> Ash.create!(authorize?: false)
+      Article
+      |> Ash.Changeset.for_create(:create, %{title: "Spec"})
+      |> Ash.create!(authorize?: false)
 
     d =
       Document

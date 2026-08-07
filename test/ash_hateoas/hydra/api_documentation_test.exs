@@ -277,7 +277,10 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
     refute Map.has_key?(link["hydra:property"], "sh:class")
 
     declared =
-      Enum.find(doc["@included"], &(&1["@id"] == "https://ash-hateoas.org/vocab#comment/document"))
+      Enum.find(
+        doc["@included"],
+        &(&1["@id"] == "https://ash-hateoas.org/vocab#comment/document")
+      )
 
     assert declared["rdfs:range"] == %{"@id" => "https://ash-hateoas.org/vocab#Document"}
 
@@ -926,7 +929,12 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
 
       assert types != [], "the fixture declares semantic_actions; none reached the wire"
 
-      inferred = ["schema:ReadAction", "schema:CreateAction", "schema:UpdateAction", "schema:DeleteAction"]
+      inferred = [
+        "schema:ReadAction",
+        "schema:CreateAction",
+        "schema:UpdateAction",
+        "schema:DeleteAction"
+      ]
 
       assert Enum.filter(types, &(&1 in inferred)) == [],
              "a method-inferred subtype reached the wire: #{inspect(types)}"

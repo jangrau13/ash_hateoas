@@ -19,9 +19,9 @@ defmodule AshHateoas.Test.Observed do
   end
 
   hateoas do
-    observable :resource
-    observable :collection
-    observable :name
+    observable(:resource)
+    observable(:collection)
+    observable(:name)
     unrouted :retitle
   end
 

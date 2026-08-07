@@ -364,7 +364,9 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "the template is on the addressed node, not on every member" do
       # Repeating it on each member of each page would be noise: a member is one
       # URL away from the node that addresses it.
-      Article |> Ash.Changeset.for_create(:create, %{title: "M"}) |> Ash.create!(authorize?: false)
+      Article
+      |> Ash.Changeset.for_create(:create, %{title: "M"})
+      |> Ash.create!(authorize?: false)
 
       member = hd(body(get("/articles", @admin))["hydra:member"])
 

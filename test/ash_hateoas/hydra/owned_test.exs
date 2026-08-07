@@ -65,7 +65,9 @@ defmodule AshHateoas.Hydra.OwnedTest do
 
   setup do
     ledger =
-      Ledger |> Ash.Changeset.for_create(:create, %{name: "Mine"}) |> Ash.create!(authorize?: false)
+      Ledger
+      |> Ash.Changeset.for_create(:create, %{name: "Mine"})
+      |> Ash.create!(authorize?: false)
 
     other =
       Ledger

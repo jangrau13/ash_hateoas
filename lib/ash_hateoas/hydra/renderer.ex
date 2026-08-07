@@ -472,9 +472,14 @@ defmodule AshHateoas.Hydra.Renderer do
     map = Map.put(map, "rdfs:range", %{"@id" => "jsonschema:ArraySchema"})
 
     case constraints[:element_classes] do
-      [iri] -> Map.put(map, "sh:class", %{"@id" => iri})
-      [_ | _] = iris -> Map.put(map, "sh:or", %{"@list" => Enum.map(iris, &%{"sh:class" => %{"@id" => &1}})})
-      _ -> map
+      [iri] ->
+        Map.put(map, "sh:class", %{"@id" => iri})
+
+      [_ | _] = iris ->
+        Map.put(map, "sh:or", %{"@list" => Enum.map(iris, &%{"sh:class" => %{"@id" => &1}})})
+
+      _ ->
+        map
     end
   end
 

@@ -453,7 +453,11 @@ defmodule AshHateoas.Hydra.LinkInput do
     opts = [type: :append_and_remove]
 
     if identity?(value) do
-      Keyword.put(opts, :use_identities, identity_names(relationship.destination) ++ [:_primary_key])
+      Keyword.put(
+        opts,
+        :use_identities,
+        identity_names(relationship.destination) ++ [:_primary_key]
+      )
     else
       opts
     end

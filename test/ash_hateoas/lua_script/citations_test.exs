@@ -36,7 +36,10 @@ defmodule AshHateoas.LuaScript.CitationsTest do
   defp formula!(body, citations) do
     formula =
       Formula
-      |> Ash.Changeset.for_create(:create, %{name: "f#{System.unique_integer([:positive])}", body: body})
+      |> Ash.Changeset.for_create(:create, %{
+        name: "f#{System.unique_integer([:positive])}",
+        body: body
+      })
       |> Ash.create!(authorize?: false)
 
     for {author, position} <- Enum.with_index(citations) do

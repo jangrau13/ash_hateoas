@@ -187,7 +187,9 @@ defmodule AshHateoas.Descriptor do
     |> Map.get(:constraints, [])
     |> List.wrap()
     |> Enum.reduce(%{}, fn
-      {:one_of, values}, acc -> Map.put(acc, :enum, values)
+      {:one_of, values}, acc ->
+        Map.put(acc, :enum, values)
+
       {:types, types}, acc ->
         union_types =
           Enum.map(types, fn {name, config} ->
@@ -195,16 +197,30 @@ defmodule AshHateoas.Descriptor do
           end)
 
         Map.put(acc, :union_types, union_types)
-      {:min, value}, acc -> Map.put(acc, :min, value)
-      {:max, value}, acc -> Map.put(acc, :max, value)
-      {:min_length, value}, acc -> Map.put(acc, :min_length, value)
-      {:max_length, value}, acc -> Map.put(acc, :max_length, value)
-      {:match, %Regex{} = regex}, acc -> Map.put(acc, :pattern, Regex.source(regex))
+
+      {:min, value}, acc ->
+        Map.put(acc, :min, value)
+
+      {:max, value}, acc ->
+        Map.put(acc, :max, value)
+
+      {:min_length, value}, acc ->
+        Map.put(acc, :min_length, value)
+
+      {:max_length, value}, acc ->
+        Map.put(acc, :max_length, value)
+
+      {:match, %Regex{} = regex}, acc ->
+        Map.put(acc, :pattern, Regex.source(regex))
+
       # The classes an array's elements may be. Not an Ash constraint Ash knows
       # about — it is carried on the argument so the wire can name what a
       # document holds instead of stopping at "an array".
-      {:element_classes, iris}, acc -> Map.put(acc, :element_classes, iris)
-      _other, acc -> acc
+      {:element_classes, iris}, acc ->
+        Map.put(acc, :element_classes, iris)
+
+      _other, acc ->
+        acc
     end)
   end
 end
