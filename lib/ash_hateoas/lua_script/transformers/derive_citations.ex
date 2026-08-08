@@ -108,13 +108,21 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
   end
 
   defp body(module, binds, dsl_state) do
+    # **Two lists, deliberately.** A bind's *name* is what a script writes and
+    # what `kind` records; its *column* is storage, named after the resource. The
+    # two were one list, so a subscript chosen for readability became a database
+    # column name — see the `belongs_to` below.
     kinds = Enum.map(binds, & &1.name)
+    columns = Enum.map(binds, &column_for(&1.resource))
 
     references =
       for %{name: name} <- binds do
         # A *cited* record going away leaves the citation with its name and no
         # target, which is a state a script may be in. It is not a state a write
         # may create — the write refuses a citation naming nothing.
+        #
+        # Named by *relationship*, which is the bind's name: `references` is an
+        # Ash-level declaration, not a column list.
         quote do: reference(unquote(name), on_delete: :nilify)
       end
 
@@ -124,7 +132,20 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
         # only public attributes, so a non-public `belongs_to` generates a
         # column no create can set — every citation write refused, for a reason
         # that reads as a missing input rather than a missing declaration.
-        quote do: belongs_to(unquote(name), unquote(resource), public?: true)
+        #
+        # **The column is named after the resource, not the bind.** A bind's
+        # name is the Lua subscript an author types — a spelling, chosen to read
+        # well inside a formula — while the column is storage. Left to default
+        # (`<name>_id`) the two were one thing, so renaming `variable` to `var`
+        # for readability silently renamed a database column and broke every
+        # caller deriving it from the element's kind. Stated explicitly, a
+        # subscript rename touches nothing but text.
+        quote do
+          belongs_to(unquote(name), unquote(resource),
+            public?: true,
+            source_attribute: unquote(column_for(resource))
+          )
+        end
       end
 
     quote do
@@ -141,9 +162,14 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
       Generated from that resource's `bind` declarations by
       `AshHateoas.LuaScript.Transformers.DeriveCitations` — one nullable
       relationship per bind, and a check constraint that at most one is set.
+
+      Each relationship carries the **bind's** name, since that is what a script
+      writes; its column carries the **resource's**, since that is storage. So
+      `bind :var, Variable` yields the relationship `var` over the column
+      `variable_id`, and renaming the subscript does not move the column.
       """
 
-      unquote(data_layer_block(module, kinds, references, dsl_state))
+      unquote(data_layer_block(module, columns, references, dsl_state))
 
       hateoas do
         warn_on_missing_authorizers?(false)
@@ -198,7 +224,7 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
   #
   # Stated rather than assumed: a `postgres` block on an ETS resource is not a
   # no-op, it fails to compile.
-  defp data_layer_block(module, kinds, references, dsl_state) do
+  defp data_layer_block(module, columns, references, dsl_state) do
     if Transformer.get_persisted(dsl_state, :data_layer) == AshPostgres.DataLayer do
       quote do
         postgres do
@@ -214,8 +240,8 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
           end
 
           check_constraints do
-            check_constraint(unquote(Enum.map(kinds, &:"#{&1}_id")),
-              check: unquote(at_most_one(kinds)),
+            check_constraint(unquote(columns),
+              check: unquote(at_most_one(columns)),
               name: unquote("#{table(module, dsl_state)}_one_target"),
               message: "a citation names at most one thing"
             )
@@ -242,9 +268,20 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
     base <> "_citation"
   end
 
-  defp at_most_one(kinds) do
-    kinds
-    |> Enum.map_join(" + ", &"(#{&1}_id IS NOT NULL)::int")
+  defp at_most_one(columns) do
+    columns
+    |> Enum.map_join(" + ", &"(#{&1} IS NOT NULL)::int")
     |> Kernel.<>(" <= 1")
+  end
+
+  # The column a citation to this resource is stored in.
+  #
+  # Named after the **resource**, so it is stable under a rename of the Lua
+  # subscript: `bind :var, Variable` and `bind :variable, Variable` both store
+  # `variable_id`. That separation is the whole point — a subscript is a
+  # spelling an author reads, a column is storage, and letting one name the
+  # other made a readability change into a migration.
+  defp column_for(resource) do
+    :"#{resource |> Module.split() |> List.last() |> Macro.underscore()}_id"
   end
 end

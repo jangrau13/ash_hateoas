@@ -211,7 +211,7 @@ defmodule AshHateoas.LuaScriptTest do
       # generates a column no create can set — every citation write refused,
       # reported as a missing input rather than a missing declaration. Found by
       # writing one: the resource looked correct in every other respect.
-      for name <- [:script, :author] do
+      for name <- [:script, :author, :pub] do
         assert %{public?: true} = Ash.Resource.Info.relationship(Citation, name),
                "#{name} must be public, or its foreign key cannot be written"
       end
@@ -220,7 +220,28 @@ defmodule AshHateoas.LuaScriptTest do
     test "kind is constrained to exactly the declared binds" do
       kind = Ash.Resource.Info.attribute(Citation, :kind)
 
-      assert kind.constraints[:one_of] == [:author]
+      # The **bind names**, which is what a script writes — not the resources
+      # they point at. `pub` is bound to `Publisher`, so this is where the two
+      # spellings visibly part company.
+      assert kind.constraints[:one_of] == [:author, :pub]
+    end
+
+    test "a citation's column is named after the resource, not the bind" do
+      # **The separation this fixture exists for.** A bind's name is the Lua
+      # subscript an author types, chosen to read well inside a formula; the
+      # column is storage. Deriving one from the other made renaming a subscript
+      # for readability into a database migration — and broke every caller that
+      # had derived the same column from its own notion of the record's kind.
+      #
+      # `pub` is bound to `Publisher`, so a column named after the bind would be
+      # `pub_id`. It must be `publisher_id`.
+      assert Ash.Resource.Info.relationship(Citation, :pub).source_attribute ==
+               :publisher_id
+
+      # And the attribute really exists under that name, rather than the
+      # relationship merely claiming it.
+      assert Ash.Resource.Info.attribute(Citation, :publisher_id)
+      refute Ash.Resource.Info.attribute(Citation, :pub_id)
     end
 
     test "the name outlives the record it named" do

@@ -72,9 +72,25 @@ defmodule AshHateoas.LuaScript.Citations do
 
       citation ->
         citation
-        |> Ash.Query.filter_input(%{:"#{bind}_id" => id})
+        |> Ash.Query.filter_input(%{column_for(script_resource, bind) => id})
         |> Ash.read!(authorize?: false)
         |> length()
+    end
+  end
+
+  # The foreign key column a bind's citations live in.
+  #
+  # **Not `<bind>_id`.** A bind's name is the Lua subscript an author types and
+  # is chosen to read well in a formula; the column is named after the resource,
+  # so the two differ whenever a domain picks a shorter subscript. Deriving it
+  # from the bind is what made renaming `variable` to `var` a schema change.
+  defp column_for(script_resource, bind) do
+    case Info.bind_map(script_resource)[bind] do
+      nil ->
+        :"#{bind}_id"
+
+      %{resource: resource} ->
+        :"#{resource |> Module.split() |> List.last() |> Macro.underscore()}_id"
     end
   end
 
@@ -108,20 +124,22 @@ defmodule AshHateoas.LuaScript.Citations do
         0
 
       citation_resource ->
+        column = column_for(script_resource, bind)
+
         citation_resource
-        |> Ash.Query.filter_input(%{:"#{bind}_id" => id})
+        |> Ash.Query.filter_input(%{column => id})
         |> Ash.Query.load(:script)
         |> Ash.read!(authorize?: false)
-        |> Enum.map(&mark(&1, bind, suffix, script, update))
+        |> Enum.map(&mark(&1, bind, column, suffix, script, update))
         |> length()
     end
   end
 
-  defp mark(citation, bind, suffix, script, update) do
+  defp mark(citation, bind, column, suffix, script, update) do
     marked = "#{citation.name}#{suffix}"
 
     citation
-    |> Ash.Changeset.for_update(:update, %{:name => marked, :"#{bind}_id" => nil})
+    |> Ash.Changeset.for_update(:update, %{:name => marked, column => nil})
     |> Ash.update!(authorize?: false)
 
     rewrite(citation, bind, marked, script, update)

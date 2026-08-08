@@ -145,6 +145,13 @@ defmodule AshHateoas.LuaScript do
   stored, a column with no bind is a foreign key to something no script can
   name, and neither shows until a write fails.
 
+  **A relationship is named after its bind; its column after the resource.** A
+  bind's name is the subscript an author types and may be shortened to read well
+  in a formula — `bind :var, Variable` — while `variable_id` is where the row
+  lives. Deriving the column from the name made those one thing, so a
+  readability change became a migration and broke every caller that had derived
+  the same column from the record's kind.
+
   The domain still lists it in its `resources` block — otherwise the data layer
   never sees it and no migration is generated. See
   `AshHateoas.LuaScript.Transformers.DeriveCitations`.
