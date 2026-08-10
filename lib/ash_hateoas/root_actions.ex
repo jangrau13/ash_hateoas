@@ -461,7 +461,31 @@ defmodule AshHateoas.RootActions do
     accepted_keys_for(resource, [:create, :update])
   end
 
+  # Memoised per process, because the answer is a property of the *resource*
+  # and this is asked once per element — three times, from three callers. It
+  # reads two actions and the relationship list, none of which can change while
+  # a document is being validated, so recomputing it 300,000 times for a
+  # 100,000-element document is pure waste against a budget that exists to keep
+  # validation off the per-element path.
+  #
+  # The process dictionary rather than a cross-request cache: a document is
+  # validated in one process, and a resource recompiled between requests must
+  # not be answered from a stale table.
   defp accepted_keys_for(resource, types) do
+    key = {__MODULE__, :accepted_keys, resource, types}
+
+    case Process.get(key) do
+      nil ->
+        computed = compute_accepted_keys(resource, types)
+        Process.put(key, computed)
+        computed
+
+      cached ->
+        cached
+    end
+  end
+
+  defp compute_accepted_keys(resource, types) do
     keys = Enum.flat_map(types, &action_keys(resource, &1))
 
     Enum.uniq(keys ++ link_names(resource, keys))
