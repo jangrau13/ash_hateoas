@@ -561,6 +561,50 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       assert "https://ash-hateoas.org/vocab#Technique" in iris
     end
 
+    test "the root's own class is named too, because a save accepts it" do
+      # A document carries the root's attributes as an element whose kind is the
+      # root's type — there is no other route for them, since the root has no
+      # update affordance of its own. `AshHateoas.RootActions` accepts that
+      # element, so omitting the class here would advertise a set smaller than
+      # the one a save takes, and a client comparing the two would conclude that
+      # sending the root is an error.
+      iris = "save" |> document_property() |> constrained_classes()
+
+      assert "https://ash-hateoas.org/vocab#Recipe" in iris
+    end
+
+    test "every kind a save accepts is advertised, and no others" do
+      # The property that matters, stated as an equality rather than a list of
+      # IRIs: the two sets are computed from different code — one from the
+      # rendered wire, one from the resource — so they can only agree if the
+      # advertisement tracks the acceptance. Adding an element relationship or
+      # changing the root's type keeps this passing with no edit here; letting
+      # the two drift apart fails it.
+      advertised =
+        "save"
+        |> document_property()
+        |> constrained_classes()
+        |> Enum.map(&(&1 |> String.split("#") |> List.last()))
+        |> MapSet.new()
+
+      accepted =
+        AshHateoas.Test.Recipe
+        |> AshHateoas.RootActions.managed_relationships()
+        |> Enum.map(& &1.destination)
+        |> Enum.map(&AshHateoas.Resource.Info.type/1)
+        |> then(&[AshHateoas.Resource.Info.type(AshHateoas.Test.Recipe) | &1])
+        |> Enum.reject(&is_nil/1)
+        |> Enum.map(&Macro.camelize/1)
+        |> MapSet.new()
+
+      assert MapSet.equal?(advertised, accepted),
+             """
+             the advertised element classes and the kinds a save accepts have drifted.
+               only advertised: #{inspect(MapSet.difference(advertised, accepted) |> MapSet.to_list())}
+               only accepted:   #{inspect(MapSet.difference(accepted, advertised) |> MapSet.to_list())}
+             """
+    end
+
     test "a class states the type a document must name it by" do
       # **The class IRI is not that name, and cannot be turned back into it.**
       # `Macro.camelize` is lossy — `mixing_bowl` becomes `MixingBowl`, and
@@ -627,12 +671,14 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
 
     test "it names what a save accepts, not every relationship" do
       # Describing a different set would advertise a document the API rejects.
+      # The managed destinations, plus the root itself — which a save also
+      # accepts, and which is the one class here that is not a relationship.
       managed =
         AshHateoas.Test.Recipe
         |> AshHateoas.RootActions.managed_relationships()
         |> Enum.map(& &1.destination)
 
-      assert length(constrained_classes(document_property("save"))) == length(managed)
+      assert length(constrained_classes(document_property("save"))) == length(managed) + 1
     end
 
     test "a non-public relationship's class is not named" do

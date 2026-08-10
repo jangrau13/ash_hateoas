@@ -63,22 +63,20 @@ defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
 
   ## On the `document` argument's type
 
-  `{:array, :map}` describes the argument as an array of *something*:
-  `AshHateoas.TypeMapper.to_wire/1` has no inner type to report. A client that
-  derives the document's shape from the same API documentation does not need
-  one — it already knows which classes are elements — but a client reading only
-  the wire cannot construct a call from this description.
+  `{:array, :map}` says only "an array" — `AshHateoas.TypeMapper.to_wire/1` has
+  no inner type to report. The shape is stated instead by *linking*:
+  `element_classes/1` puts every class a document may hold on the argument as
+  `sh:class`, and each of those classes already publishes its own writable
+  properties under `hydra:expects`. So the description is complete, one link
+  away, and there is nothing here for an inner type to add.
 
-  Typing it as a generated tree of Ash embedded *types* would fix that, since
-  such a type has real attributes for `AshHateoas.Descriptor` to walk. (Ash's
-  embedded type is a value stored inside an attribute — it has no identity and
-  no URL, so it is not a resource anything links to.) It is deliberately not
-  done here: an embedded type currently maps to `"string"` in `TypeMapper`, so
-  the wire description would be no better until that and `Descriptor`'s
-  recursion land. When they do, this one line changes
-  and every aggregate root picks it up on recompile.
+  Linking is not a lesser substitute for inlining — it is the reason this works
+  at all. A class describes itself once, wherever it is defined; inlining a copy
+  onto the argument would restate every field and let the two drift. It is also
+  what keeps the transformer safe: see `element_classes/1` on why asking a
+  destination for its attributes cannot be done here.
 
-  Note that the *validation* does not depend on the choice.
+  Note that the *validation* does not depend on the argument's type.
   `AshHateoas.RootActions` casts each element individually, which reports every
   error in one pass; relying on an array cast would stop at the first bad
   element.
@@ -235,18 +233,40 @@ defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
   # Read from the relationships a save actually manages, so the wire describes
   # the document the API will take rather than a different one.
   #
+  # The root's own class is one of them. `AshHateoas.RootActions` accepts an
+  # element whose kind is the root's type — that is how a document carries the
+  # root's attributes, which reach the server nowhere else — so leaving it out
+  # advertises a smaller set than the one a save takes. A client comparing the
+  # two would conclude, wrongly, that sending the root is an error.
+  #
+  # It comes last because it is not an element in the same sense: the others
+  # are things a document may hold many of, this is the one it is *about*.
+  #
   # Safe in a transformer because it reads cardinality and the destination
   # *module name* only. Asking a destination for its attributes would raise
   # whenever that module compiles after this one, which is the trap every
   # earlier attempt at typing this argument fell into — and the reason each
   # element class describes itself rather than being inlined here.
   defp element_classes(dsl_state) do
-    dsl_state
-    |> AshHateoas.RootActions.managed_relationships()
-    |> Enum.map(& &1.destination)
-    |> Enum.map(&class_iri/1)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
+    destinations =
+      dsl_state
+      |> AshHateoas.RootActions.managed_relationships()
+      |> Enum.map(& &1.destination)
+      |> Enum.map(&class_iri/1)
+
+    Enum.uniq(Enum.reject(destinations ++ [root_class_iri(dsl_state)], &is_nil/1))
+  end
+
+  # The root names its own class from the DSL state, which carries the module
+  # even mid-compile — so unlike a destination, this one cannot be unreadable
+  # for ordering reasons.
+  defp root_class_iri(dsl_state) do
+    case AshHateoas.Resource.Info.type(dsl_state) do
+      nil -> nil
+      type -> AshHateoas.Hydra.Context.class_iri(to_string(type))
+    end
+  rescue
+    _ -> nil
   end
 
   defp class_iri(destination) do
