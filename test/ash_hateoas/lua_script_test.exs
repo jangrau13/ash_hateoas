@@ -11,7 +11,7 @@ defmodule AshHateoas.LuaScriptTest do
 
   alias AshHateoas.Lua.{Parser, Walk}
   alias AshHateoas.LuaScript.Info
-  alias AshHateoas.Test.Scripted.{Author, Formula, Function}
+  alias AshHateoas.Test.Scripted.{Author, Formula, Function, Publisher}
 
   defp ast!(source) do
     {:ok, ast} = Parser.parse(source)
@@ -34,7 +34,16 @@ defmodule AshHateoas.LuaScriptTest do
     end
 
     test "binds name their resource and key" do
-      assert [%{name: :author, resource: Author, key: :name}] = Info.binds(Formula)
+      # **Both**, and the second is the interesting one: `:pub` is bound to
+      # `Publisher`, so its name and its resource disagree on purpose. A
+      # fixture whose bind names all match their resources cannot tell a
+      # consumer reading the *name* apart from one reading the *resource* —
+      # they agree by coincidence — which is how a citation column came to be
+      # built from the bind and only broke when a bind was shortened.
+      assert [
+               %{name: :author, resource: Author, key: :name},
+               %{name: :pub, resource: Publisher, key: :name}
+             ] = Info.binds(Formula)
     end
 
     test "the callable functions are a resource, not a list" do
