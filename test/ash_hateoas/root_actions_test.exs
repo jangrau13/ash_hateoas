@@ -10,6 +10,8 @@ defmodule AshHateoas.RootActionsTest do
 
   use ExUnit.Case, async: false
 
+  require Ash.Query
+
   alias AshHateoas.Test.{Ingredient, Recipe, Step, Technique}
 
   setup do
@@ -364,6 +366,83 @@ defmodule AshHateoas.RootActionsTest do
 
       assert result["valid?"]
       refute Enum.any?(result["errors"], &is_nil(&1["field"]))
+    end
+
+    test "an element's own id is not read as naming another element" do
+      # A rendered element carries its `id` — that is how it was read back. It
+      # is an attribute the class *has* and does not *accept*, so judging
+      # references by the accept list alone reports it as a dangling reference
+      # on every element in the document, which the author cannot act on.
+      #
+      # "Writable" and "is a reference" are separate questions. The unwritable
+      # half is already handled by dropping the key before casting.
+      recipe = recipe!()
+
+      result =
+        validate([
+          %{"kind" => "ingredient", "id" => Ash.UUID.generate(), "name" => "Sugar", "unit" => "g"},
+          %{"kind" => "recipe", "id" => recipe.id, "title" => "Sourdough"}
+        ])
+
+      assert result["valid?"], inspect(result["errors"])
+      refute "id" in fields(result)
+    end
+
+    test "a create-only field is carried, and the domain still governs it" do
+      # `manage_opts/2` sets `on_no_match: :create, on_match: :update`, so which
+      # action an element meets is decided at runtime by whether it already
+      # exists. `Ingredient.origin` is accepted on create and not on update —
+      # set when the ingredient is added, immutable after.
+      #
+      # So the keys an element may *carry* are the union of both actions. That
+      # is safe because `manage_relationship` builds each changeset for the
+      # action it actually took and drops what that action does not accept:
+      # measured, a second save carrying `origin: "Brazil"` leaves the stored
+      # value at "Peru" rather than failing. Passing the same key to a bare
+      # `for_update/4` raises `NoSuchInput` — which is why the *root*, cast
+      # directly rather than managed, is filtered to `update` alone.
+      recipe = recipe!()
+
+      assert {:ok, created} =
+               save(
+                 [%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g", "origin" => "Peru"}],
+                 %{id: recipe.id}
+               )
+
+      assert created["valid?"], inspect(created["errors"])
+
+      assert {:ok, updated} =
+               save(
+                 [
+                   %{
+                     "kind" => "ingredient",
+                     "name" => "Sugar",
+                     "unit" => "g",
+                     "origin" => "Brazil"
+                   }
+                 ],
+                 %{id: recipe.id}
+               )
+
+      assert updated["valid?"], inspect(updated["errors"])
+
+      ingredient =
+        Ingredient
+        |> Ash.Query.filter(name == "Sugar")
+        |> Ash.read_one!(authorize?: false)
+
+      assert ingredient.origin == "Peru", "an update must not write a create-only field"
+    end
+
+    test "a key no action accepts is still reported" do
+      # The tightened list must not become a blanket exemption: a key that is
+      # neither accepted nor an attribute is still read as naming an element,
+      # which is what makes a typo in a reference findable.
+      result =
+        validate([%{"kind" => "step", "name" => "Mix", "uses" => "Nonexistent"}])
+
+      refute result["valid?"]
+      assert Enum.any?(result["errors"], &(&1["message"] =~ "no element named"))
     end
   end
 

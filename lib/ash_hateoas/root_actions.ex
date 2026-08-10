@@ -358,16 +358,50 @@ defmodule AshHateoas.RootActions do
     |> Map.new()
   end
 
+  # What a resource will actually take, asked of the actions that will run.
+  #
+  # This used to be every attribute paired with the *create* action's arguments,
+  # which is wrong in both halves. An attribute is not writable by virtue of
+  # existing: `id` is `writable?: false`, and a domain's own `accept` list is
+  # its statement of what a document may set. Reading past it lets a document
+  # write a field the domain deliberately withheld, and reports a field the
+  # action will reject as though it were accepted.
+  #
+  # Ash resolves `accept` at compile time — `Ash.Resource.Transformers.
+  # DefaultAccept` expands `:*` to the public writable attributes, applies
+  # `default_accept`, and strips argument names back out — so the list on the
+  # action is final and reading it needs no interpretation. `[]` genuinely
+  # means "accepts nothing", which is the default for a non-embedded resource.
+  #
+  # ## Why the union of create and update
+  #
+  # `manage_opts/2` sets `on_no_match: :create, on_match: :update`, so which
+  # action an element meets is decided at *runtime* by whether it already
+  # exists. A new stock is created; the same stock on the next save is updated.
+  # Filtering by one action would silently drop a field the other accepts —
+  # and which one that is would depend on the state of the database, so the
+  # same document would behave differently on its first and second save.
   defp accepted_keys_for(resource) do
-    attributes = resource |> Ash.Resource.Info.attributes() |> Enum.map(&to_string(&1.name))
+    accepted_keys_for(resource, [:create, :update])
+  end
 
-    arguments =
-      case Ash.Resource.Info.primary_action(resource, :create) do
-        %{arguments: arguments} -> Enum.map(arguments, &to_string(&1.name))
-        _ -> []
-      end
+  defp accepted_keys_for(resource, types) do
+    types
+    |> Enum.flat_map(&action_keys(resource, &1))
+    |> Enum.uniq()
+  end
 
-    attributes ++ arguments
+  defp action_keys(resource, type) do
+    case Ash.Resource.Info.primary_action(resource, type) do
+      %{} = action ->
+        accepted = Map.get(action, :accept) || []
+        arguments = action |> Map.get(:arguments, []) |> Enum.map(& &1.name)
+
+        Enum.map(accepted ++ arguments, &to_string/1)
+
+      _ ->
+        []
+    end
   end
 
   # The attribute pointing back at the aggregate root, if any.
@@ -451,8 +485,17 @@ defmodule AshHateoas.RootActions do
   # carry one: a reference key is whatever the language calls it. What makes a
   # key a reference is structural — the class does not accept it, so it cannot
   # be data, and it names something.
+  # "Writable" and "is a reference" are different questions, and answering the
+  # second with the first reports a read-only field as a dangling reference.
+  #
+  # `id` is the case that proves it: an attribute the class has, does not
+  # accept, and which names nothing. A rendered element carries it — that is
+  # how it was read back — so judging references by the accept list alone
+  # reports every element's own id as naming an element that does not exist,
+  # and the author has no way to act on it. The field being unwritable is
+  # already handled: `authorable/3` drops it before anything is cast.
   defp reference_keys(element, index, root) do
-    known = accepted_keys(element, index, root)
+    known = accepted_keys(element, index, root) ++ own_attributes(element, index, root)
 
     for {key, target} <- element,
         is_binary(target),
@@ -460,6 +503,22 @@ defmodule AshHateoas.RootActions do
         key not in @document_keys,
         key not in known,
         do: {key, target}
+  end
+
+  # Every attribute of the element's own class, writable or not.
+  defp own_attributes(element, index, root) do
+    kind = to_string(element["kind"] || element[:kind])
+
+    resource =
+      case Index.fetch(index, kind) do
+        {:ok, found} -> found
+        :error -> if kind == root_kind(root), do: root
+      end
+
+    case resource do
+      nil -> []
+      resource -> resource |> Ash.Resource.Info.attributes() |> Enum.map(&to_string(&1.name))
+    end
   end
 
   # What this element's own class accepts — so everything *else* that is a
@@ -557,36 +616,16 @@ defmodule AshHateoas.RootActions do
     |> Enum.find(&(kind && to_string(&1["kind"] || &1[:kind]) == kind))
     |> case do
       nil -> %{}
-      element -> element |> authorable(root, root) |> Map.take(updatable_keys(root))
+      # The root is the one thing in a document that always already exists, so
+      # only `update` ever runs on it — unlike an element, which may meet
+      # either action. Passing a key `update` does not accept is not a filtered
+      # field but a raised `NoSuchInput`, and a rendered root carries its own
+      # `id` like every other element, so the whole save fails on it.
+      element -> element |> authorable(root, root) |> Map.take(root_keys(root))
     end
   end
 
-  # What the *update* action will take, which is narrower than `authorable/3`
-  # computes twice over.
-  #
-  # `accepted_keys_for/1` lists every attribute — including ones Ash marks
-  # `writable?: false`, like the primary key — and pairs them with the *create*
-  # action's arguments. An element tolerates that, because `manage_relationship`
-  # sorts identity from input itself. `Ash.Changeset.for_update/4` does not: it
-  # raises `NoSuchInput` on the first key the action does not accept, so a
-  # rendered root, which carries its own `id` like every other element, fails
-  # the whole save.
-  #
-  # Asking the action rather than the resource also keeps a domain's own
-  # `accept` list authoritative — an attribute deliberately withheld from
-  # `update` stays withheld, instead of being writable only through a document.
-  defp updatable_keys(root) do
-    case Ash.Resource.Info.action(root, update_action(root)) do
-      %{} = action ->
-        accepted = Map.get(action, :accept) || []
-        arguments = action |> Map.get(:arguments, []) |> Enum.map(& &1.name)
-
-        Enum.map(accepted ++ arguments, &to_string/1)
-
-      _ ->
-        []
-    end
-  end
+  defp root_keys(root), do: accepted_keys_for(root, [:update])
 
   # Every managed relationship is passed, including the ones the document says
   # nothing about — those get an empty list.

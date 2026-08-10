@@ -56,6 +56,12 @@ defmodule AshHateoas.Test.Ingredient do
     )
 
     attribute(:quantity, :integer, public?: true)
+
+    # Set when the ingredient is added and immutable after — a shape a domain
+    # reaches for often, and the one that tells the two accept lists apart in a
+    # way an author can see. `recipe_id` differs between them too, but it is
+    # stripped as the owning key before anything reads it, so it cannot.
+    attribute(:origin, :string, public?: true)
   end
 
   identities do
@@ -82,7 +88,7 @@ defmodule AshHateoas.Test.Ingredient do
 
     create :create do
       primary?(true)
-      accept([:name, :unit, :quantity, :recipe_id])
+      accept([:name, :unit, :quantity, :origin, :recipe_id])
 
       # Reports the document context it was cast with — see `RecordsContext`.
       # A change is the only vantage point from which that is observable, since
