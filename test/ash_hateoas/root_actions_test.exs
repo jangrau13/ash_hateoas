@@ -198,6 +198,47 @@ defmodule AshHateoas.RootActionsTest do
       assert error["message"] =~ "unknown element kind"
     end
 
+    test "a document may carry the root it belongs to" do
+      # A document *is* the root, so the root is not among the kinds it may
+      # hold as an element — and it is still the only place the root's own
+      # attributes can travel. Refusing it drew `unknown element kind` plus one
+      # error per field, on every document a client sent.
+      assert validate([%{"kind" => "recipe", "title" => "Bread"}])["valid?"]
+    end
+
+    test "the root's own attributes are not read as references to elements" do
+      # The subtle half, and the one a reader is most likely to drop.
+      # `accepted_keys/2` answers `[]` for a kind it cannot place, and every
+      # remaining string is then taken as naming another element — so accepting
+      # the root without teaching this function about it reports the root's own
+      # `title` as `no element named "Bread"`.
+      result = validate([%{"kind" => "recipe", "title" => "Bread"}])
+
+      assert result["valid?"], inspect(result["errors"])
+      refute Enum.any?(result["errors"], &(&1["message"] =~ "no element named"))
+    end
+
+    test "a root attribute the resource does not have is still reported" do
+      # Accepting the root must not make it a place to write anything.
+      result = validate([%{"kind" => "recipe", "titel" => "Bread"}])
+
+      refute result["valid?"]
+      assert Enum.any?(result["errors"], &(&1["field"] == "titel"))
+    end
+
+    test "a document naming its root twice is an error" do
+      # Two sets of attributes for one record, with no principled winner —
+      # taking the last silently discards the other.
+      result =
+        validate([
+          %{"kind" => "recipe", "title" => "Bread"},
+          %{"kind" => "recipe", "title" => "Cake"}
+        ])
+
+      refute result["valid?"]
+      assert Enum.any?(result["errors"], &(&1["message"] =~ "names its root once"))
+    end
+
     test "a type of two words is named by its type, not by its class" do
       # **The round trip no fixture exercised until `MixingBowl` existed.**
       #
@@ -345,6 +386,47 @@ defmodule AshHateoas.RootActionsTest do
       assert result["synced"] == 2
       assert Ash.count!(Ingredient, authorize?: false) == 1
       assert Ash.count!(Step, authorize?: false) == 1
+    end
+
+    test "a document carrying its root applies the root's own attributes" do
+      # **The assertion that could have caught the defect.** `persist/2` passed
+      # an empty attribute map, so a root's own fields were discarded by every
+      # save that ever ran — silently, with `valid?: true`.
+      #
+      # A document is the only way they can travel: there is no separate update
+      # affordance, so a client rendering `title` into a buffer and an author
+      # editing it had nowhere to send the result.
+      recipe = recipe!()
+
+      assert {:ok, result} =
+               save(
+                 [
+                   %{"kind" => "recipe", "title" => "Sourdough"},
+                   %{"kind" => "ingredient", "name" => "Flour", "unit" => "g"}
+                 ],
+                 %{id: recipe.id}
+               )
+
+      assert result["valid?"]
+      assert Ash.get!(Recipe, recipe.id, authorize?: false).title == "Sourdough"
+
+      # The root is the document, not an element of it, so it is not counted.
+      # Inflating this would change the number every existing client reads.
+      assert result["synced"] == 1
+    end
+
+    test "a document that carries no root leaves the root alone" do
+      # Every document written before the root was accepted, and every one a
+      # client composes by hand. It must behave exactly as it did.
+      recipe = recipe!()
+
+      assert {:ok, result} =
+               save([%{"kind" => "ingredient", "name" => "Flour", "unit" => "g"}], %{
+                 id: recipe.id
+               })
+
+      assert result["valid?"]
+      assert Ash.get!(Recipe, recipe.id, authorize?: false).title == "Bread"
     end
 
     test "an invalid document writes nothing" do

@@ -149,11 +149,21 @@ defmodule AshHateoas.RootActions do
   # Validation
   # ---------------------------------------------------------------------------
 
-  defp errors_for(document, root, _input) when is_list(document) do
+  defp errors_for(document, root, input) when is_list(document) do
     index = index_for(root)
 
-    element_errors(document, index, root, document_context(root, document)) ++
-      graph_errors(document, index)
+    # The record a root element is cast against, when there is one. `validate`
+    # permits no `:id` — a client checks a document before the record exists —
+    # and then the root is cast against a fresh struct instead, which reports a
+    # missing required attribute rather than pretending one is set.
+    record =
+      case fetch_root(input) do
+        {:ok, found} -> found
+        :error -> nil
+      end
+
+    element_errors(document, index, root, document_context(root, document), record) ++
+      graph_errors(document, index, root)
   end
 
   defp errors_for(_document, _root, _input) do
@@ -188,20 +198,24 @@ defmodule AshHateoas.RootActions do
     _ -> %{}
   end
 
-  defp element_errors(document, index, root, context) do
+  defp element_errors(document, index, root, context, record) do
     document
     |> Enum.with_index()
     |> Enum.flat_map(fn {element, position} ->
-      element_error(element, position, index, root, context)
+      element_error(element, position, index, root, context, record)
     end)
   end
 
-  defp element_error(element, position, index, root, context) when is_map(element) do
+  defp element_error(element, position, index, root, context, record) when is_map(element) do
     kind = element["kind"] || element[:kind]
 
     case Index.fetch(index, to_string(kind)) do
       :error ->
-        [error_at(position, kind, element, "kind", "unknown element kind #{inspect(kind)}")]
+        if to_string(kind) == root_kind(root) do
+          root_element_errors(element, position, kind, root, context, record)
+        else
+          [error_at(position, kind, element, "kind", "unknown element kind #{inspect(kind)}")]
+        end
 
       {:ok, resource} ->
         owner = owner_key(resource, root)
@@ -222,8 +236,43 @@ defmodule AshHateoas.RootActions do
     end
   end
 
-  defp element_error(_element, position, _index, _root, _context) do
+  defp element_error(_element, position, _index, _root, _context, _record) do
     [error_at(position, nil, %{}, nil, "element must be a map")]
+  end
+
+  # The root, carried by its own document.
+  #
+  # Cast for **update**, never create. A document's root always exists — a save
+  # is addressed to it — so casting for create would report `allow_nil?` on
+  # every required attribute the author correctly left out, having set it once
+  # already. The action is the same one `persist/2` runs, so validation and the
+  # save cannot disagree about the root.
+  #
+  # `authorable/3` and `unknown_key_errors/5` need no root-specific handling:
+  # both take a resource and read what it accepts, and the root is a resource.
+  #
+  # Without a record — `validate` may be called before one exists — there is
+  # nothing to update, so the attributes are only checked for keys the root does
+  # not accept. Casting a bare struct would report every required attribute as
+  # missing on a document that is perfectly good.
+  defp root_element_errors(element, position, kind, root, context, record) do
+    unknown_key_errors(element, root, root, position, kind) ++
+      root_changeset_errors(element, position, kind, root, context, record)
+  end
+
+  defp root_changeset_errors(_element, _position, _kind, _root, _context, nil), do: []
+
+  defp root_changeset_errors(element, position, kind, root, context, record) do
+    record
+    |> Ash.Changeset.for_update(update_action(root), authorable(element, root, root),
+      context: context
+    )
+    |> Map.get(:errors, [])
+    |> Enum.map(fn error -> {Map.get(error, :field), message_for(error)} end)
+    |> Enum.reject(fn {field, _message} -> is_nil(field) end)
+    |> Enum.map(fn {field, message} ->
+      error_at(position, kind, element, to_string(field), message)
+    end)
   end
 
   # A key that is neither an attribute nor a reference vanishes silently.
@@ -339,24 +388,59 @@ defmodule AshHateoas.RootActions do
   # it. A graph algorithm, not a traversal — nothing recurses, because the
   # document does not nest.
 
-  defp graph_errors(document, index) do
+  defp graph_errors(document, index, root) do
     named = Enum.filter(document, &is_map/1)
     names = named |> Enum.map(&name_of/1) |> Enum.reject(&is_nil/1) |> MapSet.new()
 
-    dangling_errors(named, names, index) ++ duplicate_errors(named)
+    dangling_errors(named, names, index, root) ++
+      duplicate_errors(named) ++ duplicate_root_errors(named, root)
   end
 
-  defp dangling_errors(document, names, index) do
+  defp dangling_errors(document, names, index, root) do
     document
     |> Enum.with_index()
     |> Enum.flat_map(fn {element, position} ->
       element
-      |> reference_keys(index)
+      |> reference_keys(index, root)
       |> Enum.reject(fn {_key, target} -> MapSet.member?(names, target) end)
       |> Enum.map(fn {key, target} ->
         error_at(position, element["kind"], element, key, "no element named #{inspect(target)}")
       end)
     end)
+  end
+
+  # A document naming its root twice has asked for two different sets of
+  # attributes on one record, and there is no principled winner: taking the last
+  # silently discards the other, which is the shape every other check here
+  # exists to prevent. The client cannot produce it — `serializeGraph` sends one
+  # root — but a hand-written document can, and that guarantee is the client's
+  # rather than this server's.
+  defp duplicate_root_errors(document, root) do
+    case root_kind(root) do
+      nil ->
+        []
+
+      kind ->
+        case Enum.filter(document, &(to_string(&1["kind"] || &1[:kind]) == kind)) do
+          [_one] ->
+            []
+
+          [] ->
+            []
+
+          many ->
+            [
+              %{
+                index: nil,
+                kind: kind,
+                name: nil,
+                field: "kind",
+                message:
+                  "a document names its root once; this one names #{kind} #{length(many)} times"
+              }
+            ]
+        end
+    end
   end
 
   # A reference is any key that is not an attribute of the element's own class
@@ -367,8 +451,8 @@ defmodule AshHateoas.RootActions do
   # carry one: a reference key is whatever the language calls it. What makes a
   # key a reference is structural — the class does not accept it, so it cannot
   # be data, and it names something.
-  defp reference_keys(element, index) do
-    known = accepted_keys(element, index)
+  defp reference_keys(element, index, root) do
+    known = accepted_keys(element, index, root)
 
     for {key, target} <- element,
         is_binary(target),
@@ -378,10 +462,20 @@ defmodule AshHateoas.RootActions do
         do: {key, target}
   end
 
-  defp accepted_keys(element, index) do
-    case Index.fetch(index, to_string(element["kind"] || element[:kind])) do
+  # What this element's own class accepts — so everything *else* that is a
+  # string is read as naming another element.
+  #
+  # The root needs the same answer as any other kind. Without it the miss
+  # returns `[]`, and then every string attribute the root carries — its title,
+  # an algorithm, a unit — is reported as a reference to an element that does
+  # not exist. Harmless while the root was refused outright; a document full of
+  # spurious errors the moment it is accepted.
+  defp accepted_keys(element, index, root) do
+    kind = to_string(element["kind"] || element[:kind])
+
+    case Index.fetch(index, kind) do
       {:ok, resource} -> accepted_keys_for(resource)
-      :error -> []
+      :error -> if kind == root_kind(root), do: accepted_keys_for(root), else: []
     end
   end
 
@@ -422,7 +516,7 @@ defmodule AshHateoas.RootActions do
     case fetch_root(input) do
       {:ok, record} ->
         record
-        |> Ash.Changeset.for_update(update_action(root), %{},
+        |> Ash.Changeset.for_update(update_action(root), root_attributes(document, root),
           actor: actor(input),
           tenant: input.tenant,
           # The same context `validate` computes, and computed the same way —
@@ -443,6 +537,27 @@ defmodule AshHateoas.RootActions do
 
       :error ->
         {:error, "no #{AshHateoas.Resource.Info.type(root)} with that id"}
+    end
+  end
+
+  # The root's own attributes, from the element a document carries for it.
+  #
+  # This was `%{}`, and that was the whole of the defect: a client rendering a
+  # root's fields into a buffer, an author editing one, and a save reporting
+  # success having written none of them. There is no separate update
+  # affordance, so a document is the only way those values travel.
+  #
+  # `%{}` remains the answer for a document that carries no root element, which
+  # is every document sent before this and every one a client writes by hand.
+  defp root_attributes(document, root) do
+    kind = root_kind(root)
+
+    document
+    |> Enum.filter(&is_map/1)
+    |> Enum.find(&(kind && to_string(&1["kind"] || &1[:kind]) == kind))
+    |> case do
+      nil -> %{}
+      element -> authorable(element, root, root)
     end
   end
 
@@ -614,8 +729,14 @@ defmodule AshHateoas.RootActions do
   defp group_by_relationship(document, root) do
     index = index_for(root)
     by_destination = relationships_by_destination(root)
+    kind = root_kind(root)
 
     document
+    # The root is not one of its own elements — `root_attributes/2` applies it
+    # to the changeset these groups are managed onto. Removed **by name** rather
+    # than by widening the `else` below, so the raise keeps meaning exactly what
+    # it says: the index and the relationship map have diverged.
+    |> Enum.reject(&(kind && is_map(&1) && to_string(&1["kind"] || &1[:kind]) == kind))
     |> Enum.reduce(%{}, fn element, acc ->
       with {:ok, resource} <- Index.fetch(index, to_string(element["kind"])),
            %{} = relationship <- Map.get(by_destination, resource) do
@@ -696,6 +817,32 @@ defmodule AshHateoas.RootActions do
         type -> Map.put(acc, to_string(type), resource)
       end
     end)
+  end
+
+  @doc false
+  # What the root itself is called in a document.
+  #
+  # A document *is* the root, so it is not one of the kinds `index_for/1` holds
+  # — those are the destinations a save manages, and the root manages itself.
+  # But a document may still **carry** the root, and should: the root's own
+  # attributes have nowhere else to travel. There is no separate update
+  # affordance, and a client editing `time_step` in a document had it silently
+  # discarded, because `persist/2` passed an empty attribute map.
+  #
+  # Spelled by `Resource.Info.type/1`, the same function that keys every element
+  # kind, so the root is named in a document by exactly the rule that names
+  # everything else. Any other basis would be a second naming convention to keep
+  # in step.
+  #
+  # `nil` when a root has no readable type, which leaves every path exactly as
+  # it was before.
+  def root_kind(root) do
+    case AshHateoas.Resource.Info.type(root) do
+      nil -> nil
+      type -> to_string(type)
+    end
+  rescue
+    _ -> nil
   end
 
   defp name_of(element) when is_map(element), do: element["name"] || element[:name]
