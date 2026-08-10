@@ -142,10 +142,25 @@ defmodule AshHateoas.Test.Step do
       allow_nil?(false)
       attribute_writable?(true)
     end
+
+    # A link from one element to **another element**, which is the case a
+    # document has to carry and the root relationships above cannot show:
+    # `AshHateoas.Descriptor` publishes the `follows_id` key as `follows`, so a
+    # document names the target the way the wire does — `{"name": "Mix"}` — and
+    # `authorable/3` turns it back into the key the action accepts.
+    belongs_to :follows, AshHateoas.Test.Step do
+      public?(true)
+      attribute_writable?(true)
+    end
   end
 
   actions do
-    defaults([:read, :destroy, create: [:name, :body, :recipe_id], update: [:name, :body]])
+    defaults([
+      :read,
+      :destroy,
+      create: [:name, :body, :recipe_id, :follows_id],
+      update: [:name, :body, :follows_id]
+    ])
   end
 
   policies do

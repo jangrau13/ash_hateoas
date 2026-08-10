@@ -354,8 +354,77 @@ defmodule AshHateoas.RootActions do
     accepted = accepted_keys_for(resource)
 
     element
+    |> Enum.map(&resolve_link(&1, resource))
     |> Enum.filter(fn {key, _value} -> to_string(key) in accepted end)
     |> Map.new()
+  end
+
+  # A `belongs_to` named the way the wire names it, turned back into the key an
+  # action accepts.
+  #
+  # `AshHateoas.Descriptor` publishes a foreign key **as its relationship**:
+  # `source_id` reaches the wire as `source`, typed `sh:nodeKind: sh:IRI`, and
+  # the target class publishes `ah:identity` naming the field that keys it. So
+  # a client is told to send `{"source": {"name": "Prey"}}` — and does.
+  #
+  # `AshHateoas.Hydra.LinkInput` reverses that for a write to a resource's own
+  # URL, and `Hydra.Plug` calls it. Nothing reversed it here, so a document
+  # carrying the key the wire advertises had it filtered out as unaccepted:
+  # `source_id` is what the action takes, and `source` is not. The save
+  # reported `valid?: true` and the element arrived unconnected.
+  #
+  # Measured: a flow added through the DSL, gating on a state, drained no stock
+  # and moved none of 214 series.
+  #
+  # Only the resolvable case is handled — a target named by a single-field
+  # identity, or an id given directly. Anything else falls through unchanged
+  # and is filtered as before, which keeps a to-many or a composite key an
+  # error the author can see rather than a silent guess.
+  defp resolve_link({key, value}, resource) do
+    with relationship when not is_nil(relationship) <- link_named(resource, key),
+         {:ok, id} <- target_id(value, relationship) do
+      {to_string(relationship.source_attribute), id}
+    else
+      _ -> {key, value}
+    end
+  end
+
+  defp link_named(resource, key) do
+    resource
+    |> Ash.Resource.Info.public_relationships()
+    |> Enum.find(&(&1.type == :belongs_to and to_string(&1.name) == to_string(key)))
+  rescue
+    _ -> nil
+  end
+
+  # The target's primary key, from whatever the document named it by.
+  defp target_id(value, relationship) when is_map(value) do
+    destination = relationship.destination
+
+    case Map.to_list(value) do
+      [{field, name}] ->
+        lookup(destination, to_string(field), name)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp target_id(_value, _relationship), do: :error
+
+  defp lookup(destination, field, name) do
+    key = String.to_existing_atom(field)
+
+    destination
+    |> Ash.Query.do_filter([{key, name}])
+    |> Ash.Query.limit(1)
+    |> Ash.read(authorize?: false)
+    |> case do
+      {:ok, [record]} -> {:ok, Map.get(record, :id)}
+      _ -> :error
+    end
+  rescue
+    _ -> :error
   end
 
   # What a resource will actually take, asked of the actions that will run.
@@ -386,9 +455,30 @@ defmodule AshHateoas.RootActions do
   end
 
   defp accepted_keys_for(resource, types) do
-    types
-    |> Enum.flat_map(&action_keys(resource, &1))
-    |> Enum.uniq()
+    keys = Enum.flat_map(types, &action_keys(resource, &1))
+
+    Enum.uniq(keys ++ link_names(resource, keys))
+  end
+
+  # A `belongs_to`'s own name, alongside the foreign key it is accepted under.
+  #
+  # The two are one affordance seen from either side. `AshHateoas.Descriptor`
+  # publishes `follows_id` as `follows`, so `follows` is the key a client is
+  # told to send — and a key the wire advertises must be a key a document may
+  # carry. `resolve_link/2` turns it back into `follows_id` before the cast.
+  #
+  # Derived from the accepted keys rather than from every relationship, so a
+  # `belongs_to` whose key the action does *not* accept stays unwritable: the
+  # domain withheld it, and publishing a second spelling would not change that.
+  defp link_names(resource, keys) do
+    resource
+    |> Ash.Resource.Info.public_relationships()
+    |> Enum.filter(
+      &(&1.type == :belongs_to and to_string(&1.source_attribute) in keys)
+    )
+    |> Enum.map(&to_string(&1.name))
+  rescue
+    _ -> []
   end
 
   defp action_keys(resource, type) do

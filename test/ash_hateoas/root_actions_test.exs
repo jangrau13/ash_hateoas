@@ -434,6 +434,52 @@ defmodule AshHateoas.RootActionsTest do
       assert ingredient.origin == "Peru", "an update must not write a create-only field"
     end
 
+    test "an element links to another by the identity the wire advertises" do
+      # **The key a client is told to send is the key a document may send.**
+      # `AshHateoas.Descriptor` publishes a `belongs_to`'s foreign key as the
+      # *relationship*: `follows_id` reaches the wire as `follows`, typed
+      # `sh:nodeKind: sh:IRI`, and `Step` publishes `ah:identity` naming the
+      # field that keys it. So a client sends `{"follows": {"name": "Mix"}}`.
+      #
+      # `AshHateoas.Hydra.LinkInput` reverses that for a write to a resource's
+      # own URL and `Hydra.Plug` calls it — nothing reversed it here, so a
+      # document carrying the advertised key had it filtered out as unaccepted
+      # and the save reported success with the element unconnected.
+      #
+      # Measured on a live service: a flow added through the DSL, gating on a
+      # state, drained no stock and moved none of 214 series.
+      # Two saves, because the target is resolved against the database: a
+      # sibling created in the *same* document does not exist yet when the
+      # element citing it is cast. That is a real limit and it is stated here
+      # rather than worked around — a document may link to what is already
+      # there, and adding both at once takes two saves.
+      recipe = recipe!()
+
+      assert {:ok, first} =
+               save([%{"kind" => "step", "name" => "Mix", "body" => "Combine"}], %{id: recipe.id})
+
+      assert first["valid?"], inspect(first["errors"])
+
+      assert {:ok, result} =
+               save(
+                 [
+                   %{"kind" => "step", "name" => "Mix", "body" => "Combine"},
+                   %{"kind" => "step", "name" => "Bake", "follows" => %{"name" => "Mix"}}
+                 ],
+                 %{id: recipe.id}
+               )
+
+      assert result["valid?"], inspect(result["errors"])
+
+      steps =
+        Step
+        |> Ash.read!(authorize?: false)
+        |> Map.new(&{&1.name, &1})
+
+      assert steps["Bake"].follows_id == steps["Mix"].id,
+             "the link the wire advertises did not reach the record"
+    end
+
     test "a key no action accepts is still reported" do
       # The tightened list must not become a blanket exemption: a key that is
       # neither accepted nor an attribute is still read as naming an element,
