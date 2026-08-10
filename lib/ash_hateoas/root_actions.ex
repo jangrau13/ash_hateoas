@@ -60,6 +60,27 @@ defmodule AshHateoas.RootActions do
   to carry ids. One consequence worth stating: under name matching a rename is
   indistinguishable from a delete plus a create.
 
+  ### Which makes a short document dangerous, so `:save` asks
+
+  If the document is the whole contents, a client that read only *part* of the
+  aggregate and saved it back has deleted the rest — and it cannot tell, because
+  a truncated read and a deliberate deletion produce the same document. A paged
+  collection is the ordinary way to get one: read page 1 of 250, save, lose the
+  remainder.
+
+  The server can tell, because it holds both counts. So `:save` takes a
+  **`complete`** boolean, and refuses a document holding fewer elements than the
+  aggregate does unless it is set:
+
+      the document holds 1 ingredients but the recipe has 2. A save removes what
+      the document omits, so this would delete 1. Read the whole aggregate
+      first, or pass `complete: true` to confirm.
+
+  It defaults to `false`, so a client that has not thought about this gets the
+  safe answer rather than the silent one. Deleting stays possible — it just has
+  to be said out loud. Counted per relationship, since a document that adds
+  three stocks while dropping thirty flows has grown in total while losing data.
+
   **How an element is managed is derived from the schema**, never decided here
   — see `manage_opts/2`. A `has_many` whose far side declares `allow_nil?:
   false` states exclusive ownership, so the document owns the element outright:
@@ -418,7 +439,6 @@ defmodule AshHateoas.RootActions do
     end
   end
 
-
   defp lookup(destination, field, name) do
     key = String.to_existing_atom(field)
 
@@ -504,9 +524,7 @@ defmodule AshHateoas.RootActions do
   defp link_names(resource, keys) do
     resource
     |> Ash.Resource.Info.public_relationships()
-    |> Enum.filter(
-      &(&1.type == :belongs_to and to_string(&1.source_attribute) in keys)
-    )
+    |> Enum.filter(&(&1.type == :belongs_to and to_string(&1.source_attribute) in keys))
     |> Enum.map(&to_string(&1.name))
   rescue
     _ -> []
@@ -695,28 +713,103 @@ defmodule AshHateoas.RootActions do
 
     case fetch_root(input) do
       {:ok, record} ->
-        record
-        |> Ash.Changeset.for_update(update_action(root), root_attributes(document, root),
-          actor: actor(input),
-          tenant: input.tenant,
-          # The same context `validate` computes, and computed the same way —
-          # once for the document. `manage_relationship` propagates a
-          # changeset's context to the changesets it creates for each element,
-          # so an element's `change` reads it without knowing a document exists.
-          context: document_context(root, document)
-        )
-        |> manage_all(grouped, root)
-        |> Ash.update(authorize?: true)
-        |> case do
-          {:ok, _updated} ->
-            {:ok, %{"valid?" => true, "errors" => [], "synced" => count(grouped)}}
-
-          {:error, reason} ->
-            {:error, reason}
+        with :ok <- refuse_truncated(grouped, record, root, input) do
+          save_document(record, document, grouped, root, input)
         end
 
       :error ->
         {:error, "no #{AshHateoas.Resource.Info.type(root)} with that id"}
+    end
+  end
+
+  # A document holding fewer elements than the aggregate does, without saying it
+  # meant to.
+  #
+  # This is the one failure a client cannot detect for itself. A save is a sync,
+  # so the omitted elements are deleted — and a truncated read produces exactly
+  # the same document as a deliberate deletion. Only the server holds both
+  # numbers, so only the server can tell them apart, and it can only do so by
+  # being told which was intended.
+  #
+  # Counted per relationship rather than in total: a document that adds three
+  # stocks while dropping thirty flows has more elements than before, and a
+  # total would report it as growth.
+  defp refuse_truncated(grouped, record, root, input) do
+    if Map.get(input.arguments, :complete, false) do
+      :ok
+    else
+      case truncated_relationships(grouped, record, root) do
+        [] ->
+          :ok
+
+        losses ->
+          {:ok,
+           %{
+             "valid?" => false,
+             "errors" =>
+               Enum.map(losses, fn {name, sending, holding} ->
+                 stringify(%{
+                   "message" =>
+                     "the document holds #{sending} #{name} but the " <>
+                       "#{AshHateoas.Resource.Info.type(root)} has #{holding}. A save removes " <>
+                       "what the document omits, so this would delete #{holding - sending}. " <>
+                       "Read the whole aggregate first, or pass `complete: true` to confirm.",
+                   "kind" => to_string(name)
+                 })
+               end)
+           }}
+      end
+    end
+  end
+
+  # `{relationship, in the document, currently stored}` for each relationship
+  # the document would shrink. The count is a query per relationship, not a
+  # load: the elements themselves are not wanted, only how many there are.
+  defp truncated_relationships(grouped, record, root) do
+    root
+    |> managed_relationships()
+    |> Enum.flat_map(fn relationship ->
+      # `grouped` is keyed by the relationship *struct*, which is what
+      # `manage_all/3` iterates — not by its name.
+      sending = grouped |> Map.get(relationship, []) |> length()
+
+      case stored_count(record, relationship) do
+        {:ok, holding} when holding > sending -> [{relationship.name, sending, holding}]
+        _ -> []
+      end
+    end)
+  end
+
+  defp stored_count(record, relationship) do
+    key = relationship.destination_attribute
+    value = Map.fetch!(record, relationship.source_attribute)
+
+    relationship.destination
+    |> Ash.Query.filter_input(%{key => value})
+    |> Ash.count(authorize?: false)
+  rescue
+    _ -> :error
+  end
+
+  defp save_document(record, document, grouped, root, input) do
+    record
+    |> Ash.Changeset.for_update(update_action(root), root_attributes(document, root),
+      actor: actor(input),
+      tenant: input.tenant,
+      # The same context `validate` computes, and computed the same way —
+      # once for the document. `manage_relationship` propagates a
+      # changeset's context to the changesets it creates for each element,
+      # so an element's `change` reads it without knowing a document exists.
+      context: document_context(root, document)
+    )
+    |> manage_all(grouped, root)
+    |> Ash.update(authorize?: true)
+    |> case do
+      {:ok, _updated} ->
+        {:ok, %{"valid?" => true, "errors" => [], "synced" => count(grouped)}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

@@ -189,14 +189,47 @@ defmodule AshHateoas.DslRoot.Transformers.DeriveRootActions do
 
   defp add_action(dsl_state, name) do
     with {:ok, document} <- document_argument(dsl_state),
-         {:ok, id} <- id_argument(name) do
+         {:ok, id} <- id_argument(name),
+         {:ok, extra} <- extra_arguments(name) do
       Builder.add_new_action(dsl_state, :action, name,
         returns: :map,
-        arguments: [document, id],
+        arguments: [document, id] ++ extra,
         run: run_for(name),
         description: description(name)
       )
     end
+  end
+
+  defp extra_arguments(:save) do
+    with {:ok, complete} <- complete_argument() do
+      {:ok, [complete]}
+    end
+  end
+
+  defp extra_arguments(_name), do: {:ok, []}
+
+  # A save is a *sync*: an element the document omits has been removed. So a
+  # client that read only part of an aggregate and saved it back would delete
+  # the rest — and the client cannot notice, because a short document and a
+  # small aggregate look identical.
+  #
+  # The server can notice. It knows how many elements the aggregate holds, so a
+  # document carrying fewer is either a deletion or a truncated read, and the
+  # two are worth telling apart. Declaring the intent is what tells them apart.
+  #
+  # Defaults to `false`, so a client that has *not* thought about this gets the
+  # safe answer rather than the silent one. Deleting elements stays possible —
+  # it just has to be said out loud.
+  defp complete_argument do
+    Builder.build_action_argument(:complete, :boolean,
+      allow_nil?: false,
+      default: false,
+      public?: true,
+      description:
+        "Whether this document is the whole aggregate. A document holding fewer " <>
+          "elements than the aggregate does is refused unless this is true, " <>
+          "since a save removes what the document omits."
+    )
   end
 
   # `:save` writes the document's elements *into* an aggregate, so it needs to

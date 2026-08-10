@@ -380,7 +380,12 @@ defmodule AshHateoas.RootActionsTest do
 
       result =
         validate([
-          %{"kind" => "ingredient", "id" => Ash.UUID.generate(), "name" => "Sugar", "unit" => "g"},
+          %{
+            "kind" => "ingredient",
+            "id" => Ash.UUID.generate(),
+            "name" => "Sugar",
+            "unit" => "g"
+          },
           %{"kind" => "recipe", "id" => recipe.id, "title" => "Sourdough"}
         ])
 
@@ -405,7 +410,9 @@ defmodule AshHateoas.RootActionsTest do
 
       assert {:ok, created} =
                save(
-                 [%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g", "origin" => "Peru"}],
+                 [
+                   %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g", "origin" => "Peru"}
+                 ],
                  %{id: recipe.id}
                )
 
@@ -421,7 +428,7 @@ defmodule AshHateoas.RootActionsTest do
                      "origin" => "Brazil"
                    }
                  ],
-                 %{id: recipe.id}
+                 %{id: recipe.id, complete: true}
                )
 
       assert updated["valid?"], inspect(updated["errors"])
@@ -456,7 +463,10 @@ defmodule AshHateoas.RootActionsTest do
       recipe = recipe!()
 
       assert {:ok, first} =
-               save([%{"kind" => "step", "name" => "Mix", "body" => "Combine"}], %{id: recipe.id})
+               save([%{"kind" => "step", "name" => "Mix", "body" => "Combine"}], %{
+                 id: recipe.id,
+                 complete: true
+               })
 
       assert first["valid?"], inspect(first["errors"])
 
@@ -466,7 +476,7 @@ defmodule AshHateoas.RootActionsTest do
                    %{"kind" => "step", "name" => "Mix", "body" => "Combine"},
                    %{"kind" => "step", "name" => "Bake", "follows" => %{"name" => "Mix"}}
                  ],
-                 %{id: recipe.id}
+                 %{id: recipe.id, complete: true}
                )
 
       assert result["valid?"], inspect(result["errors"])
@@ -587,7 +597,10 @@ defmodule AshHateoas.RootActionsTest do
       recipe = recipe!()
 
       {:ok, result} =
-        save([%{"kind" => "ingredient", "name" => "Salt", "unit" => "banana"}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Salt", "unit" => "banana"}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       refute result["valid?"]
       assert Ash.count!(Ingredient, authorize?: false) == 0
@@ -597,7 +610,10 @@ defmodule AshHateoas.RootActionsTest do
       recipe = recipe!()
 
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       assert [ingredient] = Ash.read!(Ingredient, authorize?: false)
       # The owning key is supplied by save, which is why validate must not
@@ -635,12 +651,18 @@ defmodule AshHateoas.RootActionsTest do
       recipe = recipe!()
 
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 10}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 10}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       [before] = Ash.read!(Ingredient, authorize?: false)
 
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 99}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Sugar", "quantity" => 99}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       assert [after_edit] = Ash.read!(Ingredient, authorize?: false)
       assert after_edit.quantity == 99
@@ -663,18 +685,96 @@ defmodule AshHateoas.RootActionsTest do
         )
 
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       assert ["Salt"] = Ash.read!(Ingredient, authorize?: false) |> Enum.map(& &1.name)
+    end
+
+    test "a document holding fewer elements than the aggregate is refused" do
+      # The failure a client cannot detect for itself. A truncated read and a
+      # deliberate deletion produce the same document, and only the server holds
+      # both counts — so a client that read one page of a paged collection and
+      # saved it back would delete the rest, and report success.
+      recipe = recipe!()
+
+      {:ok, _} =
+        save(
+          [
+            %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"},
+            %{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}
+          ],
+          %{id: recipe.id}
+        )
+
+      assert {:ok, result} =
+               save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{
+                 id: recipe.id
+               })
+
+      refute result["valid?"]
+      assert [%{"kind" => "ingredients"} = error] = result["errors"]
+      assert error["message"] =~ "holds 1 ingredients but the recipe has 2"
+
+      # Refused means refused: nothing was written.
+      assert Ash.count!(Ingredient, authorize?: false) == 2
+    end
+
+    test "the same document is saved when it says it is complete" do
+      recipe = recipe!()
+
+      {:ok, _} =
+        save(
+          [
+            %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"},
+            %{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}
+          ],
+          %{id: recipe.id}
+        )
+
+      assert {:ok, result} =
+               save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{
+                 id: recipe.id,
+                 complete: true
+               })
+
+      assert result["valid?"], inspect(result["errors"])
+      assert ["Sugar"] = Ash.read!(Ingredient, authorize?: false) |> Enum.map(& &1.name)
+    end
+
+    test "a document that grows needs no declaration" do
+      # The guard is about loss, not about size. Adding elements, or replacing
+      # them one for one, is the ordinary case and must stay unceremonious.
+      recipe = recipe!()
+
+      {:ok, _} =
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+
+      assert {:ok, result} =
+               save(
+                 [
+                   %{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"},
+                   %{"kind" => "ingredient", "name" => "Salt", "unit" => "g"}
+                 ],
+                 %{id: recipe.id}
+               )
+
+      assert result["valid?"], inspect(result["errors"])
+      assert Ash.count!(Ingredient, authorize?: false) == 2
     end
 
     test "emptying the document empties the aggregate" do
       recipe = recipe!()
 
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{
+          id: recipe.id,
+          complete: true
+        })
 
-      {:ok, _} = save([], %{id: recipe.id})
+      {:ok, _} = save([], %{id: recipe.id, complete: true})
 
       # Every managed relationship is passed, including ones the document says
       # nothing about. Iterating only what the document contains would make
@@ -697,7 +797,10 @@ defmodule AshHateoas.RootActionsTest do
 
       # Only ingredients now; steps are absent entirely rather than emptied.
       {:ok, _} =
-        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{id: recipe.id})
+        save([%{"kind" => "ingredient", "name" => "Sugar", "unit" => "g"}], %{
+          id: recipe.id,
+          complete: true
+        })
 
       assert Ash.count!(Step, authorize?: false) == 0
       assert Ash.count!(Ingredient, authorize?: false) == 1
@@ -732,7 +835,7 @@ defmodule AshHateoas.RootActionsTest do
       assert Ash.count!(AshHateoas.Test.Technique, authorize?: false) == 1
       assert Ash.count!(AshHateoas.Test.RecipeTechnique, authorize?: false) == 1
 
-      {:ok, _} = save([], %{id: recipe.id})
+      {:ok, _} = save([], %{id: recipe.id, complete: true})
 
       # The link is gone; the technique is not.
       assert Ash.count!(AshHateoas.Test.RecipeTechnique, authorize?: false) == 0
