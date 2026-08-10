@@ -722,6 +722,34 @@ defmodule AshHateoas.RootActionsTest do
       assert Ash.count!(Ingredient, authorize?: false) == 2
     end
 
+    test "a many_to_many is counted through the join, not by a foreign key" do
+      # The shape that slipped through. A `many_to_many` has no foreign key on
+      # the destination — `source_attribute` and `destination_attribute` are
+      # both `id` — so counting `destination.id == root.id` matched nothing and
+      # returned the whole table instead. Every relationship then looked
+      # unchanged and a truncated document saved silently.
+      #
+      # Caught only against a live service, because every relationship in this
+      # fixture was a `has_many`, where that spelling happens to be right.
+      recipe = recipe!()
+
+      {:ok, _} =
+        save(
+          [
+            %{"kind" => "technique", "name" => "Kneading"},
+            %{"kind" => "technique", "name" => "Folding"}
+          ],
+          %{id: recipe.id}
+        )
+
+      assert {:ok, result} =
+               save([%{"kind" => "technique", "name" => "Kneading"}], %{id: recipe.id})
+
+      refute result["valid?"]
+      assert [%{"kind" => "techniques"} = error] = result["errors"]
+      assert error["message"] =~ "holds 1 techniques but the recipe has 2"
+    end
+
     test "the same document is saved when it says it is complete" do
       recipe = recipe!()
 

@@ -780,13 +780,26 @@ defmodule AshHateoas.RootActions do
     end)
   end
 
+  # How many elements the aggregate currently holds through one relationship.
+  #
+  # Counted by **loading the relationship**, not by filtering the destination on
+  # a foreign key. A `many_to_many` has no such key: its `source_attribute` and
+  # `destination_attribute` are both `id`, so `destination.id == root.id`
+  # matched nothing and counted the whole table instead — which reported every
+  # relationship as unchanged and let a truncated save through. Ash already
+  # knows how to traverse a join; asking it is the only spelling that is right
+  # for every relationship type.
   defp stored_count(record, relationship) do
-    key = relationship.destination_attribute
-    value = Map.fetch!(record, relationship.source_attribute)
+    case Ash.load(record, [relationship.name], authorize?: false, lazy?: true) do
+      {:ok, loaded} ->
+        case Map.get(loaded, relationship.name) do
+          related when is_list(related) -> {:ok, length(related)}
+          _ -> :error
+        end
 
-    relationship.destination
-    |> Ash.Query.filter_input(%{key => value})
-    |> Ash.count(authorize?: false)
+      _ ->
+        :error
+    end
   rescue
     _ -> :error
   end
