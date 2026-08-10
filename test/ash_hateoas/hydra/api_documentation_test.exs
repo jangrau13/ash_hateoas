@@ -561,6 +561,27 @@ defmodule AshHateoas.Hydra.ApiDocumentationTest do
       assert "https://ash-hateoas.org/vocab#Technique" in iris
     end
 
+    test "a class states the type a document must name it by" do
+      # **The class IRI is not that name, and cannot be turned back into it.**
+      # `Macro.camelize` is lossy — `mixing_bowl` becomes `MixingBowl`, and
+      # `mixingbowl` and `Mixing_Bowl` would too — so a consumer that derives
+      # the document's `kind` from the IRI is right only where the type was one
+      # lower-case word. Measured on a live API whose types all carry a prefix:
+      # every element of a 214-element save rejected as an unknown kind.
+      #
+      # `hydra:title` is what a client reads instead, so removing it or
+      # "tidying" it to the camelized name would silently break every consumer
+      # whose types are more than one word.
+      classes =
+        [AshHateoas.Test.Domain]
+        |> ApiDocumentation.build()
+        |> Map.fetch!("hydra:supportedClass")
+        |> Map.new(&{&1["@id"], &1["hydra:title"]})
+
+      assert classes["https://ash-hateoas.org/vocab#MixingBowl"] == "mixing_bowl"
+      assert classes["https://ash-hateoas.org/vocab#Step"] == "step"
+    end
+
     test "a choice of classes is a disjunction, not a conjunction" do
       # `sh:class` constrains **each value node**, so repeating it says every
       # element must be a Step *and* an Ingredient *and* a Technique at once —

@@ -247,3 +247,72 @@ defmodule AshHateoas.Test.RecipeTechnique do
     end
   end
 end
+
+defmodule AshHateoas.Test.MixingBowl do
+  @moduledoc """
+  An element whose `type` is **two words**, which is the only thing it is for.
+
+  Every other element of the `Recipe` document is one lower-case word, so
+  `Macro.camelize` round-trips by luck: `step` → `Step` → `step`. An underscore
+  does not survive that trip — `mixing_bowl` → `MixingBowl` → `mixingbowl` — and
+  camelizing is not injective, so no inverse recovers it.
+
+  A client deriving the document's `kind` from the class IRI therefore sends a
+  token this server has never heard of. Measured on a live API whose types all
+  carry a prefix: **every** element of a 214-element save rejected as an unknown
+  kind. Nothing here caught it, because until this fixture no multi-word type
+  was ever an authorable element of a document.
+
+  What the wire states instead, and what a client must read, is `hydra:title` on
+  the class — the raw type, undamaged. `AshHateoas.Test.RecipeAudit` also
+  carries an underscore and cannot stand in for this: its relationship is
+  `public?: false` precisely so it is *excluded* from a document.
+
+  An owned `has_many` rather than a `many_to_many`, deliberately: `on_missing/2`
+  answers `:destroy` for an owned one, so this proves the underscore on the path
+  where a mismatched kind would risk data rather than merely a rejected save.
+  """
+
+  use Ash.Resource,
+    domain: AshHateoas.Test.Domain,
+    data_layer: Ash.DataLayer.Ets,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshHateoas.Resource]
+
+  ets do
+    private?(true)
+  end
+
+  hateoas do
+    type("mixing_bowl")
+    base("/mixing_bowls")
+  end
+
+  attributes do
+    uuid_primary_key(:id)
+    attribute(:name, :string, public?: true, allow_nil?: false)
+    attribute(:litres, :integer, public?: true)
+  end
+
+  identities do
+    identity(:unique_name, [:name])
+  end
+
+  relationships do
+    belongs_to :recipe, AshHateoas.Test.Recipe do
+      public?(true)
+      allow_nil?(false)
+      attribute_writable?(true)
+    end
+  end
+
+  actions do
+    defaults([:read, :destroy, create: [:name, :litres, :recipe_id], update: [:name, :litres]])
+  end
+
+  policies do
+    policy always() do
+      authorize_if(always())
+    end
+  end
+end

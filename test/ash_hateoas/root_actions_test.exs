@@ -198,6 +198,42 @@ defmodule AshHateoas.RootActionsTest do
       assert error["message"] =~ "unknown element kind"
     end
 
+    test "a type of two words is named by its type, not by its class" do
+      # **The round trip no fixture exercised until `MixingBowl` existed.**
+      #
+      # A class IRI is the type camelized, and camelizing is lossy: `step`
+      # round-trips because it is one lower-case word, while `mixing_bowl`
+      # becomes `MixingBowl` and lowercases back to `mixingbowl`. A client
+      # deriving the kind from the class therefore sends a token this server
+      # has never heard of — measured on a live API, every element of a
+      # 214-element save rejected.
+      #
+      # So the accepted spelling is the *declared type*, and the derived one
+      # must stay refused: accepting both would make them interchangeable and
+      # leave a client no way to discover which is meant.
+      assert validate([%{"kind" => "mixing_bowl", "name" => "Big"}])["valid?"]
+
+      result = validate([%{"kind" => "mixingbowl", "name" => "Big"}])
+
+      refute result["valid?"]
+      assert [error] = result["errors"]
+      assert error["message"] =~ "unknown element kind"
+    end
+
+    test "an element of a two-word type is persisted by a save" do
+      # Validation and persistence read the same index, so this could only
+      # diverge if one of them stopped doing so — which is exactly what a
+      # future "normalise the kind" change would do to one and not the other.
+      recipe = recipe!()
+
+      assert {:ok, _result} =
+               save([%{"kind" => "mixing_bowl", "name" => "Big", "litres" => 12}], %{
+                 id: recipe.id
+               })
+
+      assert [%{name: "Big", litres: 12}] = Ash.read!(AshHateoas.Test.MixingBowl)
+    end
+
     test "a document that is not a list is rejected by the argument's own type" do
       # `{:array, :map}` is enforced by Ash before the body runs, so a
       # malformed document never reaches RootActions at all. The error names
@@ -612,7 +648,7 @@ defmodule AshHateoas.RootActionsTest do
         |> AshHateoas.RootActions.managed_relationships()
         |> Enum.map(& &1.name)
 
-      assert Enum.sort(names) == [:ingredients, :steps, :techniques]
+      assert Enum.sort(names) == [:ingredients, :mixing_bowls, :steps, :techniques]
     end
   end
 
@@ -633,7 +669,7 @@ defmodule AshHateoas.RootActionsTest do
         |> Enum.map(& &1.name)
 
       refute :audits in names
-      assert Enum.sort(names) == [:ingredients, :steps, :techniques]
+      assert Enum.sort(names) == [:ingredients, :mixing_bowls, :steps, :techniques]
     end
 
     test "the join is rejected by name even though it is itself not public" do

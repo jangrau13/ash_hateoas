@@ -53,6 +53,14 @@ defmodule AshHateoas.Test.Recipe do
       public?(true)
     end
 
+    # The one element whose `type` is two words. Every other is a single
+    # lower-case word, so the class IRI camelizes and un-camelizes by luck and
+    # nothing here ever exercised a type that does not — see
+    # `AshHateoas.Test.MixingBowl`.
+    has_many :mixing_bowls, AshHateoas.Test.MixingBowl do
+      public?(true)
+    end
+
     # A shared element: a technique is reachable from several recipes, so
     # removing it from one document must not delete the record.
     many_to_many :techniques, AshHateoas.Test.Technique do
