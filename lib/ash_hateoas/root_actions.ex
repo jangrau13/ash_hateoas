@@ -380,7 +380,13 @@ defmodule AshHateoas.RootActions do
   # identity, or an id given directly. Anything else falls through unchanged
   # and is filtered as before, which keeps a to-many or a composite key an
   # error the author can see rather than a silent guess.
-  defp resolve_link({key, value}, resource) do
+  # The map test comes first, and it is not a micro-optimisation: this runs per
+  # key per element, so 100,000 elements carrying two scalar fields each ask it
+  # 200,000 times. Reaching for `public_relationships/1` on every one of those
+  # — which builds and scans a list — cost 6% of a 100,000-element validation
+  # against a budget that exists precisely to keep validation off the per-element
+  # path. A link is always a map; a scalar never is, and answers in one guard.
+  defp resolve_link({key, value}, resource) when is_map(value) do
     with relationship when not is_nil(relationship) <- link_named(resource, key),
          {:ok, id} <- target_id(value, relationship) do
       {to_string(relationship.source_attribute), id}
@@ -388,6 +394,8 @@ defmodule AshHateoas.RootActions do
       _ -> {key, value}
     end
   end
+
+  defp resolve_link(pair, _resource), do: pair
 
   defp link_named(resource, key) do
     resource
@@ -398,7 +406,7 @@ defmodule AshHateoas.RootActions do
   end
 
   # The target's primary key, from whatever the document named it by.
-  defp target_id(value, relationship) when is_map(value) do
+  defp target_id(value, relationship) do
     destination = relationship.destination
 
     case Map.to_list(value) do
@@ -410,7 +418,6 @@ defmodule AshHateoas.RootActions do
     end
   end
 
-  defp target_id(_value, _relationship), do: :error
 
   defp lookup(destination, field, name) do
     key = String.to_existing_atom(field)
