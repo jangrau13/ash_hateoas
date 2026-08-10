@@ -415,6 +415,35 @@ defmodule AshHateoas.RootActionsTest do
       assert result["synced"] == 1
     end
 
+    test "a root element carrying unwritable fields still saves" do
+      # **What a real client sends, as opposed to what a test hand-writes.**
+      # A rendered element carries its `id` — that is how it was read back — so
+      # the root does too. `id` is `writable?: false`, and
+      # `Ash.Changeset.for_update/4` raises `NoSuchInput` on the first key its
+      # action does not accept, failing the entire save with a 400.
+      #
+      # Measured against a live service: a 215-element document that validated
+      # clean could not be saved at all. Every test here passed throughout,
+      # because each composed the root by hand and none included the `id` a
+      # client cannot avoid sending.
+      recipe = recipe!()
+
+      assert {:ok, result} =
+               save(
+                 [
+                   %{"kind" => "recipe", "id" => recipe.id, "title" => "Sourdough"},
+                   %{"kind" => "ingredient", "name" => "Flour", "unit" => "g"}
+                 ],
+                 %{id: recipe.id}
+               )
+
+      assert result["valid?"]
+
+      # The writable field still lands; `id` is dropped rather than rejected,
+      # since a client has no way to send the root without it.
+      assert Ash.get!(Recipe, recipe.id, authorize?: false).title == "Sourdough"
+    end
+
     test "a document that carries no root leaves the root alone" do
       # Every document written before the root was accepted, and every one a
       # client composes by hand. It must behave exactly as it did.

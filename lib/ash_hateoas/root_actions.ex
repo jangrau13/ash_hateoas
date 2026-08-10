@@ -557,7 +557,34 @@ defmodule AshHateoas.RootActions do
     |> Enum.find(&(kind && to_string(&1["kind"] || &1[:kind]) == kind))
     |> case do
       nil -> %{}
-      element -> authorable(element, root, root)
+      element -> element |> authorable(root, root) |> Map.take(updatable_keys(root))
+    end
+  end
+
+  # What the *update* action will take, which is narrower than `authorable/3`
+  # computes twice over.
+  #
+  # `accepted_keys_for/1` lists every attribute — including ones Ash marks
+  # `writable?: false`, like the primary key — and pairs them with the *create*
+  # action's arguments. An element tolerates that, because `manage_relationship`
+  # sorts identity from input itself. `Ash.Changeset.for_update/4` does not: it
+  # raises `NoSuchInput` on the first key the action does not accept, so a
+  # rendered root, which carries its own `id` like every other element, fails
+  # the whole save.
+  #
+  # Asking the action rather than the resource also keeps a domain's own
+  # `accept` list authoritative — an attribute deliberately withheld from
+  # `update` stays withheld, instead of being writable only through a document.
+  defp updatable_keys(root) do
+    case Ash.Resource.Info.action(root, update_action(root)) do
+      %{} = action ->
+        accepted = Map.get(action, :accept) || []
+        arguments = action |> Map.get(:arguments, []) |> Enum.map(& &1.name)
+
+        Enum.map(accepted ++ arguments, &to_string/1)
+
+      _ ->
+        []
     end
   end
 
