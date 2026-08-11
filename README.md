@@ -1,21 +1,8 @@
 # AshHateoas
 
-> ## ⚠️ Purely experimental
->
-> A **research prototype**, not a library to depend on. It exists to find out how
-> much of a domain a Hydra API can publish before a client needs to be told
-> anything out of band.
->
-> The wire format, the vocabulary and the generated actions change whenever the
-> experiment learns something; nothing is versioned for compatibility, and there
-> is no deprecation path. It is also not published to Hex — it is used as a git
-> dependency tracking `main`, so a change here reaches its consumers on their
-> next build.
->
-> One behaviour worth knowing before pointing it at real data: a document `save`
-> is a **sync**, so an element the document omits is *deleted*. That makes a
-> partial read destructive, which is why `save` refuses a document shorter than
-> the aggregate unless it declares `complete: true`.
+> ⚠️ **Purely experimental.** A research prototype, not a library to depend on.
+> It exists to find out how much of a domain a Hydra API can publish before a
+> client needs to be told anything out of band.
 
 Authorization- and state-aware **HATEOAS affordances** for [Ash](https://ash-hq.org),
 served natively as a **[Hydra](https://www.hydra-cg.com/) / JSON-LD** API.
