@@ -60,7 +60,14 @@ defmodule AshHateoas.MixProject do
       # an argument (`authorize_if expr(^arg(:tier) == "public")`) is wrongly
       # dropped from the advertised surface. `override: true` because transitive
       # deps still ask for hex `~> 3.x`.
-      {:ash, path: "../ash", override: true},
+      #
+      # From GIT, not a sibling path. A `path: "../ash"` here resolves relative
+      # to wherever this package sits, so a consumer that fetched it from git
+      # looks for `deps/ash` — which nothing supplies, and `mix deps.get` fails
+      # with "the dependency is not available". That made this package
+      # unbuildable by anyone without the author's directory layout, and forced
+      # every consumer to restate this line to work around it.
+      {:ash, github: "jangrau13/ash", branch: "arg-gated-strict-check", override: true},
       {:spark, "~> 2.6"},
       {:jason, "~> 1.4"},
       # Required: the Hydra transport ships a Plug.
