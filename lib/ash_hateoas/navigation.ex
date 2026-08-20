@@ -27,6 +27,11 @@ defmodule AshHateoas.Navigation do
   "collection-of-collections" that no domain has. A record's parent is its
   collection, and `collection` says that already.
 
+  This is about what can be *derived*, not about what the root path answers.
+  `AshHateoas.Hydra.Plug` sends `303 See Other` there, pointing at the
+  documentation — a courtesy to a client following `hydra:entrypoint`, not a
+  structural link, and nothing here derives it.
+
   ## Authorization applies to navigation too
 
   Structural links MUST NOT reveal what the actor may not access. An unreachable

@@ -41,7 +41,7 @@ defmodule AshHateoas.Hydra.Plug do
 
   | request | response |
   |---|---|
-  | `GET /` | the `hydra:ApiDocumentation` entrypoint — reachable types + links |
+  | `GET /` | `303 See Other` to `<doc_path>` — the entry point holds no representation of its own |
   | `GET <doc_path>` | the full `ApiDocumentation` (`supportedClass`…) |
   | `GET <collection>` | a `hydra:Collection` with `member` + `totalItems` |
   | `GET <member>` | the resource node with its gated `hydra:operation`s |
@@ -89,25 +89,42 @@ defmodule AshHateoas.Hydra.Plug do
 
   # ── Dispatch ────────────────────────────────────────────────────────────────
 
-  # `GET /` serves nothing, and falls through to the 404 below.
+  # `GET /` holds no representation of its own, and answers `303 See Other`
+  # pointing at the documentation.
   #
   # **A collection-of-collections is not a resource**: nothing in any domain
-  # corresponds to it, so there is nothing for the root path to represent.
+  # corresponds to it, so there is nothing for the root path to represent, and
+  # a listing here would have to key its entries by type name — putting data in
+  # JSON object key positions, which a `@context` cannot define, so a JSON-LD
+  # processor drops such keys silently. The rule throughout this package is
+  # that a key is a keyword or a declared term, never a value.
   #
-  # Nor does Hydra require an entry point. A client may start at *any* URL —
-  # every response carries `Link: <…/doc>; rel="apiDocumentation"`, so the full
-  # description is one hop from whatever resource a client holds.
+  # None of which makes 404 the right answer, because this package does not
+  # stay silent about the root: `ApiDocumentation` carries `hydra:entrypoint`,
+  # whose range is `hydra:Resource`, so every document published here asserts
+  # that the root IS a resource. Answering 404 there contradicts a triple this
+  # server itself emitted, and a client following `hydra:entrypoint` — the one
+  # thing that property is for — reaches a dead end.
   #
-  # A listing here would also have to key its entries by type name, putting
-  # data in JSON object key positions, which a `@context` cannot define: such
-  # keys are dropped silently by a JSON-LD processor. The rule throughout this
-  # package is that a key is a keyword or a declared term, never a value.
+  # 303 rather than a body: the description already exists, at `doc_path`, and
+  # serving its bytes from a second URL would give one resource two addresses
+  # while its `@id` names only the first. "The answer is elsewhere, go there"
+  # is exactly what 303 means.
+  #
+  # This is a convenience and not a protocol requirement. Hydra needs no entry
+  # point — every response carries `Link: <…/doc>; rel="apiDocumentation"`, so
+  # a client may start at *any* URL and reach the description in one hop.
 
   defp dispatch(%{method: "GET"} = conn, segments, actor, _tenant, opts) do
-    if segments == doc_segments(opts) do
-      send_json(conn, 200, ApiDocumentation.build(opts[:domains], doc_opts(conn, opts)), opts)
-    else
-      serve_get(conn, segments, actor, opts)
+    cond do
+      segments == doc_segments(opts) ->
+        send_json(conn, 200, ApiDocumentation.build(opts[:domains], doc_opts(conn, opts)), opts)
+
+      segments == [] ->
+        see_other(conn, href_prefix(opts) <> opts[:doc_path], opts)
+
+      true ->
+        serve_get(conn, segments, actor, opts)
     end
   end
 
@@ -1588,6 +1605,26 @@ defmodule AshHateoas.Hydra.Plug do
       "" -> request_origin(conn)
       url -> url
     end
+  end
+
+  # A 303 with a body, because `curl` without `-L` should still say something
+  # useful rather than print nothing. The body is advisory — the `Location`
+  # header is what a client acts on, and 303 bodies are conventionally ignored.
+  defp see_other(conn, location, opts) do
+    conn
+    |> Plug.Conn.put_resp_header("location", location)
+    |> send_json(
+      303,
+      %{
+        "@type" => "hydra:Resource",
+        "hydra:title" => "See the API documentation",
+        "hydra:description" =>
+          "This URL is the API's entry point and holds no representation of its own. " <>
+            "The description of every class, collection and operation is at #{location}.",
+        "hydra:apiDocumentation" => %{"@id" => location}
+      },
+      opts
+    )
   end
 
   defp send_error(conn, status, title) do

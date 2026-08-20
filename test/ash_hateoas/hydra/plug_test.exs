@@ -62,10 +62,37 @@ defmodule AshHateoas.Hydra.PlugTest do
   end
 
   describe "there is no entry point" do
-    test "GET / serves nothing" do
+    test "GET / holds no representation, and says where the description is" do
       # A collection-of-collections is not a resource — nothing in any domain
-      # corresponds to it, so there is nothing here to represent.
-      assert get("/", @admin).status == 404
+      # corresponds to it, so there is nothing here to represent. That is a
+      # reason to hold no representation, not a reason to deny the URL exists:
+      # every ApiDocumentation this package emits carries `hydra:entrypoint`
+      # pointing here, and `entrypoint`'s range is `hydra:Resource`. A 404
+      # would contradict a triple the server itself published.
+      conn = get("/", @admin)
+
+      assert conn.status == 303
+      assert get_resp_header(conn, "location") == ["/doc"]
+      # Still discoverable the ordinary way, without following the redirect.
+      assert [link] = get_resp_header(conn, "link")
+      assert link =~ Context.api_documentation_rel()
+    end
+
+    test "what hydra:entrypoint points at is reachable" do
+      # The property exists to be followed. Resolve it exactly as a client
+      # would, and land on the documentation.
+      doc = Jason.decode!(get("/doc", @admin).resp_body)
+      entrypoint = doc["hydra:entrypoint"]
+
+      assert is_binary(entrypoint)
+
+      hop = get(entrypoint, @admin)
+      assert hop.status == 303
+
+      [location] = get_resp_header(hop, "location")
+      landed = Jason.decode!(get(location, @admin).resp_body)
+
+      assert landed["@type"] == "ApiDocumentation"
     end
 
     test "a client can start anywhere, because every response describes the API" do
