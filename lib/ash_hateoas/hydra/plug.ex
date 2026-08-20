@@ -121,7 +121,7 @@ defmodule AshHateoas.Hydra.Plug do
         send_json(conn, 200, ApiDocumentation.build(opts[:domains], doc_opts(conn, opts)), opts)
 
       segments == [] ->
-        see_other(conn, href_prefix(opts) <> opts[:doc_path], opts)
+        send_json(conn, 200, entry_point(conn, actor, opts), opts)
 
       true ->
         serve_get(conn, segments, actor, opts)
@@ -1607,24 +1607,55 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
-  # A 303 with a body, because `curl` without `-L` should still say something
-  # useful rather than print nothing. The body is advisory — the `Location`
-  # header is what a client acts on, and 303 bodies are conventionally ignored.
-  defp see_other(conn, location, opts) do
-    conn
-    |> Plug.Conn.put_resp_header("location", location)
-    |> send_json(
-      303,
-      %{
-        "@type" => "hydra:Resource",
-        "hydra:title" => "See the API documentation",
-        "hydra:description" =>
-          "This URL is the API's entry point and holds no representation of its own. " <>
-            "The description of every class, collection and operation is at #{location}.",
-        "hydra:apiDocumentation" => %{"@id" => location}
-      },
-      opts
-    )
+  # The entry point: the one URL a client has to be told.
+  #
+  # It carries `hydra:collection` per reachable type, which is the same property
+  # a record uses to name the collection it belongs to, so a client that can
+  # follow one can follow these. Nothing is keyed by type name, so no data lands
+  # in a JSON object key: the values are typed node references and the key is a
+  # declared Hydra term. That was the objection to the old root listing, and it
+  # is answered here rather than avoided.
+  #
+  # THE LIST IS PER ACTOR. A link is followable only if the actor may perform
+  # the action that following it performs, so a collection this actor would be
+  # refused is omitted rather than offered and rejected on arrival.
+  defp entry_point(conn, actor, opts) do
+    collections =
+      opts[:domains]
+      |> Index.build()
+      |> Enum.sort_by(fn {type, _} -> type end)
+      |> Enum.flat_map(fn {type, resource} -> collection_link(type, resource, actor, opts) end)
+
+    %{
+      "@context" => Context.context(),
+      "@id" => href_prefix(opts) <> request_url(conn),
+      "@type" => "hydra:Resource",
+      "hydra:title" => "Entry point",
+      "hydra:apiDocumentation" => %{"@id" => href_prefix(opts) <> opts[:doc_path]},
+      "hydra:collection" => collections
+    }
+  end
+
+  defp collection_link(type, resource, actor, opts) do
+    with href when is_binary(href) <-
+           Navigation.collection_href(resource, opts[:domains], prefix: href_prefix(opts)),
+         true <- readable?(resource, actor) do
+      [%{"@id" => href, "@type" => "hydra:Collection", "hydra:title" => to_string(type)}]
+    else
+      _ -> []
+    end
+  end
+
+  # Whether this actor may read this resource at all. `Ash.can?/3` asks the same
+  # question the read itself will ask, so the answer here and the answer on
+  # arrival cannot disagree.
+  defp readable?(resource, actor) do
+    case Ash.Resource.Info.primary_action(resource, :read) do
+      nil -> false
+      %{name: name} -> Ash.can?({resource, name, %{}}, actor, run_queries?: false, maybe_is: true)
+    end
+  rescue
+    _ -> false
   end
 
   defp send_error(conn, status, title) do
