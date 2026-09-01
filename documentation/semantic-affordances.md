@@ -50,8 +50,8 @@ schema.org is the **default**, not a hard-wiring. `semantic_type`,
   freely per attribute/action.
 
 Only what a **bare** token means changes; absolute IRIs are never touched. See
-`AshHateoas.SemanticVocab`. (An un-annotated action gets **no**
-`potentialAction` at all — a subtype derived from the HTTP method would restate
+`AshHateoas.SemanticVocab`. (An un-annotated action's class gets **no**
+superclass at all — a subtype derived from the HTTP method would restate
 `hydra:method`. Name its role with an explicit `semantic_action`, in schema.org's
 vocabulary or your own.)
 
@@ -60,24 +60,55 @@ vocabulary or your own.)
 | Layer | Native term (kept) | Standard annotation (added) | Vocabulary |
 |---|---|---|---|
 | an operation's HTTP verb | `hydra:method: "PATCH"` | — (already an IANA method) | IANA HTTP Methods |
-| an operation's *declared role* | `hydra:operation` | `schema:potentialAction` typed by an explicit `semantic_action` (`CheckAction`, `ConfirmAction`, …); absent where none was declared | schema.org Actions |
-| the named-sub-action relation | `ah:<action>` key | (identifier stays; CRUD writes *are* the IANA `edit` rel) | IANA Link Relations |
+| an operation's *identity* | a minted class, `<Class>/<action>Action`, in the operation's `@type` | — (the class **is** the IRI) | this API's own vocabulary |
+| an operation's *declared role* | the minted class | `rdfs:subClassOf` an explicit `semantic_action` (`CheckAction`, `ConfirmAction`, …), declared in the ontology; absent where none was given | schema.org Actions |
+| the named-sub-action relation | the operation's class (its URL as `ah:href`) | (identifier stays; CRUD writes *are* the IANA `edit` rel) | IANA Link Relations |
 | an actor's granted operation | node `hydra:operation` (present-if-allowed) | `odrl:Permission` with an `odrl:action` | ODRL 2.2 |
 | `not_delegable?` | — | `odrl:Duty` / `odrl:Constraint` | ODRL 2.2 |
 | a to-many relationship | a navigation route | `hydra:Link` property on the node | Hydra Core |
 | an operation's outcomes | (none today) | `hydra:possibleStatus` → `hydra:Status` | Hydra Core |
 
-## Layer 1 — schema.org `potentialAction` (the operation as a verb)
+## Layer 1 — the operation's class, and what it is a subclass of
 
-Each affordance renders as a `hydra:Operation`. Where the domain **declared** a
-role, the operation additionally carries a `schema:potentialAction` naming it:
+Each affordance renders as a `hydra:Operation` whose `@type` names a class
+minted for the action. Where the domain **declared** a role, that class is a
+subclass of the published term, so the chain runs from the operation up
+schema.org's own hierarchy:
+
+```
+vocab#Order/confirmAction  ⊑  schema:ConfirmAction  ⊑  schema:Action
+```
+
+The axiom lives in the `ApiDocumentation`'s `@included`, which is fetched once
+and cached — a superclass holds in every state and for every actor, so
+repeating it on each response would state a stable fact in the document whose
+job is the unstable one.
+
+This replaces `schema:potentialAction`, which said the operation *has* an
+action. The class says it **is** one, which is the accurate reading for a node
+that is the offer to act — and `potentialAction` is defined with domain `Thing`
+and range `Action`, making an `Operation` an awkward subject for it. What the
+declaration used to look like:
 
 ```json
 "schema:potentialAction": {"@type": "https://schema.org/ConfirmAction"}
 ```
 
-That is the whole node. It answers one question — *what is this operation for?*
-— and it is the one question Hydra has no term for.
+and what it looks like now, split between the two documents:
+
+```json
+// on the node — the operation states its own class
+{ "@type": ["Operation", "vocab#Order/confirmAction"], "hydra:method": "PATCH" }
+
+// in the ApiDocumentation's @included — what that class is
+{ "@id": "vocab#Order/confirmAction", "@type": "owl:Class",
+  "rdfs:label": "confirm",
+  "rdfs:subClassOf": { "@id": "https://schema.org/ConfirmAction" } }
+```
+
+Both answer one question — *what is this operation for?* — and it is the one
+question Hydra has no term for. The second form also answers *which operation is
+this?*, which the first left to a bare string.
 
 ### Why the role needs saying, and nothing else does
 
@@ -85,7 +116,8 @@ An operation already states where, how, what in and what out:
 
 | question | stated by |
 |---|---|
-| **where** | the `@id` of the node the operation hangs on |
+| **which operation** | the minted class in `@type` |
+| **where** | `ah:href` |
 | **how** | `hydra:method` |
 | **what you send** | `hydra:expects` |
 | **what comes back** | `hydra:returns` |
@@ -98,21 +130,28 @@ domain, which may rename `validate` to `check` or `prüfen` tomorrow. A
 schema.org Action subtype states the role in a published vocabulary instead, so
 the contract is the API's rather than a convention two parties happen to share.
 
-**A role the method already implies states nothing**, so a subtype is emitted
-only where a `semantic_action` declared one. Measured on the fixture domain,
-inferring from the method made **139 of 146** `potentialAction` nodes a
-mechanical restatement of `hydra:method` on the same node. The 7 survivors are
-the ones carrying information: `CheckAction`, `ConfirmAction`, `ShipAction`, and
-this library's own `ah:SaveAction` / `ah:RunAction` for roles no published
-vocabulary has a term for.
+**A role the method already implies states nothing**, so a superclass is
+declared only where a `semantic_action` supplied one. Measured on the fixture
+domain when the role was still a key, inferring from the method made **139 of
+146** `potentialAction` nodes a mechanical restatement of `hydra:method` on the
+same node. The 7 survivors are the ones carrying information: `CheckAction`,
+`ConfirmAction`, `ShipAction`, and this library's own `ah:SaveAction` /
+`ah:RunAction` for roles no published vocabulary has a term for.
+
+An action with no declared role therefore has **no** superclass. There is
+deliberately no `owl:Thing` default either: every OWL class is trivially a
+subclass of it, so the triple entails nothing.
 
 ### There is no `schema:target`
 
 It would carry a `urlTemplate`, an `httpMethod` and a `contentType` — all three
 already stated, per the table above, and the content type belonging to the API
-rather than to one operation. **Hydra's `Operation` has no target-URL property
-precisely because it needs none:** an operation is invoked against the node it
-hangs on.
+rather than to one operation. **Hydra core mints no target-URL term, so this
+package mints `ah:href`** — carried by every operation, since a client cannot
+invoke anything without a URL. What `schema:target` would add on top of that is
+a whole second model of an invocation: it ranges over `schema:EntryPoint`, which
+drags `EntryPointDescription`, `actionApplication` and `httpMethod` with it, for
+the sake of one URL `ah:href` already states.
 
 It would also be ill-typed. schema.org defines `urlTemplate` as *"an url
 template (RFC6570) that will be used to construct the target of the execution of
@@ -143,7 +182,7 @@ nothing else says `?query=` exists or that it is optional.
 
 **Path variables are a different matter.** A member URL, a sub-action URL and a
 relationship URL are all *given* — a collection lists its members with full
-`@id`s, a record carries concrete `ah:<action>` URLs, a relationship is a
+`@id`s, a record's operations carry concrete `ah:href` URLs, a relationship is a
 `hydra:Link` you follow. A client never holds ids without a URL, so a template
 describing `/entry/{id}` would restate an address the document already provides.
 Templates are for constructing URLs, and these need no construction.
@@ -255,17 +294,48 @@ Uses more of the vocabulary already grounded, no new namespace:
   `target` with `urlTemplate` / `httpMethod` / `contentType`;
   CRUD subtypes `ReadAction` / `CreateAction` / `UpdateAction` / `DeleteAction`
   and domain verbs (`ConfirmAction`, `CancelAction`, `ShipAction`, …).
-  Of these, **only the declared domain verbs are emitted**: `target` restates
-  facts the operation already carries, and a CRUD subtype restates
-  `hydra:method`. `urlTemplate`'s own definition names RFC 6570 — worth
-  recording, since the value emitted was a Plug route for as long as the term
-  was present.
+  Of these, **only the declared domain verbs are used**, and as *superclasses*
+  rather than as a `potentialAction` value: that property's domain is `Thing`
+  and its range `Action`, so it says an operation *has* an action where what is
+  true is that the operation **is** one. `target` restates facts the operation
+  already carries — and where it would *not* (a sub-action's own URL) it drags
+  an `EntryPoint`/`EntryPointDescription` reading along that does not apply, so
+  `ah:href` carries that URL instead. A CRUD subtype restates `hydra:method`.
+  `urlTemplate`'s own definition names RFC 6570 — worth recording, since the
+  value emitted was a Plug route for as long as the term was present.
 - **IANA Link Relations:** the registered `edit` relation (RFC 5023) for a
   resource's update/delete affordance; no registered relation for domain verbs
-  (`approve`, `confirm`), which is why `ah:<action>` remains their identifier.
+  (`approve`, `confirm`), which is why each gets a class of its own under this
+  API's vocabulary.
 - **IANA HTTP Method Registry:** the `hydra:method` token values.
 - **Hydra Core Vocabulary:** `hydra:Link`, `hydra:possibleStatus`,
   `hydra:Status` — as verified in `hydra-conformance-notes.md`.
+
+## A minted property IRI is the fallback, not the default
+
+An attribute with no `semantic_property` gets an IRI minted under the API's own
+vocabulary. That satisfies the letter of "everything is an IRI", and **nothing
+outside the API knows the term** — which is most of the point of having one.
+
+So look for a published term first. `schema:creativeWorkStatus`, for instance,
+fits a lifecycle-status attribute exactly: domain `CreativeWork`, range
+`DefinedTerm` or `Text`, defined as *"the status of a creative work in terms of
+its stage in a lifecycle"*, and explicitly allowing an organisation's own
+vocabulary of stages. A minted `vocab#course/status` says the same thing to
+nobody.
+
+The mechanism is already there and is the same one used for a resource and an
+action:
+
+| what | declaration |
+|---|---|
+| a resource | `semantic_type "Course"` |
+| an attribute | `semantic_property :status, "creativeWorkStatus"` |
+| an action | `semantic_action :confirm, "ConfirmAction"` |
+
+Mint one when no published term fits, which is often. Mint one **because you did
+not look**, and the document is readable only by something written against this
+API — which is the state the whole layer exists to get out of.
 
 ## Design principle
 

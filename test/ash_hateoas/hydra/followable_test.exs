@@ -65,16 +65,17 @@ defmodule AshHateoas.Hydra.FollowableTest do
   #
   # An **operation target** is deliberately excluded, and the distinction is
   # Hydra's own. `hydra:Link` marks a value *intended to be dereferenced*;
-  # `/documents/<id>/approve` is a POST endpoint, so a GET against it correctly
-  # 404s. On the wire the two are already distinct shapes:
+  # `/documents/<id>/approve` is a write endpoint, so a GET against it 404s —
+  # asserted directly below rather than assumed, because the flattening rests
+  # on it. On the wire the two are distinct shapes:
   #
-  #     "comments":   {"@id" => "…/comments", "@type" => "Collection"}   ← follow
-  #     "ah:approve": {"@id" => "…/approve", "hydra:operation" => […]}   ← invoke
+  #     "comments":  {"@id" => "…/comments", "@type" => "Collection"}    ← follow
+  #     an operation entry with "ah:href" => {"@id" => "…/approve"}      ← invoke
   #
-  # So a node carrying `hydra:operation` states what may be *done* at that URL,
-  # not that it may be fetched. Keying on that rather than on the `ah:` prefix
-  # keeps this test from encoding the current spelling — the plan's optional
-  # step folds those nodes into `hydra:operation`, and this survives it.
+  # A sub-action's URL now rides inside `hydra:operation`, which this walk skips
+  # entirely, so it is excluded by the same rule that excluded the link node
+  # that used to carry it: `hydra:operation` states what may be *done* at a URL,
+  # never that it may be fetched.
   defp advertised_urls(node) do
     node
     |> collect_ids()
@@ -232,6 +233,67 @@ defmodule AshHateoas.Hydra.FollowableTest do
 
     test "the other side's own URLs are unaffected", %{ledger: ledger} do
       assert_all_followable("/domain/ledger/#{ledger.id}")
+    end
+  end
+
+  describe "an operation target is not a followable URL" do
+    test "a GET on a named sub-action's URL is a 404", %{document: document} do
+      # The justification for carrying a sub-action's URL inside its operation
+      # rather than on a link edge off the node. A link node's `@id` looked
+      # followable and was not: `AshHateoas.Hydra.Plug` routes GETs through
+      # `serve_get/4`, which matches `:member`, `:collection` and `:related`
+      # only, while a sub-action path is matched by `match_write/3` — reached
+      # for POST, PATCH and DELETE. So the edge pointed at nothing, and the one
+      # genuine benefit of the wrapper was never real.
+      #
+      # This is a statement about what the router *does*, not what it must do.
+      # Were `serve_get/4` taught to answer with the operation's description,
+      # this test is where that decision would show up.
+      assert get("/documents/#{document.id}/approve").status == 404
+
+      # And it is a write target for real, so the 404 is about the method.
+      #
+      # The node states **where**, and no longer states with what verb: a method
+      # is a property of the action, true in every state, so it is stated once in
+      # the catalogue. The two documents are joined by the class in `@type`,
+      # which is exactly what that class was minted for — so the check reads the
+      # node for the address and the documentation for the method, which is what
+      # a client does.
+      op =
+        "/documents/#{document.id}"
+        |> get()
+        |> body()
+        |> Map.fetch!("hydra:operation")
+        |> Enum.find(&Enum.any?(&1["@type"], fn t -> t =~ "approveAction" end))
+
+      assert op["ah:href"]["@id"] == "/documents/#{document.id}/approve"
+      refute Map.has_key?(op, "hydra:method")
+
+      action_class = Enum.find(op["@type"], &(&1 =~ "approveAction"))
+
+      described =
+        "/doc"
+        |> get()
+        |> body()
+        |> Map.fetch!("hydra:supportedClass")
+        |> Enum.flat_map(&(&1["hydra:supportedOperation"] || []))
+        |> Enum.find(&(action_class in &1["@type"]))
+
+      assert described, "the node names a class the catalogue does not describe"
+
+      # POST, not PATCH: a named transition is resource-specific processing of
+      # the request content, where PATCH is defined by sending a description of
+      # how to modify the record.
+      assert described["hydra:method"] == "POST"
+    end
+
+    test "the sweep does not treat an operation's ah:href as followable", %{document: document} do
+      # Otherwise every test above would fail on the 404 the previous test
+      # asserts. The exclusion is structural — the walk never descends into
+      # `hydra:operation` — so it holds for any operation key, present or future.
+      urls = "/documents/#{document.id}" |> get() |> body() |> advertised_urls()
+
+      refute "/documents/#{document.id}/approve" in urls
     end
   end
 

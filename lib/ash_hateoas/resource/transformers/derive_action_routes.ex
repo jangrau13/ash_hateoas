@@ -176,7 +176,55 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
       generic?(action) -> generic_specs(dsl_state, action)
       primary?(dsl_state, action) -> primary_specs(action.type)
       collection_read?(action) -> [{:index, [route: "/#{action.name}"]}]
-      true -> [{non_primary_type(action.type), [route: "/:id/#{action.name}"]}]
+      true -> [sub_action_spec(dsl_state, action)]
+    end
+  end
+
+  # A **named sub-action** — `/:id/open_sitting`, `/:id/publish`, `/:id/enrol`.
+  #
+  # ## Why an update's sub-action is a POST
+  #
+  # It used to be a `PATCH`, because the Ash action's type is `:update` and the
+  # route kind was read straight off it. RFC 5789 defines `PATCH` by its body:
+  # *"The enclosed entity contains a set of instructions describing how a
+  # resource currently residing on the origin server should be modified to
+  # produce a new version."* A named transition does not send that. `open_sitting`
+  # sends **no entity at all**, so it was a PATCH with no patch document, which
+  # has no defined meaning; `sit` sends a `student_id`, which is an argument to a
+  # transition rather than a description of how the exam is to be modified.
+  #
+  # RFC 9110 gives the method for this: `POST` performs *"resource-specific
+  # processing on the request content"*, which is exactly what a named transition
+  # is. Afterwards `hydra:method` carries a real distinction again — POST for a
+  # transition against PATCH for a partial modification — where one token used to
+  # sit on three unlike operations on the same class.
+  #
+  # **This is not the rule the renderer guards.** That rule forbids reading a
+  # *role* out of a method, because a role the method already implies states
+  # nothing. This runs the other way: it picks the method that matches what the
+  # action does.
+  #
+  # ## What is left alone, and why
+  #
+  # A **read** stays `GET` and a **create** stays `POST`; neither was ever wrong.
+  # A named **destroy** stays `DELETE`, and that is a deliberate stop rather than
+  # an oversight: the argument above is about `PATCH` semantics and does not carry
+  # over on its own, and changing it would move a URL's verb on the strength of an
+  # argument nobody has made. See
+  # `documentation/change-request-callable-operations.md` §4.
+  #
+  # The author override is the escape hatch, and it is the same one a generic
+  # action has always used — `method :sit, :patch` for a sub-action that genuinely
+  # does send a patch document.
+  defp sub_action_spec(dsl_state, action) do
+    case AshHateoas.Resource.Info.method(dsl_state, action.name) do
+      nil ->
+        {non_primary_type(action.type), [route: "/:id/#{action.name}"]}
+
+      declared ->
+        # Carried as data beside the kind, so the route's own verb is the
+        # author's and every reader of the route table sees the same one.
+        {non_primary_type(action.type), [method: declared, route: "/:id/#{action.name}"]}
     end
   end
 
@@ -289,7 +337,8 @@ defmodule AshHateoas.Resource.Transformers.DeriveActionRoutes do
   # and navigation reads a type's index route to find its collection URL.
   defp non_primary_type(:read), do: :get
   defp non_primary_type(:create), do: :post
-  defp non_primary_type(:update), do: :patch
+  # A named transition, not a partial modification — see `sub_action_spec/2`.
+  defp non_primary_type(:update), do: :post
   defp non_primary_type(:destroy), do: :delete
   defp non_primary_type(_generic), do: :post
 

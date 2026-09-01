@@ -56,7 +56,7 @@ defmodule AshHateoas.Hydra.Plug do
 
   require Logger
 
-  alias AshHateoas.Hydra.{ApiDocumentation, Collection, Context, LinkInput, Renderer}
+  alias AshHateoas.Hydra.{ApiDocumentation, Collection, Context, LinkInput, Ontology, Renderer}
   alias AshHateoas.Hydra.Error, as: HydraError
   alias AshHateoas.{Index, Navigation, Route}
 
@@ -232,18 +232,33 @@ defmodule AshHateoas.Hydra.Plug do
             node(record, type, resource, id, actor, tenant, opts, scope: :linked)
           end)
 
+        # The collection's own URL, passed to the renderer as well as used as the
+        # `@id`: an operation invoked against the collection itself (a `create`
+        # POSTed here) then needs no `ah:href`, while a named read at its own URL
+        # still states one.
+        collection_id = collection_href(resource, opts)
+
         # Collection-level affordances (create, …) live on the collection, not
         # on its members — this keeps a collection response independent of page
         # size.
         operations =
           resource
           |> AshHateoas.affordances(actor, affordance_opts(resource, opts))
-          |> Renderer.render(render_opts(type, resource, opts))
+          |> Renderer.render(render_opts(type, resource, opts, node_id: collection_id))
 
         document =
           Collection.wrap(members,
-            id: collection_href(resource, opts),
+            id: collection_id,
             total_items: total,
+            # Which class this collection is an instance of, so a client can look
+            # up what it supports — create, list — rather than matching the URL
+            # against the catalogue to find out.
+            class: Context.collection_class_iri(type),
+            # What a client holding only this response would otherwise have to
+            # infer from the members it happens to have been sent — and an empty
+            # page carries no members to infer from. The same statement the
+            # catalogue's collection class makes, so a client can join the two.
+            member_class: Context.class_iri(type),
             operations: operations,
             view_map: view_map
           )
@@ -318,7 +333,17 @@ defmodule AshHateoas.Hydra.Plug do
           id: related_href(resource, definition, id, opts),
           # The **whole** set, not this page — that is what `totalItems` means,
           # and it is what tells a client how much a page is leaving out.
-          total_items: length(all)
+          total_items: length(all),
+          # The DESTINATION's class, for the same reason the `@context` below is
+          # the destination's: the members are comments.
+          member_class: Context.class_iri(type),
+          # But **not** the destination's collection class. This is one record's
+          # related set, not the destination's own collection: it supports
+          # neither the create that `Comment/Collection` advertises nor the named
+          # reads filed there, and claiming it does would advertise operations
+          # this URL refuses. It carries the member assertion, which is the part
+          # that is true of both.
+          class: nil
         )
         # The DESTINATION's bindings, not the source's — the members are
         # comments. Same rule as the destination's own collection, which is what
@@ -645,6 +670,13 @@ defmodule AshHateoas.Hydra.Plug do
   # 404 having been told it was available. The representation is the record's
   # final state and nothing more: what it *was*, not what may be done to it.
   #
+  # `odrl:permission` goes with them, and for the same reason — it is the same
+  # granted set stated as policy, so leaving it behind would say the actor may
+  # `odrl:modify` a record that is gone. Dropping `hydra:operation` alone used
+  # to leave both that list *and* every `ah:<action>` link node in place, so the
+  # affordances this comment describes as absent were two thirds present. With
+  # the operations flat, these two keys are the whole set.
+  #
   # `hydra:returns` names this class rather than `owl:Nothing`, and the two must
   # stay in step — see `Renderer.put_returns/3`.
   defp respond_destroy({:ok, record}, conn, resource, type, actor, tenant, opts) do
@@ -656,7 +688,7 @@ defmodule AshHateoas.Hydra.Plug do
       conn,
       200,
       node
-      |> Map.drop(["hydra:operation"])
+      |> Map.drop(["hydra:operation", "odrl:permission"])
       |> Map.put("@context", context),
       opts
     )
@@ -915,6 +947,10 @@ defmodule AshHateoas.Hydra.Plug do
         Collection.wrap(refs,
           id: href,
           total_items: total,
+          # Asked of the module that declares the property's collection class,
+          # so the response and the declaration cannot disagree about what is
+          # inside — including where a filtered relationship narrows it.
+          member_class: Ontology.member_class_iri(resource, relationship.name),
           # `:view_map`, not `:view` — this is a built `PartialCollectionView`,
           # where `:view` takes the page links to build one from.
           view_map: view_links(href, total)
@@ -1000,21 +1036,22 @@ defmodule AshHateoas.Hydra.Plug do
       |> Enum.map(&expanded_node(&1, relationship.destination, opts))
       |> Enum.reject(&is_nil/1)
 
-    collection = %{
-      "@type" => "Collection",
-      "hydra:member" => members,
-      "hydra:totalItems" => length(members)
-    }
-
-    # The same `@id` the unloaded form carries — the collection's own URL, not
-    # the request's. Expansion states more about the members; it never changes
-    # which collection this is, so both forms are one subject with one identity.
-    # (`?load=comments` is how a client *asked*; it is not what the collection
-    # is called.)
-    case related_href(resource, relationship, id, opts) do
-      href when is_binary(href) -> Map.put(collection, "@id", href)
-      _ -> collection
-    end
+    # Through `Collection.wrap/2`, like every other collection this plug emits.
+    # Built by hand it was the one collection shape that could drift, and it did:
+    # it is the only one a `hydra:memberAssertion` would have had to be added to
+    # twice.
+    #
+    # The `@id` is the same one the unloaded form carries — the collection's own
+    # URL, not the request's. Expansion states more about the members; it never
+    # changes which collection this is, so both forms are one subject with one
+    # identity. (`?load=comments` is how a client *asked*; it is not what the
+    # collection is called.) `wrap/2` omits it when there is none, which is the
+    # blank-node case above.
+    Collection.wrap(members,
+      id: related_href(resource, relationship, id, opts),
+      total_items: length(members),
+      member_class: Ontology.member_class_iri(resource, relationship.name)
+    )
   end
 
   defp loaded_link(_targets, _resource, _relationship, _id, _opts), do: nil
@@ -1084,6 +1121,50 @@ defmodule AshHateoas.Hydra.Plug do
       {to_string(attribute.name), attribute_value(attribute, value, opts)}
     end)
     |> Map.merge(calculations(record, resource, opts))
+    |> warn_undeclared(resource)
+  end
+
+  # A `:map` attribute's inner keys are application data, so nothing declares
+  # them and a JSON-LD processor drops them without a word — the value looks
+  # right in the JSON and is silently incomplete in the graph. The keys are
+  # runtime data, so this cannot be a compile-time check; it is this.
+  #
+  # The fix is the author's and costs nothing: write `"schema:address"` rather
+  # than `"address"`, or declare the term. Every prefix is already in the
+  # emitted `@context`. See `Context.undeclared_keys/2`.
+  #
+  # **Warned once per key.** This runs on every node of every page, so a plain
+  # `Logger.warning` would turn one modelling mistake into a flood and get the
+  # log turned off. `:persistent_term` is read-free and written only the first
+  # time a given key is seen, which is bounded by the application's own schema.
+  defp warn_undeclared(attributes, resource) do
+    case Context.undeclared_keys(attributes, Context.node_terms(resource)) do
+      [] ->
+        attributes
+
+      keys ->
+        for key <- keys, do: warn_once(resource, key)
+        attributes
+    end
+  end
+
+  defp warn_once(resource, key) do
+    seen = {__MODULE__, :undeclared_key, resource, key}
+
+    unless :persistent_term.get(seen, false) do
+      :persistent_term.put(seen, true)
+
+      require Logger
+
+      Logger.warning("""
+      #{inspect(resource)} emits the key #{inspect(key)} inside a value, and no \
+      `@context` term defines it — a JSON-LD processor will drop it silently, so \
+      the triple never reaches the graph.
+
+      Write it prefixed (#{inspect("schema:" <> key)}) or declare a term for it. \
+      Every prefix the package emits is already bound.\
+      """)
+    end
   end
 
   # A public calculation is part of the representation, exactly as an attribute
@@ -1304,13 +1385,16 @@ defmodule AshHateoas.Hydra.Plug do
     end
   end
 
+  # A declared method wins, whatever the kind implies. It used to be read only
+  # for `:route`, so an author's `method :sit, :patch` on a named sub-action was
+  # advertised by the documentation and refused by the router — the catalogue
+  # said one verb and this said another, and the request 404ed.
+  defp route_method(%Route{method: method}) when not is_nil(method),
+    do: method |> to_string() |> String.upcase()
+
   defp route_method(%Route{type: :post}), do: "POST"
   defp route_method(%Route{type: :patch}), do: "PATCH"
   defp route_method(%Route{type: :delete}), do: "DELETE"
-
-  defp route_method(%Route{type: :route, method: method}),
-    do: method |> to_string() |> String.upcase()
-
   defp route_method(_route), do: nil
 
   # Every `:name` segment a path fills in, as `%{"name" => value}` — or `nil`
@@ -1488,7 +1572,7 @@ defmodule AshHateoas.Hydra.Plug do
     ]
   end
 
-  defp render_opts(type, resource, opts, extra \\ []) do
+  defp render_opts(type, resource, opts, extra) do
     [
       type: type,
       prefix: href_prefix(opts),
@@ -1498,8 +1582,16 @@ defmodule AshHateoas.Hydra.Plug do
 
   defp nav_opts(opts), do: [prefix: href_prefix(opts)]
 
+  # `prefix` is what makes the catalogue's `ah:template`s expandable. A route is
+  # stored as `/catalogue/exam/:id`, which is where the plug is mounted plus the
+  # path — a client given that has to know the mount to use it, which is the
+  # knowledge the documentation exists to remove.
   defp doc_opts(conn, opts) do
-    [entrypoint: href_prefix(opts) <> "/", id: href_prefix(opts) <> request_url(conn)]
+    [
+      entrypoint: href_prefix(opts) <> "/",
+      id: href_prefix(opts) <> request_url(conn),
+      prefix: href_prefix(opts)
+    ]
   end
 
   defp prefix(opts), do: Keyword.get(opts, :prefix, "") || ""
@@ -1640,7 +1732,18 @@ defmodule AshHateoas.Hydra.Plug do
     with href when is_binary(href) <-
            Navigation.collection_href(resource, opts[:domains], prefix: href_prefix(opts)),
          true <- readable?(resource, actor) do
-      [%{"@id" => href, "@type" => "hydra:Collection", "hydra:title" => to_string(type)}]
+      # Typed with the collection's own class as well as `hydra:Collection`, which
+      # is what makes the catalogue reachable from here: an entry-point row is an
+      # instance of a class the documentation describes, so a client reading the
+      # index learns what it may do with each set — list it, create into it —
+      # without fetching one first.
+      [
+        %{
+          "@id" => href,
+          "@type" => ["hydra:Collection", Context.collection_class_iri(type)],
+          "hydra:title" => to_string(type)
+        }
+      ]
     else
       _ -> []
     end

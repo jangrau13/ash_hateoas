@@ -14,17 +14,75 @@ defmodule AshHateoas.Hydra.Renderer do
   unambiguous to a raw-JSON reader that does not expand the context (see
   `documentation/hydra-conformance-notes.md`).
 
+  ## What a node's operation says, and what it does not
+
+  **`@type` and `ah:href`, and nothing else.** Those are the two facts that vary
+  per request; everything else about an operation holds in every state and for
+  every actor, so it is stated once in the `ApiDocumentation` rather than on each
+  response.
+
+  | on an operation | varies | why |
+  |---|---|---|
+  | its presence in `hydra:operation` | **yes** | `Ash.can?/3` and the state gate decide it per request |
+  | `ah:href` | **yes** | the record's own id is in it |
+  | `hydra:method` | no | a property of the action |
+  | `hydra:expects` | no | `AshHateoas.Descriptor` reads the action's `accept` and its public arguments, both declared on the action |
+  | `hydra:returns` | no | the class the action yields |
+  | `hydra:title` | no | the action's description |
+
+  The class in `@type` is the key that joins the two documents, which is what it
+  was minted for. On a captured API 40 node operations occupied 22,354 bytes and
+  occupy 6,729 carrying the two keys — the same 13 responses were repeating 92
+  statements the catalogue already made once.
+
+  **The rule is not "a node never states a shape".** It is:
+
+  > the catalogue states the shape; a node may restate it; a node that says
+  > nothing means the catalogue's answer stands.
+
+  Nothing in Ash makes an action's accepted input depend on a record's state
+  today, since `accept` and `arguments` are declared on the action. If that
+  changes, or an application wants to narrow an input for one state, the node is
+  where the narrower statement belongs — and `operation/2` is still the function
+  that builds it. That is one rule a client implements once, and it leaves room
+  for the case without paying for it on every response.
+
+  **What this costs.** A node stops being readable on its own: anything holding
+  one response and no catalogue — a test, a log line, a client that ignored the
+  `Link` header — can no longer say what a request to that operation looks like.
+  Every response carries `Link: <…>; rel="…apiDocumentation"`, and the catalogue
+  is one fetch, cacheable, and the same document for every actor. That header is
+  **load-bearing** now rather than a convenience, so a path that omits it is a
+  correctness bug.
+
   ## Where an operation attaches
 
-  Hydra's `Operation` has no target-URL property: a client invokes an operation
-  against the resource node it hangs on (`@id`). Two shapes follow from that:
+  Every affordance is one entry in the node's `hydra:operation`, and the array is
+  the only place to look.
 
-    * an operation whose href is the record's own URL (the REST `patch` /
-      `delete` at `/:id`) attaches directly to the node's `hydra:operation` — the
-      client invokes it against the node `@id`;
-    * a named sub-action (`/:id/approve`) needs a distinct URL, so it becomes a
-      link property (`ah:<action>`) whose `@id` is the href and whose
-      `hydra:operation` carries the operation. The distinct URL stays followable.
+  **Every operation states where it is invoked, as `ah:href`.** Hydra core mints
+  no term for it — `hydra:Operation` describes a method, an input and an output
+  and never a target — which is a gap in the vocabulary rather than a statement
+  that an operation has no target. It plainly has one: a client cannot invoke
+  anything without a URL.
+
+  The gap used to be filled by a *rule* — "an operation is invoked against the
+  node it hangs on" — with `ah:href` written only where that rule did not hold.
+  That made the common case implicit: an operation lifted out of its node, logged,
+  queued or handed to another process, no longer said where it went. So the rule
+  is materialised instead, and an operation is self-contained: read `ah:href`,
+  send there. Nothing has to know how the entry was reached.
+
+  A named sub-action (`/:id/approve`) states its own URL the same way; it is no
+  longer a special case, only a different value.
+
+  The sub-action used to be a link property (`ah:<action>`) wrapping a
+  single-element `hydra:operation`, which named the action twice — once as the
+  key, once as `ah:action` — and left a client two traversal paths for one
+  question. The wrapper's one benefit was that the URL sat on a followable edge,
+  and it was not real: `AshHateoas.Hydra.Plug` routes a sub-action path through
+  `match_write/3` only, so a GET on it is a 404. See
+  `documentation/change-request-flat-operations.md`.
 
   ## The edge inversions
 
@@ -39,13 +97,14 @@ defmodule AshHateoas.Hydra.Renderer do
   @doc """
   Render an affordance envelope into the members to merge onto a node.
 
-  Returns a map with a `"hydra:operation"` list for same-URL operations, plus one
-  `"ah:<action>"` link-node member per named sub-action.
+  Returns a map with one `"hydra:operation"` list holding every affordance, and
+  an `"odrl:permission"` list stating the same set as policy. Every operation
+  carries the URL it is invoked against as `ah:href`.
 
   ## Options
 
-    * `:node_id` — the resource node's `@id` (its own URL). An operation whose
-      href equals this attaches inline; others become link nodes.
+    * `:node_id` — the resource node's `@id` (its own URL), used as an
+      operation's target where the affordance derived none of its own.
     * `:type` — the resource type string, used to build property IRIs.
     * `:path_params` — substituted into hrefs (`%{"id" => "123"}`).
     * `:prefix` — external mount prefix prepended to every href.
@@ -54,27 +113,35 @@ defmodule AshHateoas.Hydra.Renderer do
   def render(affordances, opts \\ []) do
     node_id = Keyword.get(opts, :node_id)
 
-    {inline, linked} =
-      affordances
-      |> Enum.map(fn {_name, affordance} -> {affordance, href(affordance, opts)} end)
-      |> Enum.split_with(fn {_affordance, href} -> inline?(href, node_id) end)
-
-    base = %{}
-
-    base =
-      case inline do
-        [] -> base
-        pairs -> Map.put(base, "hydra:operation", Enum.map(pairs, &operation(elem(&1, 0), opts)))
-      end
-
-    base
-    |> put_permissions(affordances, opts)
-    |> then(fn acc ->
-      Enum.reduce(linked, acc, fn {affordance, href}, acc ->
-        Map.put(acc, "ah:#{affordance.name}", link_node(affordance, href, opts))
+    operations =
+      Enum.map(affordances, fn {_name, affordance} ->
+        %{"@type" => operation_type(affordance, opts)}
+        |> put_href(href(affordance, opts) || node_id)
       end)
-    end)
+
+    case operations do
+      [] -> %{}
+      ops -> %{"hydra:operation" => ops}
+    end
+    |> put_permissions(affordances, opts)
   end
+
+  # Where the operation is invoked. **Always stated**, including where it is the
+  # node's own `@id`.
+  #
+  # Writing it only for a sub-action left the common case resting on a rule the
+  # document never states — "invoke against the node this hangs on" — which holds
+  # only while the operation is still attached to that node. Lift one out to log
+  # it, queue it, or hand it to another process, and it no longer says where it
+  # goes. Materialising the rule costs one term per operation and makes an
+  # operation mean the same thing wherever it is read.
+  #
+  # Omitted only when there is nothing to say: no href was derived and no node
+  # URL was supplied, which is the `ApiDocumentation`'s case — it describes a
+  # class rather than a record, so there is no instance to invoke anything
+  # against and a template URL would be a different statement.
+  defp put_href(op, nil), do: op
+  defp put_href(op, href), do: Map.put(op, "ah:href", %{"@id" => href})
 
   # The granted affordance set, projected as an ODRL permission list — the W3C
   # standard for "what this party may do to this asset". A fail-closed surface
@@ -85,21 +152,50 @@ defmodule AshHateoas.Hydra.Renderer do
   defp put_permissions(node, affordances, _opts) when map_size(affordances) == 0, do: node
 
   defp put_permissions(node, affordances, opts) do
-    target = Keyword.get(opts, :node_id)
+    node_id = Keyword.get(opts, :node_id)
 
+    # The asset a permission is about is the URL the action is invoked on, so a
+    # sub-action targets **its own** URL rather than the record's. Defaulting to
+    # the node would say the actor may `odrl:modify` the record itself, when what
+    # was granted is one named transition on it — and with the operations now
+    # flat, the target is the only thing left distinguishing two permissions that
+    # share an ODRL action term.
     permissions =
       affordances
       |> Map.values()
-      |> Enum.map(&permission(&1, target))
+      |> Enum.map(&permission(&1, href(&1, opts) || node_id, opts))
 
     Map.put(node, "odrl:permission", permissions)
   end
 
-  defp permission(%Affordance{} = affordance, target) do
+  defp permission(%Affordance{} = affordance, target, opts) do
     perm = %{
       "@type" => "odrl:Permission",
       "odrl:action" => %{"@id" => odrl_action(affordance.method)}
     }
+
+    # Which operation this permission is *about*, as the same class IRI that
+    # operation carries in its `@type`. Without it the two lists cannot be
+    # joined: ODRL actions are a five-term vocabulary, so an `update` and a
+    # `close_sitting` are both `odrl:modify`, and a consumer wanting the duty
+    # attached to one named action had nothing to match on. `odrl:target`
+    # distinguishes a sub-action from the record but not two operations on the
+    # record itself.
+    #
+    # An IRI rather than the bare string it used to be, for the same reason the
+    # operation's own identity is one: a permission that names its operation by
+    # a local word can only be joined by a consumer that already knows this
+    # API's words. `ah:action` stays an `owl:AnnotationProperty`, which may take
+    # an IRI as its value without any description-logic consequence — the class
+    # is being *mentioned* here, not used.
+    perm =
+      case Keyword.get(opts, :type) do
+        nil ->
+          perm
+
+        type ->
+          Map.put(perm, "ah:action", %{"@id" => Context.action_class_iri(type, affordance.name)})
+      end
 
     perm =
       if affordance.not_delegable? do
@@ -130,98 +226,135 @@ defmodule AshHateoas.Hydra.Renderer do
   @spec operation(Affordance.t(), keyword()) :: map()
   def operation(%Affordance{} = affordance, opts \\ []) do
     %{
-      "@type" => "Operation",
-      "hydra:method" => affordance.method |> to_string() |> String.upcase(),
-      # The action's own name — see the note in
-      # `AshHateoas.Hydra.ApiDocumentation.supported_operations/2`. A node's
-      # offers are the actor- and state-dependent ones, so this is what lets a
-      # client match a live offer against the operation the documentation
-      # describes, rather than pairing them by method and URL shape.
-      "ah:action" => to_string(affordance.name)
+      "@type" => operation_type(affordance, opts),
+      "hydra:method" => affordance.method |> to_string() |> String.upcase()
     }
     |> put_unless_nil("hydra:title", affordance.description)
     |> put_expects(affordance, opts)
     |> put_returns(affordance, opts)
-    |> put_potential_action(affordance, opts)
   end
 
-  # The operation's **declared role**, and only when there is one.
+  # **The operation's identity, as an IRI.**
   #
-  # This is the one thing Hydra cannot say. `hydra:Operation` describes a method,
-  # an input and an output, but never what the operation is *for* — so a client
-  # asking "which of these is the save?" has only the action's name to go on, and
-  # a name belongs to the domain and may change. A schema.org Action subtype
-  # states the role in a published vocabulary instead.
+  # `"Operation"` alone separates nothing: every operation this package emits
+  # carries it, so what actually distinguished them was `ah:action`, a bare
+  # string. A string cannot be dereferenced, cannot be a subclass of anything,
+  # and cannot be the target of an annotation — and it is local, so a consumer
+  # meeting two APIs each with an `approve` has no way to tell whether they are
+  # the same kind of thing. The class minted here is all three.
   #
-  # **A role a method already implies states nothing**, so no subtype is
-  # inferred from the HTTP verb: deriving `schema:ReadAction` from a GET would
-  # be a second spelling of `hydra:method` on the same node, which is only a
-  # chance for two spellings to disagree. Only what a `semantic_action`
-  # declares is emitted — `CheckAction`, `ConfirmAction`, `ShipAction`, and this
-  # library's own `SaveAction`/`RunAction` for roles no published vocabulary
-  # carries.
+  # It says the operation **is** an instance of that class, where
+  # `schema:potentialAction` said the operation *has* one. The stronger reading
+  # is the accurate one: the node is the offer to act, not a thing with an
+  # action hanging off it — and `schema:potentialAction` is defined with domain
+  # `Thing` and range `Action`, which makes an `Operation` an awkward subject
+  # for it. So `schema:potentialAction` is gone, and a declared
+  # `semantic_action` becomes `rdfs:subClassOf` on the minted class instead
+  # (`AshHateoas.Hydra.Ontology`), where it is an axiom stated once rather than
+  # a fact repeated on every response.
   #
-  # There is likewise **no `schema:target`**. It would restate the URL, the
-  # method and the content type — and all three are already stated:
+  # **Nothing here is inferred from the HTTP method**, which is the rule
+  # `put_potential_action/3` was written to keep and this keeps unchanged. The
+  # class comes from the action's own name, which the method does not carry: two
+  # `update`-shaped actions on one resource are both `PATCH` returning the same
+  # class, so the method cannot separate them and the name can. Minting an IRI
+  # for something the payload already named as a string adds no claim about what
+  # the operation is *for*; it gives the name an address.
   #
-  #   * the URL is the node the operation hangs on (`@id`), which is Hydra's own
-  #     rule: an operation is invoked against its node. `hydra:Operation` has no
-  #     target-URL property precisely because it needs none;
-  #   * the method is `hydra:method`, on this very node;
-  #   * the content type is the API's, not this operation's.
-  #
-  # It would also be ill-typed: `schema:urlTemplate` is defined as *"an url
-  # template (RFC6570)"*, and a Plug route is not one — RFC 6570 gives `:` no
-  # meaning, so an expander finds zero variables and hands back a literal
-  # `:id`. A templated URL is stated once, properly, as a `hydra:IriTemplate`.
-  defp put_potential_action(op, %Affordance{} = affordance, opts) do
-    case declared_action_type(affordance, opts) do
-      nil -> op
-      iri -> Map.put(op, "schema:potentialAction", %{"@type" => iri})
+  # Without a resource type there is no vocabulary to mint under, so the bare
+  # Hydra type is all that can honestly be said.
+  defp operation_type(%Affordance{name: name}, opts) do
+    case Keyword.get(opts, :type) do
+      nil -> "Operation"
+      type -> ["Operation", Context.action_class_iri(type, name)]
     end
   end
 
-  # Only an explicit `semantic_action`. Bare tokens have already been resolved to
-  # full IRIs by the info reader, so whatever arrives here is what the domain
-  # declared — never a guess from the action's name, and no longer a fallback
-  # derived from the HTTP method.
-  defp declared_action_type(%Affordance{name: name}, opts) do
-    case Keyword.get(opts, :semantic_actions, %{})[name] do
-      iri when is_binary(iri) -> iri
-      _ -> nil
-    end
-  end
+  # ## Why there is no `schema:target`, and no CRUD subtype
+  #
+  # Kept as a note because both were once emitted and the reasoning still binds
+  # what may be added back.
+  #
+  # **A role a method already implies states nothing.** No subtype is inferred
+  # from the HTTP verb: deriving `schema:ReadAction` from a GET would be a
+  # second spelling of `hydra:method` on the same node, which is only a chance
+  # for two spellings to disagree. What a `semantic_action` declares —
+  # `CheckAction`, `ConfirmAction`, `ShipAction`, and this library's own
+  # `SaveAction`/`RunAction` for roles no published vocabulary carries — is
+  # stated as a superclass of the operation's own class, in the ontology.
+  #
+  # **`schema:target`** would restate what is already here: where the operation
+  # acts is the node it hangs on, or `ah:href` where that is not the node; the
+  # method is `hydra:method`; the content type is the API's rather than this
+  # operation's. `ah:href` carries the one genuinely unstated thing because
+  # `schema:target` ranges over `schema:EntryPoint`, a whole second model of an
+  # invocation for the sake of one URL.
+  #
+  # `schema:target` would also be ill-typed for a *templated* route:
+  # `schema:urlTemplate` is defined as *"an url template (RFC6570)"*, and a Plug
+  # route is not one — RFC 6570 gives `:` no meaning, so an expander finds zero
+  # variables and hands back a literal `:id`. A templated URL is stated once,
+  # properly, as a `hydra:IriTemplate`.
 
-  # A named sub-action: a link node carrying the distinct URL and the operation.
-  defp link_node(%Affordance{} = affordance, href, opts) do
-    %{
-      "@id" => href,
-      "hydra:operation" => [operation(affordance, opts)]
-    }
-  end
+  # ## An omitted `hydra:expects` is not a statement
+  #
+  # An operation whose action takes nothing used to carry no `hydra:expects` at
+  # all, and in a captured API that was 71 of 115 operations — 17 of them
+  # `PATCH`. A client reading one could not tell **"send an empty body"** from
+  # **"this document does not describe the body"**, because absence in RDF is the
+  # absence of a statement rather than a negative statement. The request it then
+  # generates is a guess, and for a write it is a guess about a write.
+  #
+  # So an operation whose method can carry one declares its input class even when
+  # that class has no properties. *"These are the properties, and there are
+  # none"* is a statement: a client draws no form, posts an empty body, and knows
+  # that is what the server wants.
+  #
+  # **Not `owl:Nothing`**, although `put_returns/3` reserves it for a response
+  # with no body. `hydra:expects owl:Nothing` says an instance of the empty class
+  # is expected, which is unsatisfiable — it reads as "no valid request to this
+  # operation exists". That is right on the way out, where nothing comes back,
+  # and wrong on the way in, where an empty body is a perfectly valid request.
+  # The two directions are not symmetric.
+  #
+  # **`GET` and `DELETE` are left alone**, and that is not an oversight. RFC 9110
+  # says a client should not generate content in a `GET`, and a `DELETE` body has
+  # no defined semantics, so silence there is already unambiguous. A `GET` with
+  # arguments is a query interface and states an `IriTemplate`; a `DELETE` whose
+  # action takes arguments still describes them, since otherwise a client could
+  # not send what the action requires.
+  @body_methods [:post, :patch, :put]
 
-  # A GET affordance with fields is a query interface — an IriTemplate — rather
-  # than a body-carrying operation. Everything else expects a request body.
-  defp put_expects(op, %Affordance{fields: []}, _opts), do: op
+  defp put_expects(op, %Affordance{method: :get, fields: []}, _opts), do: op
 
   defp put_expects(op, %Affordance{method: :get} = affordance, opts) do
     Map.put(op, "hydra:expects", iri_template(affordance, opts))
   end
 
+  defp put_expects(op, %Affordance{method: method, fields: []} = affordance, opts)
+       when method in @body_methods do
+    Map.put(op, "hydra:expects", input_class([], affordance, opts))
+  end
+
+  defp put_expects(op, %Affordance{fields: []}, _opts), do: op
+
   defp put_expects(op, %Affordance{} = affordance, opts) do
+    Map.put(op, "hydra:expects", input_class(affordance.fields, affordance, opts))
+  end
+
+  # `hydra:expects` ranges over a Class. The input class is given its own `@id`
+  # (`<class>/<action>Input`) so it is a referenceable node rather than an
+  # anonymous blank node a client cannot point back at — and so
+  # `AshHateoas.Hydra.ApiDocumentation` can declare it, which is what keeps the
+  # ontology's invariant true of every IRI a document references.
+  defp input_class(fields, %Affordance{} = affordance, opts) do
     type = Keyword.get(opts, :type)
 
-    # `hydra:expects` ranges over a Class. The input class is given its own `@id`
-    # (`<class>/<action>Input`) so it is a referenceable node rather than an
-    # anonymous blank node a client cannot point back at.
-    expected =
-      %{
-        "@type" => "Class",
-        "hydra:supportedProperty" => Enum.map(affordance.fields, &supported_property(&1, type))
-      }
-      |> put_unless_nil("@id", input_class_iri(type, affordance.name))
-
-    Map.put(op, "hydra:expects", expected)
+    %{
+      "@type" => "Class",
+      "hydra:supportedProperty" => Enum.map(fields, &supported_property(&1, type))
+    }
+    |> put_unless_nil("@id", input_class_iri(type, affordance.name))
   end
 
   # `hydra:returns` ranges over a Class, and names the resource's own class for
@@ -304,6 +437,13 @@ defmodule AshHateoas.Hydra.Renderer do
   record; in the ApiDocumentation, which describes a class rather than an
   instance, it survives — and becomes `{id}`, a variable the client supplies
   like any other.
+
+  A template with **no** variables is still a template. A collection route
+  (`/exam`) is a constant string, and emitting it as one rather than as a second
+  shape is what keeps a client reading one key the same way for every operation.
+  Its `hydra:mapping` is omitted rather than emitted empty: an empty JSON-LD
+  array states nothing, so the key would be present in the JSON and absent from
+  the graph — the silent-drop this package tests for elsewhere.
   """
   @spec iri_template(Affordance.t(), keyword()) :: map()
   def iri_template(%Affordance{} = affordance, opts) do
@@ -311,15 +451,20 @@ defmodule AshHateoas.Hydra.Renderer do
     variables = Enum.map(affordance.fields, &to_string(&1.name))
     type = Keyword.get(opts, :type)
 
+    mappings =
+      Enum.map(affordance.fields, &iri_template_mapping(&1, type)) ++
+        path_mappings(href, type, variables)
+
     %{
       "@type" => "IriTemplate",
       "hydra:template" => href <> template_suffix(variables),
-      "hydra:variableRepresentation" => "BasicRepresentation",
-      "hydra:mapping" =>
-        Enum.map(affordance.fields, &iri_template_mapping(&1, type)) ++
-          path_mappings(href, type, variables)
+      "hydra:variableRepresentation" => "BasicRepresentation"
     }
+    |> put_mapping(mappings)
   end
+
+  defp put_mapping(template, []), do: template
+  defp put_mapping(template, mappings), do: Map.put(template, "hydra:mapping", mappings)
 
   # Plug's router spelling → RFC 6570's, for both `hydra:template` and
   # `schema:urlTemplate`:
@@ -508,11 +653,6 @@ defmodule AshHateoas.Hydra.Renderer do
        do: Map.put(map, "ah:scriptLanguage", language)
 
   defp put_script_language(map, _field), do: map
-
-  # An operation attaches inline when its href is the node's own URL (or it has operation attaches inline when its href is the node's own URL (or it has
-  # no href at all — the fallback path, where the node URL is all a client has).
-  defp inline?(nil, _node_id), do: true
-  defp inline?(href, node_id), do: href == node_id
 
   defp href(%Affordance{href: nil}, _opts), do: nil
 

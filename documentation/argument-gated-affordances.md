@@ -117,7 +117,7 @@ not here. Concretely:
   dependency source under `deps/`, so it is not the tool for changing Ash's
   internals — it patches the users of Ash, not Ash.
 - **Bridge while the PR is pending: a git fork with `override: true`.** This is
-  what the `ash_brightway_demo` uses today. A fork carrying the single patch on
+  what the `svc_lca` uses today. A fork carrying the single patch on
   a branch based off the pinned Ash tag exists at
   `github.com/jangrau13/ash` (branch `arg-gated-strict-check`, off `v3.29.3`).
 

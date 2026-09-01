@@ -58,14 +58,24 @@ defmodule AshHateoas.Candidates do
     _ -> []
   end
 
-  # Route types that address a single existing record vs. the collection.
-  # :index is a read over the type; :post creates into it. Relationship routes
-  # are navigation, not affordances.
-  @record_route_types [:get, :patch, :delete, :route]
-  @collection_route_types [:index, :post, :route]
+  # Which routes address a single existing record, and which the collection.
+  #
+  # **From the path, not the kind.** The kind lists used to be
+  # `[:get, :patch, :delete, :route]` and `[:index, :post, :route]`, and they had
+  # two faults. `:route` appeared in both, so a generic action at
+  # `/:id/<name>` was offered on a collection that has no id to give it. And the
+  # moment a named sub-action became a `POST` — a transition is not a partial
+  # modification — every one of them was filed as a collection operation and
+  # vanished from the record that offers it.
+  #
+  # `AshHateoas.Route.member?/1` reads `:id` out of the pattern, which is the
+  # fact both lists were approximating.
+  defp route_matches_kind?(route, :record),
+    do: not Route.navigation?(route) and Route.member?(route)
 
-  defp route_matches_kind?(%{type: type}, :record), do: type in @record_route_types
-  defp route_matches_kind?(%{type: type}, :collection), do: type in @collection_route_types
+  defp route_matches_kind?(route, :collection),
+    do: not Route.navigation?(route) and not Route.member?(route)
+
   defp route_matches_kind?(_route, _kind), do: false
 
   # Fallback shape, used only when no routes are declared.

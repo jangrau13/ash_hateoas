@@ -72,10 +72,10 @@ An HTTP resource node that carries a `hydra:operation` array is the **effective
 Policy** for that resource.  Each operation is an **Action** the caller may
 perform on the **Asset** (the resource identified by the node's `@id`).
 
-The ODRL mapping makes the permission explicit: each operation carries an
-nested `odrl:Permission` that declares the action term and the target asset.
-There is no separate top-level `odrl:Policy` wrapper — the resource node *is*
-the policy context.
+The ODRL mapping makes the permission explicit: the node carries an
+`odrl:permission` list, one `odrl:Permission` per granted affordance, declaring
+the action term and the target asset.  There is no separate top-level
+`odrl:Policy` wrapper — the resource node *is* the policy context.
 
 ### HTTP method → ODRL action term
 
@@ -95,72 +95,87 @@ Permission.  If the caller is not authorized for an action, the action is
 the fail-closed design: denied actions are absent, and ODRL says nothing about
 absent rules.
 
-### Permissions are nested in operations, not separate
+### Permissions are a list on the node, beside the operations
 
-Each `hydra:Operation` carries its own `odrl:permission` as a single
-`odrl:Permission` object inside the operation:
+The node carries one `odrl:permission` array, parallel to `hydra:operation`:
 
 ```json
 {
   "@id": "/inventory/activities/123",
   "@type": "https://ash-hateoas.org/vocab#Activity",
   "hydra:operation": [
-    {
-      "@type": "Operation",
-      "hydra:method": "GET",
-      "hydra:returns": {"@id": "https://ash-hateoas.org/vocab#Activity"},
-      "odrl:permission": {
-        "@type": "odrl:Permission",
-        "odrl:action": {"@id": "odrl:read"},
-        "odrl:target": {"@id": "/inventory/activities/123"}
-      }
-    },
-    {
-      "@type": "Operation",
-      "hydra:method": "PATCH",
-      "hydra:returns": {"@id": "https://ash-hateoas.org/vocab#Activity"},
-      "odrl:permission": {
-        "@type": "odrl:Permission",
-        "odrl:action": {"@id": "odrl:modify"},
-        "odrl:target": {"@id": "/inventory/activities/123"}
-      }
-    }
+    {"@type": "Operation", "ah:action": "read", "hydra:method": "GET",
+     "hydra:returns": {"@id": "https://ash-hateoas.org/vocab#Activity"}},
+    {"@type": "Operation", "ah:action": "update", "hydra:method": "PATCH",
+     "hydra:returns": {"@id": "https://ash-hateoas.org/vocab#Activity"}}
+  ],
+  "odrl:permission": [
+    {"@type": "odrl:Permission", "ah:action": "read",
+     "odrl:action": {"@id": "odrl:read"},
+     "odrl:target": {"@id": "/inventory/activities/123"}},
+    {"@type": "odrl:Permission", "ah:action": "update",
+     "odrl:action": {"@id": "odrl:modify"},
+     "odrl:target": {"@id": "/inventory/activities/123"}}
   ]
 }
 ```
 
-### Named sub-actions (link nodes)
+The two lists state the same granted set in two vocabularies — Hydra says what
+may be invoked and how, ODRL says what is permitted on which asset — so a
+consumer that speaks either one is served without having to read the other.
+
+`ah:action` is what **joins** them: it is the same name the operation carries,
+so a consumer holding one can find the other by lookup.  It is needed because
+ODRL's action vocabulary is five terms wide — an `update` and a `close_sitting`
+are both `odrl:modify` — and `odrl:target` separates a sub-action from the
+record but not two operations on the record itself.  A duty (below) belongs to
+one named action, so without the join it could not be attached to one.
+
+### Named sub-actions
 
 A named sub-action (an action whose URL differs from the resource node's own
-`@id`, e.g. `/inventory/activities/123/copy_to_database`) is rendered as a
-separate link node with its own `@id`.  The `odrl:target` of the nested
-Permission is the **link node's own `@id`**, not the parent resource's:
+`@id`, e.g. `/inventory/activities/123/copy_to_database`) is one more entry in
+`hydra:operation`, stating its URL as `ah:href`.  **Its Permission targets that
+URL, not the record's.**
 
 ```json
 {
-  "@id": "/inventory/activities/123/copy_to_database",
+  "@id": "/inventory/activities/123",
   "hydra:operation": [
-    {
-      "@type": "Operation",
-      "hydra:method": "POST",
-      "odrl:permission": {
-        "@type": "odrl:Permission",
-        "odrl:action": {"@id": "odrl:use"},
-        "odrl:target": {"@id": "/inventory/activities/123/copy_to_database"}
-      }
-    }
+    {"@type": "Operation", "ah:action": "copy_to_database",
+     "hydra:method": "POST",
+     "ah:href": {"@id": "/inventory/activities/123/copy_to_database"}}
+  ],
+  "odrl:permission": [
+    {"@type": "odrl:Permission", "ah:action": "copy_to_database",
+     "odrl:action": {"@id": "odrl:use"},
+     "odrl:target": {"@id": "/inventory/activities/123/copy_to_database"}}
   ]
 }
 ```
+
+The asset is what the request is sent to.  Defaulting to the node would say the
+actor may `odrl:use` the record itself, when what was granted is one named
+transition on it — and with the operations flat, the target is the only thing
+left telling apart two permissions that share an ODRL action term (an `update`
+and a `close_sitting` are both `odrl:modify`).
 
 ### Collection endpoints
 
 The collection endpoint (e.g. `GET /inventory/activities`) carries operations
 that apply to the **collection as a whole** — creating a new resource, running
-a search, etc.  These operations nest Permissions with no `odrl:target`
-(because a collection is not a single asset), or with a target referencing the
-collection URL.  Each member of the collection independently carries its own
-operations and Permissions.
+a search, etc.  Their Permissions target the collection URL, or a named read's
+own URL where it has one.  Each member of the collection independently carries
+its own operations and Permissions when addressed on its own; inside a
+collection response the members carry neither, which is what keeps the response
+independent of page size.
+
+### A destroyed record carries neither
+
+The node a `DELETE` returns is the record's final state and nothing more.  Every
+affordance on it would address a record that no longer exists, so both
+`hydra:operation` and `odrl:permission` are dropped — a permission list left
+behind would say the actor may `odrl:modify` something that is gone.
 
 ### The `odrl:assignee` is omitted
 
@@ -179,8 +194,9 @@ IRI, the property is omitted.
 
 | Operation property | Permission counterpart | Notes |
 |---|---|---|
+| `ah:action` | `ah:action` | The same name on both, which is what joins the two lists |
 | `hydra:method` | `odrl:action` | Derived from the HTTP method (see table above) |
-| the node's `@id` | `odrl:target` | The resource URL; for link nodes, the link's own `@id` |
+| where the operation acts (`ah:href`, else the node's `@id`) | `odrl:target` | The URL the request is sent to — a sub-action's own, not the record's |
 | — | `odrl:duty` | Present only when the action is not delegable (see below) |
 
 ## `not_delegable` and ODRL
@@ -199,22 +215,20 @@ before it may proceed; it cannot delegate the action to another agent.
 
 ```json
 {
-  "@id": "/documents/1/approve",
+  "@id": "/documents/1",
   "hydra:operation": [
+    {"@type": "Operation", "ah:action": "approve", "hydra:method": "PATCH",
+     "ah:href": {"@id": "/documents/1/approve"}}
+  ],
+  "odrl:permission": [
     {
-      "@type": "Operation",
-      "hydra:method": "PATCH",
-      "odrl:permission": {
-        "@type": "odrl:Permission",
-        "odrl:action": {"@id": "odrl:modify"},
-        "odrl:duty": [
-          {
-            "@type": "odrl:Duty",
-            "odrl:action": {"@id": "odrl:obtainConsent"}
-          }
-        ],
-        "odrl:target": {"@id": "/documents/1/approve"}
-      }
+      "@type": "odrl:Permission",
+      "ah:action": "approve",
+      "odrl:action": {"@id": "odrl:modify"},
+      "odrl:duty": [
+        {"@type": "odrl:Duty", "odrl:action": {"@id": "odrl:obtainConsent"}}
+      ],
+      "odrl:target": {"@id": "/documents/1/approve"}
     }
   ]
 }

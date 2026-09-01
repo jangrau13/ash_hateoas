@@ -39,7 +39,7 @@ defmodule AshHateoas.Test.ReadFailure do
     end
 
     # A read that fails validation inside its preparation — invalid input /
-    # unavailable, a 400. (This is the shape bw-ash's `semantic_search` takes when
+    # unavailable, a 400. (This is the shape svc_lca's `semantic_search` takes when
     # its embedding backend is unreachable: the prepare adds a `:query` error.)
     read :invalid do
       argument :label, :string, public?: true, allow_nil?: true

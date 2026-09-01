@@ -34,12 +34,31 @@ defmodule AshHateoas.Hydra.OntologyTest do
       assert declared(@vocab)["@type"] == "owl:Ontology"
     end
 
-    test "each declared term names the ontology that defines it" do
-      # `X rdfs:isDefinedBy Y` means *Y defines X*. Hanging the declarations off
-      # the ApiDocumentation would have said the documentation is defined by the
-      # Recipe class — backwards. Pointed this way it is true.
+    test "no term restates where it is defined" do
+      # `X rdfs:isDefinedBy Y` earns its place where a term IRI does not say
+      # where its definition lives: `http://purl.org/dc/terms/title` is a
+      # **slash** IRI, and no mechanical rule takes it to
+      # `http://purl.org/dc/terms/`.
+      #
+      # This package mints **hash** IRIs, so RDF's own rule already answers it —
+      # the part before the fragment is the document. Every term carried the
+      # triple anyway, all with the same value, and it was 232 of 237 nodes in a
+      # captured document.
+      carriers = Enum.filter(included(), &Map.has_key?(&1, "rdfs:isDefinedBy"))
+
+      assert carriers == [],
+             "#{length(carriers)} nodes restate their own namespace: " <>
+               inspect(Enum.map(carriers, & &1["@id"]))
+    end
+
+    test "the rule it restated still answers the question" do
+      # What a consumer does instead, and why dropping the triple loses nothing:
+      # truncate at the fragment and the answer is the ontology node the same
+      # document declares.
       recipe = declared("#{@vocab}Recipe")
-      assert recipe["rdfs:isDefinedBy"] == %{"@id" => @vocab}
+
+      assert [namespace, _fragment] = String.split(recipe["@id"], "#", parts: 2)
+      assert declared(namespace <> "#")["@type"] == "owl:Ontology"
     end
   end
 
@@ -231,6 +250,191 @@ defmodule AshHateoas.Hydra.OntologyTest do
       assert declared("ah:SaveAction")["rdfs:subClassOf"] == %{"@id" => "schema:UpdateAction"}
       assert declared("ah:RunAction")["rdfs:subClassOf"] == %{"@id" => "schema:Action"}
     end
+
+    test "every action a resource routes gets a declared class" do
+      # An operation's `@type` references one of these, and this module exists
+      # so that every IRI a document references is declared — so without them
+      # its own invariant breaks on the very first operation.
+      publish = declared("#{@vocab}Article/publishAction")
+
+      assert publish["@type"] == "owl:Class"
+      # The domain's own word, which is what an author reads on a button. It
+      # moved here from `ah:action` on every operation: a label is a fact about
+      # the class, so it is stated once against the class.
+      assert publish["rdfs:label"] == "publish"
+    end
+
+    test "a declared semantic_action is the action class's superclass" do
+      # What `schema:potentialAction` used to say per operation, said once and
+      # said as an axiom — so the chain runs from the operation's class up into
+      # schema.org's own hierarchy.
+      assert declared("#{@vocab}Recipe/validateAction")["rdfs:subClassOf"] ==
+               %{"@id" => "https://schema.org/CheckAction"}
+
+      assert declared("#{@vocab}Recipe/saveAction")["rdfs:subClassOf"] ==
+               %{"@id" => "#{@vocab}SaveAction"}
+    end
+
+    test "an action with no declared role has no superclass" do
+      # There is deliberately no default. Every OWL class is trivially a
+      # subclass of `owl:Thing`, and a subtype inferred from the HTTP method
+      # would be a second spelling of `hydra:method`.
+      refute Map.has_key?(declared("#{@vocab}Article/createAction"), "rdfs:subClassOf")
+    end
+
+    test "a route mints no class beneath its action" do
+      # It was minted for a while and withdrawn. For an action with one route —
+      # most of them — the subclass had exactly its parent's members, added no
+      # property and constrained nothing: in a vocabulary, a node saying a thing
+      # is itself. And the segment was an Ash route kind that spells like an HTTP
+      # method, so `Article/readAction/get` read as "reading an article is a kind
+      # of GET" — the inference `renderer.ex` refuses to draw when it declines to
+      # derive `schema:ReadAction` from a GET.
+      refute declared("#{@vocab}Article/readAction/get")
+      refute declared("#{@vocab}Article/readAction/index")
+
+      # Swept, not sampled: nothing anywhere is named `<something>Action/<word>`.
+      leftovers = Enum.filter(included(), &(&1["@id"] =~ ~r{Action/[a-z_]+$}))
+
+      assert leftovers == [], inspect(Enum.map(leftovers, & &1["@id"]))
+    end
+
+    test "the two routes onto one read name one class" do
+      # Which is correct — they invoke the same action. What separates them is
+      # where the request goes and what comes back, and the catalogue states
+      # both: see `api_documentation_test.exs`.
+      classes = ApiDocumentation.build([AshHateoas.Test.Domain])["hydra:supportedClass"]
+
+      # One is filed under `Article`, the other under `Article/Collection` — a
+      # read at `/articles` is not something one article does. Both name the same
+      # action class, which is the point.
+      reads =
+        for class <- classes,
+            class["@id"] in ["#{@vocab}Article", "#{@vocab}Article/Collection"],
+            op <- class["hydra:supportedOperation"] || [],
+            "#{@vocab}Article/readAction" in op["@type"],
+            do: op
+
+      assert length(reads) == 2
+      assert reads |> Enum.map(& &1["@type"]) |> Enum.uniq() |> length() == 1
+    end
+
+    test "every class an operation's @type names is declared" do
+      # The invariant, swept rather than sampled: a class referenced and never
+      # declared is the defect this module removes.
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      declared_ids = MapSet.new(doc["@included"], & &1["@id"])
+
+      referenced =
+        for class <- doc["hydra:supportedClass"],
+            operation <- List.wrap(class["hydra:supportedOperation"]),
+            iri <- List.wrap(operation["@type"]),
+            String.starts_with?(iri, @vocab),
+            do: iri
+
+      assert referenced != [], "no operation named a class; the sweep would assert nothing"
+
+      undeclared = referenced |> Enum.uniq() |> Enum.reject(&MapSet.member?(declared_ids, &1))
+
+      assert undeclared == [], "operation classes used but not declared: #{inspect(undeclared)}"
+    end
+
+    test "href is an object property from an Operation to the resource it acts on" do
+      # Hydra gives `Operation` no target-URL property, so a named sub-action's
+      # own URL has nowhere standard to go. An **object** property, because the
+      # value is the resource the request is sent to — a reasoner should read an
+      # edge to it, not a note about the operation node.
+      href = declared("ah:href")
+
+      assert href["@type"] == "owl:ObjectProperty"
+      assert href["rdfs:domain"] == %{"@id" => "hydra:Operation"}
+      assert href["rdfs:range"] == %{"@id" => "hydra:Resource"}
+    end
+
+    test "the entities ah:href's axioms mention are themselves declared" do
+      # OWL 2 §5.8.2 wants every IRI occurring in an axiom declared, and Hydra
+      # has no OWL layer to do it — so a domain of `hydra:Operation` obliges us.
+      assert declared("hydra:Operation")["@type"] == "owl:Class"
+      assert declared("hydra:Resource")["@type"] == "owl:Class"
+    end
+
+    test "template is href's catalogue-side twin, and ranges over an IriTemplate" do
+      # A node states the address it resolved; the documentation describes a
+      # class, where there is no record to resolve against and the honest
+      # statement is how to build one. An object property for the same reason
+      # `ah:href` is one: the value is a resource — a template node with its own
+      # mappings — rather than a note about the operation.
+      template = declared("ah:template")
+
+      assert template["@type"] == "owl:ObjectProperty"
+      assert template["rdfs:domain"] == %{"@id" => "hydra:Operation"}
+      assert template["rdfs:range"] == %{"@id" => "hydra:IriTemplate"}
+
+      # And the entities that axiom mentions, by the same rule as above.
+      assert declared("hydra:IriTemplate")["@type"] == "owl:Class"
+    end
+  end
+
+  describe "a resource's own collection class" do
+    test "a resource served at a collection URL has one" do
+      # `GET /articles` answers with a `hydra:Collection`, and the catalogue
+      # entry for that route names this class. Reached from the resource, where
+      # `collection_class/3` is reached from a to-many relationship — which is
+      # why `#{@vocab}CourseExams` existed and `#{@vocab}Article/Collection` did
+      # not, though both describe a collection served at a URL.
+      collection = declared("#{@vocab}Article/Collection")
+
+      assert types(collection) == ["owl:Class", "hydra:Class"]
+      assert collection["rdfs:subClassOf"] == %{"@id" => "hydra:Collection"}
+
+      assert collection["hydra:memberAssertion"] == %{
+               "hydra:property" => %{"@id" => "rdf:type"},
+               "hydra:object" => %{"@id" => "#{@vocab}Article"}
+             }
+    end
+
+    test "hydra:Collection itself is declared" do
+      # It has been the superclass of every to-many's collection class from the
+      # start and was never declared — the gap this module exists to close, in
+      # the one place the module was not looking at itself.
+      assert declared("hydra:Collection")["@type"] == "owl:Class"
+    end
+
+    test "one is minted exactly where a collection route is served" do
+      # Both directions, because either alone is satisfiable by a wrong answer: a
+      # class nothing references is noise, and a route whose `hydra:returns`
+      # names an undeclared class is the dangling IRI this module exists to
+      # remove. Every resource in the fixture domain happens to have an `:index`
+      # route today, so a one-directional test on the absent case would assert
+      # nothing at all.
+      expected =
+        for {type, resource} <- AshHateoas.Index.build([AshHateoas.Test.Domain]),
+            Enum.any?(AshHateoas.Resource.Info.routes(resource), &(&1.type == :index)),
+            do: AshHateoas.Hydra.Context.collection_class_iri(type)
+
+      minted =
+        included()
+        |> Enum.map(& &1["@id"])
+        |> Enum.filter(&String.ends_with?(&1, "/Collection"))
+
+      assert expected != []
+      assert Enum.sort(minted) == Enum.sort(expected)
+    end
+
+    test "every collection class the catalogue returns is declared here" do
+      doc = ApiDocumentation.build([AshHateoas.Test.Domain])
+      declared_ids = MapSet.new(doc["@included"], & &1["@id"])
+
+      returned =
+        for class <- doc["hydra:supportedClass"],
+            op <- class["hydra:supportedOperation"] || [],
+            iri = op["hydra:returns"]["@id"],
+            String.ends_with?(iri, "/Collection"),
+            do: iri
+
+      assert returned != []
+      assert Enum.reject(returned, &MapSet.member?(declared_ids, &1)) == []
+    end
   end
 
   describe "no referenced class property dangles" do
@@ -311,6 +515,8 @@ defmodule AshHateoas.Hydra.OntologyTest do
       # that makes it so. Silently growing the vocabulary is not.
       known = ~w(
         ah:action
+        ah:href
+        ah:template
         ah:identity
         ah:SaveAction
         ah:RunAction

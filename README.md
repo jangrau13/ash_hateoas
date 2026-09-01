@@ -15,8 +15,8 @@ operations a generic client can discover and drive at runtime.
 
 | Backbone output | Rendered as |
 |---|---|
-| an action that may be taken next | a `hydra:Operation` (`hydra:method`, `hydra:expects`) |
-| a named sub-action with its own URL | a link node (`ah:<action>` → `{ @id, hydra:operation }`) |
+| an action that may be taken next | a `hydra:Operation` typed by a class minted for the action (`hydra:method`, `hydra:expects`) |
+| where an action is invoked | `ah:href` on the operation, always — Hydra core mints no term for it |
 | a field descriptor | a `hydra:SupportedProperty` (or `hydra:IriTemplateMapping`) |
 | the type's catalogue | `hydra:ApiDocumentation` → `supportedClass` |
 | a collection | a `hydra:Collection` (`member`, `totalItems`, `PartialCollectionView`) |

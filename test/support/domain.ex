@@ -251,5 +251,6 @@ defmodule AshHateoas.Test.Domain do
     resource(AshHateoas.Test.Technique)
     resource(AshHateoas.Test.RecipeTechnique)
     resource(AshHateoas.Test.RecipeAudit)
+    resource(AshHateoas.Test.Placed)
   end
 end

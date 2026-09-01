@@ -67,11 +67,38 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
   end
 
   describe "non-primary actions are routed under their own name" do
-    test "a non-primary update is `patch` at /:id/<action>" do
+    test "a named transition is a POST at /:id/<action>, not a PATCH" do
+      # It was a `PATCH`, because the Ash action's type is `:update` and the verb
+      # was read straight off it. RFC 5789 defines `PATCH` by its body — "a set
+      # of instructions describing how a resource currently residing on the
+      # origin server should be modified" — and a named transition does not send
+      # one. `publish` sends nothing at all, so it was a PATCH with no patch
+      # document, which has no defined meaning.
+      #
+      # RFC 9110 gives the method for it: POST performs "resource-specific
+      # processing on the request content".
       route = route_for(AshHateoas.Test.AutoRouted, :publish)
 
-      assert route.type == :patch
+      assert route.type == :post
       assert route.route == "/auto_routeds/:id/publish"
+    end
+
+    test "the primary update keeps PATCH, which is what a partial modification is" do
+      # The distinction the change exists to restore: one verb used to sit on
+      # three unlike operations of one class, so `hydra:method` separated none of
+      # them.
+      route = route_for(AshHateoas.Test.AutoRouted, :update)
+
+      assert route.type == :patch
+      assert route.route == "/auto_routeds/:id"
+    end
+
+    test "a named transition still addresses one record" do
+      # The property a reader has to keep after the verb moved. A `:post` used to
+      # mean "the collection" to everything that sorted routes by kind, and this
+      # one plainly names a record — so the sort is by the path.
+      assert AshHateoas.Route.member?(route_for(AshHateoas.Test.AutoRouted, :publish))
+      refute AshHateoas.Route.member?(route_for(AshHateoas.Test.AutoRouted, :create))
     end
 
     test "a generic action returning a scalar is routed too" do
@@ -87,6 +114,18 @@ defmodule AshHateoas.Resource.DeriveActionRoutesTest do
 
     test "a declared method overrides the assumed POST" do
       assert route_for(AshHateoas.Test.GenericGet, :peek).method == :get
+    end
+
+    test "a declared method is the escape hatch for a sub-action too" do
+      # The override used to be read only for a generic action, so an author who
+      # said `method :publish, :patch` on a named transition got a documentation
+      # entry saying PATCH and a router that answered only POST. It is read for
+      # any non-primary action now, which is what makes the derived POST a
+      # default rather than a rule.
+      declared = AshHateoas.Resource.Info.method(AshHateoas.Test.AutoRouted, :publish)
+
+      assert declared == nil, "the fixture declares none, so the derived verb is what is asserted"
+      assert route_for(AshHateoas.Test.AutoRouted, :publish).method == nil
     end
 
     test "every action kind is derived, generic included" do

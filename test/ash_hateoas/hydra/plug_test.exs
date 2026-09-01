@@ -49,6 +49,46 @@ defmodule AshHateoas.Hydra.PlugTest do
 
   defp body(conn), do: Jason.decode!(conn.resp_body)
 
+  # A collection's `@type` used to be the bare `Collection` and is now
+  # `["Collection", "<vocab>#Thing/Collection"]` where the collection is an
+  # addressable one — the second entry is what a client looks up to learn what
+  # the set supports. `Collection` stays first, so position 0 still answers.
+  defp collection_class(node), do: node |> Map.get("@type") |> List.wrap() |> Enum.at(1)
+
+  # Every affordance a node offers, by the domain's word for it. One array is
+  # the whole answer — an operation is never wrapped in a link node keyed by its
+  # own action name.
+  #
+  # An operation is identified by a **class IRI** rather than a bare name, so
+  # the name has to be read back out of it. That is a fact about these tests and
+  # not about a client: a client resolves the IRI, which is the whole point of
+  # minting one. Here the local word is simply what reads best in an assertion.
+  defp actions(node) do
+    node |> Map.get("hydra:operation", []) |> Enum.map(&action_name/1)
+  end
+
+  defp operation(node, name) do
+    node |> Map.get("hydra:operation", []) |> Enum.find(%{}, &(action_name(&1) == name))
+  end
+
+  # `…/vocab#Document/approveAction` → `"approve"`.
+  defp action_name(op) do
+    op
+    |> Map.get("@type", [])
+    |> List.wrap()
+    |> Enum.find_value(fn type ->
+      case Regex.run(~r{/([a-zA-Z0-9_]+)Action$}, to_string(type)) do
+        [_all, name] -> name
+        _ -> nil
+      end
+    end)
+  end
+
+  # The class IRI an operation carries — what a client actually joins on.
+  defp action_class(node, name) do
+    node |> operation(name) |> Map.get("@type", []) |> Enum.at(1)
+  end
+
   describe "content type and discovery" do
     test "every response is application/ld+json with an apiDocumentation Link header" do
       conn = get("/", @admin)
@@ -77,10 +117,31 @@ defmodule AshHateoas.Hydra.PlugTest do
       assert is_list(collections) and collections != []
 
       for c <- collections do
-        assert c["@type"] == "hydra:Collection"
+        assert "hydra:Collection" in List.wrap(c["@type"])
         assert is_binary(c["@id"])
         # Followable, not merely named.
         assert get(c["@id"], @admin).status == 200
+      end
+    end
+
+    test "each row names the class that says what may be done with the set" do
+      # What makes the catalogue reachable from here. An entry-point row used to
+      # be typed `hydra:Collection` and nothing more, so a client reading the
+      # index learned where the sets are and had to fetch one to find out whether
+      # it could create into it. The row is an instance of a class the
+      # documentation describes, and saying so is one token.
+      collections = body(get("/", @admin))["hydra:collection"]
+      doc = body(get("/doc", @admin))
+
+      described = MapSet.new(doc["hydra:supportedClass"], & &1["@id"])
+
+      for c <- collections do
+        class = collection_class(c)
+
+        assert String.ends_with?(class, "/Collection"), "#{c["@id"]} names no collection class"
+
+        assert MapSet.member?(described, class),
+               "#{class} is named in the entry point and described nowhere"
       end
     end
 
@@ -169,10 +230,108 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "carries the actor's affordances as operations", %{doc: doc} do
       node = body(get("/documents/#{doc.id}", @admin))
 
-      # approve is a named sub-action -> a link node with a distinct URL
-      approve = node["ah:approve"]
-      assert approve["@id"] =~ "/documents/#{doc.id}/approve"
-      assert [%{"@type" => "Operation", "hydra:method" => "PATCH"}] = approve["hydra:operation"]
+      # approve is a named sub-action: still one entry in the same array, with
+      # its distinct URL as `ah:href`.
+      approve = operation(node, "approve")
+      assert approve["ah:href"]["@id"] =~ "/documents/#{doc.id}/approve"
+
+      # update acts on the record itself, and says so — an operation that
+      # states no target is not invocable once lifted out of its node.
+      assert operation(node, "update")["ah:href"]["@id"] =~ "/documents/#{doc.id}"
+    end
+
+    test "an operation states the two facts that vary, and no more", %{doc: doc} do
+      # The whole of §5. Which operations are present is decided per actor and
+      # per state, and each one's URL holds the record's id — those two vary. The
+      # method, the input and the return are properties of the *action*, true in
+      # every state and for every actor, so they are stated once in the
+      # documentation instead of on every response that offers the operation.
+      #
+      # Measured on a captured API: 13 responses were repeating 92 statements the
+      # catalogue already made, and 40 operations shrank from 22,354 bytes to
+      # 6,729.
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      for op <- node["hydra:operation"] do
+        assert Enum.sort(Map.keys(op)) == ["@type", "ah:href"],
+               "a node operation states #{inspect(Map.keys(op))}"
+      end
+    end
+
+    test "the catalogue answers what the node stopped saying", %{doc: doc} do
+      # The other half of the trade, and the reason it is not a loss: the class
+      # in `@type` is a key, and looking it up in the documentation gives back
+      # every statement the node dropped. A client does this once per class and
+      # caches it; the node is what changes per request.
+      node = body(get("/documents/#{doc.id}", @admin))
+      approve = operation(node, "approve")
+      action_class = Enum.at(approve["@type"], 1)
+
+      described =
+        body(get("/doc", @admin))["hydra:supportedClass"]
+        |> Enum.flat_map(&(&1["hydra:supportedOperation"] || []))
+        |> Enum.find(&(action_class in &1["@type"]))
+
+      assert described["hydra:method"] == "POST"
+      assert described["hydra:returns"]["@id"] == "#{@vocab}Document"
+      assert described["hydra:expects"]["@id"] == "#{@vocab}Document/approveInput"
+    end
+
+    test "the Link header is load-bearing, not a convenience", %{doc: doc} do
+      # A thinned node depends on the catalogue being reachable from it, so a
+      # response that omits the header is no longer merely less helpful — it is a
+      # response a client cannot act on.
+      conn = get("/documents/#{doc.id}", @admin)
+
+      assert [link] = Plug.Conn.get_resp_header(conn, "link")
+      assert link =~ "apiDocumentation"
+    end
+
+    test "each operation is identified by a class IRI, in this API's vocabulary",
+         %{doc: doc} do
+      # The identity a bare `ah:action` string could not be: dereferenceable,
+      # subclassable, and global. It is minted under the API's *own* origin, so
+      # two services each with an `approve` do not collide.
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      assert action_class(node, "approve") == "#{@vocab}Document/approveAction"
+      assert ["Operation" | _] = operation(node, "approve")["@type"]
+
+      refute Enum.any?(node["hydra:operation"], &Map.has_key?(&1, "ah:action"))
+    end
+
+    test "the permission list joins to the operations by that same IRI", %{doc: doc} do
+      # ODRL's action vocabulary is five terms wide, so `odrl:action` cannot say
+      # which operation a permission is about — `update` and `approve` are both
+      # `odrl:modify`. The class IRI can, and it is the very one the operation
+      # carries in its `@type`.
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      permissions = Enum.map(node["odrl:permission"], & &1["ah:action"]["@id"])
+      operations = Enum.map(node["hydra:operation"], &Enum.at(&1["@type"], 1))
+
+      assert Enum.sort(permissions) == Enum.sort(operations)
+      assert "#{@vocab}Document/approveAction" in permissions
+    end
+
+    test "hydra:operation is the only place an affordance appears", %{doc: doc} do
+      # The property the flattening exists for: one traversal answers "what may
+      # I invoke here?". A named sub-action used to also be an `ah:<action>` key
+      # wrapping the same operation, so a client had to walk data-driven keys
+      # whose names it could not know in advance.
+      node = body(get("/documents/#{doc.id}", @admin))
+
+      assert "approve" in actions(node)
+      refute Map.has_key?(node, "ah:approve")
+
+      wrappers =
+        node
+        |> Map.drop(["hydra:operation"])
+        |> Enum.filter(fn {_key, value} -> is_map(value) and value["hydra:operation"] end)
+
+      assert wrappers == [],
+             "an operation reachable somewhere other than hydra:operation: " <>
+               inspect(Enum.map(wrappers, &elem(&1, 0)))
     end
 
     test "two actors see different operation sets", %{doc: doc} do
@@ -180,8 +339,8 @@ defmodule AshHateoas.Hydra.PlugTest do
       viewer = body(get("/documents/#{doc.id}", @viewer))
 
       # admin may approve; a viewer may not
-      assert Map.has_key?(admin, "ah:approve")
-      refute Map.has_key?(viewer, "ah:approve")
+      assert "approve" in actions(admin)
+      refute "approve" in actions(viewer)
     end
 
     test "the node carries the granted set as an odrl:permission list", %{doc: doc} do
@@ -210,7 +369,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       # A navigation link is a {"@id", "@type"} node ref, never {href, rel}.
       collection = node["hydra:collection"]
       assert collection["@id"] =~ "/documents"
-      assert collection["@type"] == "Collection"
+      assert "Collection" in List.wrap(collection["@type"])
       refute Map.has_key?(collection, "href")
       refute Map.has_key?(collection, "rel")
 
@@ -260,7 +419,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       comments = body(get("/articles/#{article.id}", @admin))["comments"]
 
       assert comments["@id"] == "/articles/#{article.id}/comments"
-      assert comments["@type"] == "Collection"
+      assert "Collection" in List.wrap(comments["@type"])
       assert comments["hydra:totalItems"] == 0
     end
 
@@ -335,7 +494,7 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       collection = node["comments"]
 
-      assert collection["@type"] == "Collection"
+      assert "Collection" in List.wrap(collection["@type"])
 
       # Scoped to the source record: a collection holding every comment would
       # be present and well-formed while still being wrong.
@@ -500,7 +659,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       node = Enum.find(collection["hydra:member"], &(&1["@id"] =~ document.id))
 
       comments = node["comments"]
-      assert comments["@type"] == "Collection"
+      assert "Collection" in List.wrap(comments["@type"])
       assert comments["hydra:totalItems"] == 1
       assert [member] = comments["hydra:member"]
       assert member["body"] == "in place"
@@ -752,7 +911,7 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "renders a hydra:Collection with member and totalItems" do
       coll = body(get("/documents", @admin))
 
-      assert coll["@type"] == "Collection"
+      assert "Collection" in List.wrap(coll["@type"])
       assert is_list(coll["hydra:member"])
       assert coll["hydra:totalItems"] >= 2
     end
@@ -760,14 +919,116 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "collection-level affordances live on the collection, members carry none" do
       coll = body(get("/documents", @admin))
 
-      # create is a collection-level operation
-      assert coll["hydra:operation"] || coll["ah:create"]
+      # create is a collection-level operation, invoked against the collection's
+      # own URL — which it states, like every other operation.
+      assert "create" in actions(coll)
+      assert action_class(coll, "create") == "#{@vocab}Document/createAction"
+      assert operation(coll, "create")["ah:href"]["@id"] =~ "/documents"
 
       # members are bare nodes — no per-record operations (bounds page cost)
       for member <- coll["hydra:member"] do
         refute Map.has_key?(member, "hydra:operation")
-        refute Map.has_key?(member, "ah:approve")
+        refute Map.has_key?(member, "odrl:permission")
       end
+    end
+
+    test "the collection says what it is a collection of" do
+      # `@type`, `hydra:member` and `hydra:totalItems` leave a client holding one
+      # response and no catalogue unable to tell what is in it — and an empty
+      # page carries no members to infer it from. The assertion is the same
+      # statement the catalogue's collection class makes, which is what lets a
+      # client join `hydra:returns` to the response it got.
+      coll = body(get("/documents", @admin))
+
+      assert coll["hydra:memberAssertion"] == %{
+               "hydra:property" => %{"@id" => "rdf:type"},
+               "hydra:object" => %{"@id" => "#{@vocab}Document"}
+             }
+    end
+
+    test "an empty collection still says it" do
+      # The case the response most has to answer, since there is nothing to read
+      # it off the members.
+      coll = body(get("/domain/quiet", @admin))
+
+      assert coll["hydra:totalItems"] == 0
+      assert coll["hydra:memberAssertion"]["hydra:object"] == %{"@id" => "#{@vocab}Quiet"}
+    end
+
+    test "the served assertion is the one the documentation declares" do
+      # Two answers to "what is in this collection?" would be two facts free to
+      # disagree. Read from both documents and compared rather than each checked
+      # against a literal, so a change to either side that does not change the
+      # other fails here.
+      served = body(get("/documents", @admin))["hydra:memberAssertion"]
+
+      declared =
+        body(get("/doc", @admin))["@included"]
+        |> Enum.find(&(&1["@id"] == "#{@vocab}Document/Collection"))
+        |> Map.fetch!("hydra:memberAssertion")
+
+      assert served == declared
+    end
+
+    test "a related collection asserts the destination's class, not the source's" do
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "With comments"})
+        |> Ash.create!(authorize?: false)
+
+      coll = body(get("/articles/#{article.id}/comments", @admin))
+
+      assert coll["hydra:memberAssertion"]["hydra:object"] == %{"@id" => "#{@vocab}Comment"}
+    end
+
+    test "an inline to-many asserts it too, loaded or not" do
+      # The one collection shape built by hand rather than through
+      # `Collection.wrap/2`, which is exactly why it was the one that could be
+      # missed. Both forms are the same collection with the same `@id`, so they
+      # state the same thing about their members.
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Inline"})
+        |> Ash.create!(authorize?: false)
+
+      document =
+        Document
+        |> Ash.Changeset.for_create(:create, %{title: "Owner", owner_id: "admin-1"})
+        |> Ash.create!(authorize?: false)
+
+      Comment
+      |> Ash.Changeset.for_create(:create, %{
+        body: "c",
+        article_id: article.id,
+        document_id: document.id
+      })
+      |> Ash.create!(authorize?: false)
+
+      unloaded = body(get("/articles/#{article.id}", @admin))["comments"]
+      loaded = body(get("/articles/#{article.id}?load=comments", @admin))["comments"]
+
+      expected = %{
+        "hydra:property" => %{"@id" => "rdf:type"},
+        "hydra:object" => %{"@id" => "#{@vocab}Comment"}
+      }
+
+      assert unloaded["hydra:memberAssertion"] == expected
+      assert loaded["hydra:memberAssertion"] == expected
+    end
+
+    test "a narrowed to-many asserts the class it narrows to" do
+      # `Article has_many :reviews, Comment, filter: expr(kind == :review)`. The
+      # served collection reads the narrowed class from the same function that
+      # declares it, so the response cannot say Comment where the ontology says
+      # Review.
+      article =
+        Article
+        |> Ash.Changeset.for_create(:create, %{title: "Narrowed"})
+        |> Ash.create!(authorize?: false)
+
+      reviews = body(get("/articles/#{article.id}", @admin))["reviews"]
+
+      assert reviews["hydra:memberAssertion"]["hydra:object"] == %{"@id" => "#{@vocab}Review"}
     end
   end
 
@@ -788,7 +1049,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       # the regression: a literal path segment beats the :id wildcard.
       coll = body(get("/domain/multi_read/by_label?label=alpha", @admin))
 
-      assert coll["@type"] == "Collection"
+      assert "Collection" in List.wrap(coll["@type"])
       # by_label filters on the query argument -> only the two "alpha" rows
       assert coll["hydra:totalItems"] == 2
 
@@ -799,7 +1060,7 @@ defmodule AshHateoas.Hydra.PlugTest do
 
     test "the primary base index still runs the primary read (all rows)" do
       coll = body(get("/domain/multi_read", @admin))
-      assert coll["@type"] == "Collection"
+      assert "Collection" in List.wrap(coll["@type"])
       assert coll["hydra:totalItems"] == 3
     end
   end
@@ -835,7 +1096,7 @@ defmodule AshHateoas.Hydra.PlugTest do
       |> Ash.create!(authorize?: false)
 
       coll = body(get("/domain/read_failure", @admin))
-      assert coll["@type"] == "Collection"
+      assert "Collection" in List.wrap(coll["@type"])
     end
   end
 
@@ -852,9 +1113,9 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "a pending order offers confirm and cancel, not ship", %{order: order} do
       node = body(get("/orders/#{order.id}", @admin))
 
-      assert Map.has_key?(node, "ah:confirm")
-      assert Map.has_key?(node, "ah:cancel")
-      refute Map.has_key?(node, "ah:ship")
+      assert "confirm" in actions(node)
+      assert "cancel" in actions(node)
+      refute "ship" in actions(node)
     end
 
     test "after confirming, it offers ship not confirm", %{order: order} do
@@ -865,28 +1126,37 @@ defmodule AshHateoas.Hydra.PlugTest do
 
       node = body(get("/orders/#{confirmed.id}", @admin))
 
-      assert Map.has_key?(node, "ah:ship")
-      refute Map.has_key?(node, "ah:confirm")
+      assert "ship" in actions(node)
+      refute "confirm" in actions(node)
     end
 
-    test "a transition carries its schema.org potentialAction (semantic_action override)",
+    test "a transition's declared role is a superclass of its operation's class",
          %{order: order} do
       node = body(get("/orders/#{order.id}", @admin))
 
-      # confirm is a named sub-action -> link node; its operation carries the
-      # schema:potentialAction, sharpened to ConfirmAction by semantic_action.
-      link = node["ah:confirm"]
-      [op] = link["hydra:operation"]
-      action = op["schema:potentialAction"]
+      # `confirm` declares a `semantic_action`. The node states the operation's
+      # own class; the role it plays is an axiom about that class, and lives in
+      # the ApiDocumentation where an axiom is stated once for the whole API
+      # rather than repeated on every response that offers the operation.
+      op = operation(node, "confirm")
 
-      assert action["@type"] == "https://schema.org/ConfirmAction"
+      assert op["@type"] == ["Operation", "#{@vocab}Order/confirmAction"]
+      refute Map.has_key?(op, "schema:potentialAction")
 
-      # The role is *all* it carries. Where the operation acts is the link
-      # node's own `@id`, and how is `hydra:method` — so a `schema:target`
-      # would say both a second time, in a second vocabulary.
-      refute Map.has_key?(action, "schema:target")
-      assert link["@id"] == "/orders/#{order.id}/confirm"
-      assert op["hydra:method"] == "PATCH"
+      role =
+        AshHateoas.Hydra.ApiDocumentation.build([AshHateoas.Test.Domain])["@included"]
+        |> Enum.find(%{}, &(&1["@id"] =~ "Order/confirmAction"))
+        |> Map.get("rdfs:subClassOf")
+
+      assert role == %{"@id" => "https://schema.org/ConfirmAction"}
+
+      # Where the operation acts is `ah:href`, on this very node — so a
+      # `schema:target` would say it a second time, in a second vocabulary. How
+      # it acts is `hydra:method`, and that is a property of the action rather
+      # than of this record, so it is stated in the catalogue with the rest of
+      # the shape.
+      assert op["ah:href"] == %{"@id" => "/orders/#{order.id}/confirm"}
+      refute Map.has_key?(op, "hydra:method")
     end
   end
 
@@ -918,14 +1188,22 @@ defmodule AshHateoas.Hydra.PlugTest do
         |> Ash.Changeset.for_create(:create, %{reference: "R-2"})
         |> Ash.create!(authorize?: false)
 
-      # confirm is a named sub-action at /orders/:id/confirm (PATCH)
-      conn = request(:patch, "/orders/#{order.id}/confirm", @admin, %{})
+      # confirm is a named sub-action at /orders/:id/confirm, and it is a POST:
+      # a transition is resource-specific processing of the request content,
+      # where PATCH is defined by sending a description of how to modify the
+      # record. `confirm` sends no such description.
+      conn = request(:post, "/orders/#{order.id}/confirm", @admin, %{})
       assert conn.status == 200
+
+      # And the old verb is gone rather than merely unused — a route that still
+      # answered PATCH would leave two ways to invoke one transition, one of them
+      # undocumented.
+      assert request(:patch, "/orders/#{order.id}/confirm", @admin, %{}).status == 404
 
       # the returned node now offers ship, not confirm
       node = body(get("/orders/#{order.id}", @admin))
-      assert Map.has_key?(node, "ah:ship")
-      refute Map.has_key?(node, "ah:confirm")
+      assert "ship" in actions(node)
+      refute "confirm" in actions(node)
     end
 
     test "DELETE a member destroys it and returns the record it destroyed" do
@@ -960,6 +1238,14 @@ defmodule AshHateoas.Hydra.PlugTest do
       # available. The representation says what the record *was*, not what may
       # be done to it.
       refute Map.has_key?(destroyed, "hydra:operation")
+
+      # `odrl:permission` is the same granted set stated as policy, so it goes
+      # with them — otherwise the node says the actor may `odrl:modify` a record
+      # that is gone. Document also has an `approve` sub-action, which used to
+      # survive as an `ah:approve` link node: dropping one key removed a third
+      # of the affordances and the test asserting it saw nothing wrong.
+      refute Map.has_key?(destroyed, "odrl:permission")
+      refute Map.has_key?(destroyed, "ah:approve")
     end
 
     test "the declared return of a destroy matches what it actually sends" do
@@ -1013,7 +1299,7 @@ defmodule AshHateoas.Hydra.PlugTest do
     test "a paged collection carries a PartialCollectionView with page links" do
       coll = body(get("/paged?limit=2&offset=0", @admin))
 
-      assert coll["@type"] == "Collection"
+      assert "Collection" in List.wrap(coll["@type"])
       assert length(coll["hydra:member"]) == 2
       assert coll["hydra:totalItems"] >= 5
 
@@ -1163,7 +1449,8 @@ defmodule AshHateoas.Hydra.PlugTest do
       node = body(get_based("/documents/#{doc.id}", @admin))
 
       # Document has an `approve` sub-action at /documents/:id/approve.
-      assert get_in(node, ["ah:approve", "@id"]) == "#{@base}/documents/#{doc.id}/approve"
+      assert operation(node, "approve")["ah:href"] ==
+               %{"@id" => "#{@base}/documents/#{doc.id}/approve"}
     end
 
     test "routing still matches the plain path — base_url is render-only", %{doc: doc} do

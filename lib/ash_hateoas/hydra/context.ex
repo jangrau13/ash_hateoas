@@ -404,6 +404,154 @@ defmodule AshHateoas.Hydra.Context do
   end
 
   @doc """
+  Keys inside an emitted value that no `@context` can resolve, and which a
+  JSON-LD processor will therefore **drop in silence**.
+
+  ## The defect this exists to find
+
+  A `:map` (or `{:array, :map}`) attribute is serialised into the document
+  verbatim, and its inner keys are application data this package has no schema
+  for. So they are never declared as terms, no `@vocab` is set, and expansion
+  discards them: they are in the JSON and absent from the graph, with nothing
+  reported and nothing visibly wrong.
+
+      attribute :location, :map, public?: true
+
+      "location": {"@type": "schema:Place", "address": "…", "name": "…"}
+
+  `@type` survives because it is a keyword. `name` survives if the resource
+  happens to declare a `semantic_property :name`. `address` is gone.
+
+  ## What the package can and cannot do
+
+  It cannot invent IRIs for an application's map keys, and setting `@vocab`
+  would mint meaningless ones. What an author must do is write a **prefixed**
+  key (`"schema:address"`) or one the resource declares — the prefixes are
+  already in every emitted `@context`, so a prefixed key needs no code at all.
+
+  This is how that is checked. A compile-time check is impossible, since the
+  keys are runtime data.
+
+  `terms` is the declared term map (`node_terms/1`). A key survives if it is a
+  JSON-LD keyword, a declared term, or prefixed with a bound prefix.
+
+      iex> AshHateoas.Hydra.Context.undeclared_keys(%{"address" => "x"}, %{})
+      ["address"]
+
+      iex> AshHateoas.Hydra.Context.undeclared_keys(%{"schema:address" => "x"}, %{})
+      []
+  """
+  @spec undeclared_keys(term(), %{String.t() => String.t()}) :: [String.t()]
+  def undeclared_keys(value, terms) do
+    value |> collect_undeclared(terms) |> Enum.uniq() |> Enum.sort()
+  end
+
+  defp collect_undeclared(map, terms) when is_map(map) and not is_struct(map) do
+    Enum.flat_map(map, fn {key, nested} ->
+      own = if resolvable?(to_string(key), terms), do: [], else: [to_string(key)]
+      own ++ collect_undeclared(nested, terms)
+    end)
+  end
+
+  defp collect_undeclared(list, terms) when is_list(list),
+    do: Enum.flat_map(list, &collect_undeclared(&1, terms))
+
+  defp collect_undeclared(_other, _terms), do: []
+
+  # A key a processor can resolve: a JSON-LD keyword, a term the document
+  # declares, or a prefixed name whose prefix the `@context` binds. The prefix
+  # set is read from the emitted context rather than hardcoded, so a customer's
+  # own `semantic_vocab` prefix counts without this knowing its name.
+  defp resolvable?("@" <> _rest, _terms), do: true
+
+  defp resolvable?(key, terms) do
+    Map.has_key?(terms, key) or absolute?(key) or bound_prefix?(key)
+  end
+
+  defp absolute?(key),
+    do: String.starts_with?(key, "http://") or String.starts_with?(key, "https://")
+
+  defp bound_prefix?(key) do
+    case String.split(key, ":", parts: 2) do
+      [prefix, _rest] -> Map.has_key?(prefixes(), prefix)
+      _ -> false
+    end
+  end
+
+  defp prefixes do
+    context() |> Enum.find(%{}, &is_map/1)
+  end
+
+  @doc """
+  The class IRI for an **action** — the class every operation invoking it is an
+  instance of.
+
+  The one place this is minted, because it is the join between the two documents
+  a client reads: `AshHateoas.Hydra.Renderer` puts it in a node operation's
+  `@type`, and `AshHateoas.Hydra.ApiDocumentation` puts it in the catalogue
+  entry's. Written out twice, the two would be free to drift and the join would
+  break silently.
+
+  Named the way an input class already is (`<Class>/<action>Input`), so the two
+  read as one scheme rather than two.
+
+  **A route mints nothing of its own.** Two routes onto one action — the standard
+  case is a primary read reached both at `/:id` and at the collection — share this
+  class, which is correct: they invoke the same action. What differs is where the
+  request goes and what comes back, and both are operation-level facts carried by
+  the entry (`ah:template`, `hydra:returns`) rather than facts about what the
+  operation *is*.
+
+  A subclass per route was minted for a while and withdrawn. It named
+  `%AshHateoas.Route{}.type` — an Ash route kind that reads as an HTTP method — so
+  `Exam/sitAction/patch` parsed as "sitting an exam is a kind of PATCH", the very
+  inference `AshHateoas.Hydra.Renderer` refuses to draw elsewhere. And for an
+  action with one route, which was most of them, the subclass had exactly its
+  parent's members and constrained nothing: a vocabulary node saying a thing is
+  itself. See `documentation/change-request-vocabulary-noise.md`.
+
+      iex> AshHateoas.Hydra.Context.action_class_iri("document", :approve)
+      "https://ash-hateoas.org/vocab#Document/approveAction"
+  """
+  @spec action_class_iri(String.t(), atom() | String.t()) :: String.t()
+  def action_class_iri(type, action) when is_binary(type) do
+    class_iri(type) <> "/" <> to_string(action) <> "Action"
+  end
+
+  @doc """
+  The class IRI for the collection a **resource** is served at.
+
+  `GET /exam` answers with a `hydra:Collection` of Exams, not with an Exam, so
+  the operation returning it has to name a class that says so. This is that
+  class; `AshHateoas.Hydra.Ontology` declares it with the `hydra:memberAssertion`
+  that states what is in it.
+
+  Named under the member class rather than beside it — `Exam/Collection`, the
+  same scheme as `Exam/readAction` — because the collection is a fact about that
+  class rather than a class of its own standing.
+
+      iex> AshHateoas.Hydra.Context.collection_class_iri("exam")
+      "https://ash-hateoas.org/vocab#Exam/Collection"
+  """
+  @spec collection_class_iri(String.t()) :: String.t()
+  def collection_class_iri(type) when is_binary(type), do: class_iri(type) <> "/Collection"
+
+  @doc """
+  The class IRI for the collection a to-many **property** points at.
+
+  Named per owning property rather than per member class, because two properties
+  may target the same class through different relationships and a future member
+  assertion (a filter, a subject) could distinguish them.
+
+      iex> AshHateoas.Hydra.Context.collection_class_iri("course", :exams)
+      "https://ash-hateoas.org/vocab#CourseExams"
+  """
+  @spec collection_class_iri(String.t(), atom() | String.t()) :: String.t()
+  def collection_class_iri(type, name) when is_binary(type) do
+    vocab_iri(Macro.camelize(type) <> Macro.camelize(to_string(name)))
+  end
+
+  @doc """
   The relation-type IRI for an action name.
 
   A stable, dereferenceable relation type for an affordance, so the relation is

@@ -34,7 +34,7 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
 
   alias AshHateoas.Test.JsonLd
 
-  alias AshHateoas.Test.{Actor, Article, Comment, Document, HydraEndpoint, Recipe}
+  alias AshHateoas.Test.{Actor, Article, Comment, Document, HydraEndpoint, Placed, Recipe}
 
   @admin %Actor{id: "admin-1", role: :admin}
 
@@ -124,11 +124,26 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
     recipe =
       Recipe |> Ash.Changeset.for_create(:create, %{title: "S"}) |> Ash.create!(authorize?: false)
 
-    {:ok, article: article, document: document, recipe: recipe}
+    # The `:map` case. Every inner key is prefixed, which is the only thing that
+    # makes one resolvable — see `AshHateoas.Hydra.Context.undeclared_keys/2`.
+    placed =
+      Placed
+      |> Ash.Changeset.for_create(:create, %{
+        label: "HQ",
+        location: %{
+          "@type" => "schema:Place",
+          "schema:address" => "1 Main St",
+          "schema:name" => "Head office"
+        },
+        stops: [%{"schema:name" => "Depot"}]
+      })
+      |> Ash.create!(authorize?: false)
+
+    {:ok, article: article, document: document, recipe: recipe, placed: placed}
   end
 
   describe "every document shape the plug serves survives expansion" do
-    test "all of them", %{article: article, document: document, recipe: recipe} do
+    test "all of them", %{article: article, document: document, recipe: recipe, placed: placed} do
       shapes = [
         {"ApiDocumentation", "/doc"},
         {"member", "/articles/#{article.id}"},
@@ -139,6 +154,10 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
         {"expanded to-one link", "/comments/with_document"},
         {"expanded to-many link", "/documents/with_comments"},
         {"root-action member", "/recipes/#{recipe.id}"},
+        # One level further out than the rest: the keys at risk here are not the
+        # node's own but the ones *inside* a `:map` attribute's value, which
+        # nothing in the package declares.
+        {"member with a :map attribute", "/placed/#{placed.id}"},
         {"error", "/articles/00000000-0000-0000-0000-000000000000"}
       ]
 
@@ -158,6 +177,138 @@ defmodule AshHateoas.Hydra.NoDroppedKeysTest do
              A JSON-LD processor discards a key no term defines, and reports
              nothing. Either declare the key as a term, or carry the value
              somewhere a `@context` can reach — never as an object key.
+             """
+    end
+  end
+
+  describe "a :map attribute's inner keys" do
+    test "the served node carries them, and nothing is lost", %{placed: placed} do
+      # Belt and braces on the shape list above: assert the value really is
+      # carried, not merely that no key is dropped from a document that might
+      # have omitted the attribute entirely.
+      node = served(placed)
+
+      assert node["location"]["schema:address"] == "1 Main St"
+      assert dropped_keys(node) == []
+    end
+
+    test "the same key written bare is dropped, from the very same document",
+         %{placed: placed} do
+      # The defect, demonstrated on a real response rather than described.
+      # Nothing in the package can declare an application's map keys — they are
+      # runtime data — so a bare one expands to nothing, and the JSON looks
+      # complete while the graph is missing the statement.
+      node = served(placed)
+
+      bare =
+        node
+        |> Map.fetch!("location")
+        |> Map.delete("schema:address")
+        |> Map.put("address", "1 Main St")
+
+      node = Map.put(node, "location", bare)
+
+      assert "address" in dropped_keys(node)
+    end
+
+    test "the package says so out loud rather than dropping in silence" do
+      # A compile-time check is impossible, since the keys are runtime data. So
+      # the check is this, and it is what the plug warns from.
+      terms = AshHateoas.Hydra.Context.node_terms(Placed)
+
+      assert AshHateoas.Hydra.Context.undeclared_keys(
+               %{"location" => %{"@type" => "schema:Place", "address" => "x"}},
+               terms
+             ) == ["address"]
+
+      # Prefixed, declared, and JSON-LD keywords all resolve — and `location`
+      # itself is a declared term, which is why it is absent above.
+      assert AshHateoas.Hydra.Context.undeclared_keys(
+               %{"location" => %{"@type" => "schema:Place", "schema:address" => "x"}},
+               terms
+             ) == []
+    end
+  end
+
+  defp served(record) do
+    "/placed/#{record.id}" |> get() |> Map.get(:resp_body) |> Jason.decode!()
+  end
+
+  describe "every template a served document carries names a URL" do
+    # An `IriTemplate` exists to say **which URL to construct**, and a template
+    # that says only how to spell the query string does not: a client expanding
+    # `{?label}` gets `?label=x` with no path at all. That defect shipped once —
+    # the documentation built its operations from the route table without
+    # passing the route, so `href` was nil and every template collapsed — and it
+    # is invisible to a unit test, which hands the renderer an affordance whose
+    # href is already set.
+    #
+    # It belongs beside the expansion sweep for the same reason that one does:
+    # the check is over **every shape the plug serves**, so a new template
+    # emitted somewhere new is covered without a test being remembered. There
+    # are two sources now — a node's GET affordance under `hydra:expects`, and
+    # `ah:template` on every catalogue entry — and the second is why this is no
+    # longer a documentation-only concern.
+
+    defp served_templates(paths) do
+      collect = fn collect, node, acc ->
+        cond do
+          is_map(node) ->
+            acc = if node["@type"] == "IriTemplate", do: [node | acc], else: acc
+            Enum.reduce(Map.values(node), acc, &collect.(collect, &1, &2))
+
+          is_list(node) ->
+            Enum.reduce(node, acc, &collect.(collect, &1, &2))
+
+          true ->
+            acc
+        end
+      end
+
+      for path <- paths,
+          template <-
+            collect.(collect, path |> get() |> Map.get(:resp_body) |> Jason.decode!(), []),
+          do: {path, template["hydra:template"]}
+    end
+
+    setup %{article: article} do
+      {:ok,
+       paths: [
+         "/doc",
+         "/articles/#{article.id}",
+         "/articles",
+         "/domain/read_failure/invalid?label=x"
+       ]}
+    end
+
+    test "the shapes emit some, so this asserts on something", %{paths: paths} do
+      assert served_templates(paths) != []
+    end
+
+    test "none is a bare query fragment", %{paths: paths} do
+      bare = for {p, t} <- served_templates(paths), String.starts_with?(t, "{"), do: "#{p}: #{t}"
+
+      assert bare == [],
+             """
+             a template with no path expands to a query string alone:
+
+             #{Enum.join(bare, "\n")}
+             """
+    end
+
+    test "none leaves a router placeholder in the path", %{paths: paths} do
+      # `:id` is Plug's spelling, and RFC 6570 gives `:` no meaning — an expander
+      # finds zero variables and hands back a literal `:id`.
+      leaked =
+        for {p, t} <- served_templates(paths),
+            String.contains?(String.replace(t, ~r{^[a-z][a-z0-9+.-]*://}, ""), ":"),
+            do: "#{p}: #{t}"
+
+      assert leaked == [],
+             """
+             a router placeholder survived into a template:
+
+             #{Enum.join(leaked, "\n")}
              """
     end
   end
