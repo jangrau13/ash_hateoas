@@ -403,6 +403,16 @@ served natively as a Hydra / JSON-LD API.
   **Postgres and SQLite both**, and neither is a dependency: the data layer is
   recognised by name and the matching `postgres` or `sqlite` block written. The
   storage the two share is emitted once; only enforcement differs.
+- **The document sync opens its own transaction where the data layer will not.**
+  A save is a sync: it deletes every element the document omits before writing
+  what replaces them, so it must happen whole or not at all. That rested on
+  Ash's implicit per-action transaction, which Ash opens only where the data
+  layer reports it can transact — and `AshSqlite.DataLayer` reports it cannot,
+  unconditionally, no repo configuration involved. `Ash.transaction/2` is no
+  help: it goes through the same check, so on SQLite it runs the body, opens
+  nothing and returns success. `AshHateoas.DataLayer.transaction/2` opens the
+  repo's own boundary instead, and only where one is missing — Postgres and ETS
+  behave exactly as before.
 - **"A citation names at most one thing" is a validation**, not only a check
   constraint. It was Postgres's alone, which left the same generated resource on
   any other data layer with the columns and none of the rule — and ash_sqlite has

@@ -51,7 +51,9 @@ defmodule AshHateoas.RootActions do
   The document is the aggregate's whole contents, so an element absent from it
   has been removed. `save/2` hands each relationship to
   `Ash.Changeset.manage_relationship/4`, which matches by identity, creates the
-  missing, updates the matched and removes the absent — inside one transaction.
+  missing, updates the matched and removes the absent — inside one transaction,
+  which `AshHateoas.DataLayer.transaction/2` opens explicitly where the data
+  layer will not open one itself.
 
   **Matching is by the resource's declared identity**, which is what lets the
   authoring language keep primary keys out of the text: `stock Susceptible` is
@@ -702,11 +704,19 @@ defmodule AshHateoas.RootActions do
   # contents, so an element absent from it has been removed.
   #
   # `manage_relationship` does exactly that — match by identity, create the
-  # missing, update the matched, remove the absent — inside the changeset's own
-  # transaction. Hand-rolling the loop instead means reimplementing identity
-  # matching, deletion and atomicity, and getting all three wrong: a create-only
-  # loop duplicates the whole document on a second save and orphans anything
-  # deleted from it.
+  # missing, update the matched, remove the absent — in one action. Hand-rolling
+  # the loop instead means reimplementing identity matching, deletion and
+  # atomicity, and getting all three wrong: a create-only loop duplicates the
+  # whole document on a second save and orphans anything deleted from it.
+  #
+  # **The boundary is explicit, because on SQLite there is otherwise none.**
+  # This used to rest on Ash's implicit per-action transaction, which Ash opens
+  # only where the data layer says it can transact — and `AshSqlite.DataLayer`
+  # says it cannot, unconditionally. The sync deletes every element the document
+  # omits before writing what replaces them, so with no boundary a failure
+  # halfway leaves the deletions applied and their replacements missing: the one
+  # write in this module that must happen whole or not at all, losing that
+  # property silently on a data layer change. See `AshHateoas.DataLayer`.
   defp persist(document, input) do
     root = input.resource
     grouped = group_by_relationship(document, root)
@@ -714,7 +724,9 @@ defmodule AshHateoas.RootActions do
     case fetch_root(input) do
       {:ok, record} ->
         with :ok <- refuse_truncated(grouped, record, root, input) do
-          save_document(record, document, grouped, root, input)
+          AshHateoas.DataLayer.transaction(root, fn ->
+            save_document(record, document, grouped, root, input)
+          end)
         end
 
       :error ->

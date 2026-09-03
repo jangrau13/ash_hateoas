@@ -328,19 +328,15 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
     end
   end
 
-  # The DSL section a data layer keeps its table and repo under, and `nil` for
-  # one that keeps neither.
+  # The DSL section this resource's data layer keeps its table and repo under,
+  # and `nil` for one that keeps neither.
   #
-  # **Matched as a bare module name on purpose.** Neither ash_postgres nor
-  # ash_sqlite is a dependency of this package and neither should become one —
-  # a consumer brings whichever it uses, and recognising the name costs nothing
-  # at build time.
+  # `AshHateoas.DataLayer` holds the mapping, and holds it once: the same two
+  # names decide where a citation's table is written here and whether the
+  # document sync needs a transaction opened for it, and those two answers must
+  # not be able to disagree about what a data layer is.
   defp section(dsl_state) do
-    case Transformer.get_persisted(dsl_state, :data_layer) do
-      AshPostgres.DataLayer -> :postgres
-      AshSqlite.DataLayer -> :sqlite
-      _ -> nil
-    end
+    AshHateoas.DataLayer.section(Transformer.get_persisted(dsl_state, :data_layer))
   end
 
   # Derived from the script resource's **own table**, so the two sit together
