@@ -17,8 +17,8 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
         bind :publisher, MyApp.Publisher
       end
 
-  and gets a citation resource with `author_id`, `publisher_id`, a check
-  constraint that at most one is set, and a link back to the script.
+  and gets a citation resource with `author_id`, `publisher_id`, a validation
+  that at most one is set, and a link back to the script.
 
   ## Why generated rather than hand-written
 
@@ -44,6 +44,36 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
   column is nilified rather than the citation vanishing. The name survives, so
   a script keeps a visible hole instead of silently losing a reference. Two set
   is nonsense either way — one citation names one thing.
+
+  That rule is a **validation on the resource**, so it holds on every data
+  layer. It was a Postgres check constraint and nothing else, which meant a
+  citation resource stored anywhere else had the columns and none of the
+  meaning. Postgres still gets the constraint as well — a guarantee the
+  database keeps is worth having where it is available — but it is no longer
+  the only thing keeping it.
+
+  **`at_most` is what makes the two safely interchangeable.** A constraint reads
+  the finished row; a validation reads a changeset mid-flight, and the two do
+  not see the same thing — a citation created through `manage_relationship` from
+  the cited record's side has its foreign key filled in *after* validations run,
+  so at validation time the column is still nil. Counting fewer targets than the
+  write will end up with is harmless under `at_most` and fatal under `exactly`,
+  which would refuse exactly the writes it exists to permit. The residue is a
+  gap rather than a false refusal: two targets where one arrives late are
+  invisible to the changeset, and there Postgres's constraint is doing real work
+  that SQLite has nothing to offer in place of.
+
+  ## Where a citation is stored
+
+  Postgres and SQLite both, and neither is a dependency of this package: the
+  data layer is recognised by name and its DSL section written accordingly.
+  Everything the two share — the table, the repo, the cascades — is emitted
+  once. What they do not share is enforcement: ash_sqlite has no
+  `check_constraints`, so on SQLite the validation above is the whole of the
+  rule.
+
+  A data layer this does not recognise gets no storage block at all, which is
+  what lets the generation be tested on ETS with no database anywhere.
 
   ## What the domain still writes
 
@@ -161,7 +191,8 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
 
       Generated from that resource's `bind` declarations by
       `AshHateoas.LuaScript.Transformers.DeriveCitations` — one nullable
-      relationship per bind, and a check constraint that at most one is set.
+      relationship per bind, and a validation that at most one is set (plus,
+      on Postgres, a check constraint saying the same thing).
 
       Each relationship carries the **bind's** name, since that is what a script
       writes; its column carries the **resource's**, since that is storage. So
@@ -213,41 +244,102 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
       actions do
         defaults([:read, :destroy, create: :*, update: :*])
       end
+
+      validations do
+        # **At most one target, whatever this is stored in.** The rule used to
+        # live only in a Postgres check constraint, so a resource on any other
+        # data layer had the columns and none of the meaning: two set was
+        # nonsense the database happened to catch, and on SQLite or ETS nothing
+        # caught it at all. Stated here it holds everywhere, and the check
+        # constraint becomes a backstop rather than the only guard.
+        #
+        # `at_most`, not `exactly`: a cited record may be deleted and its column
+        # nilified, leaving a citation with a name and nothing behind it. That
+        # is a state a script may be in — it is not a state a write may create.
+        validate(present(unquote(columns), at_most: 1),
+          message: "a citation names at most one thing"
+        )
+      end
     end
   end
 
-  # The cascades and the check constraint are Postgres's to enforce, and a
-  # resource on another data layer has neither — so the block is emitted only
-  # where it means something. On ETS (the test fixtures) the citation resource
-  # is otherwise identical, which is what lets the generation itself be tested
-  # without a database.
+  # A citation's storage is the script's own, and both SQL data layers state it
+  # the same way — a table, a repo, and the cascades that keep a citation from
+  # outliving the script it is part of. What differs is the section name and
+  # what the database can be asked to enforce, so the shared part is written
+  # once and each branch adds only its difference.
+  #
+  # A data layer with no such section gets no block at all, and that is
+  # deliberate: on ETS (the test fixtures) the citation resource is otherwise
+  # identical, which is what lets the generation itself be tested without a
+  # database.
   #
   # Stated rather than assumed: a `postgres` block on an ETS resource is not a
   # no-op, it fails to compile.
   defp data_layer_block(module, columns, references, dsl_state) do
-    if Transformer.get_persisted(dsl_state, :data_layer) == AshPostgres.DataLayer do
-      quote do
-        postgres do
-          table(unquote(table(module, dsl_state)))
-          # The script resource's own repo — read from its DSL rather than from
-          # a persisted key, which `repo` is not.
-          repo(unquote(Transformer.get_option(dsl_state, [:postgres], :repo)))
+    case section(dsl_state) do
+      :postgres ->
+        quote do
+          postgres do
+            unquote(storage(module, references, dsl_state))
 
-          references do
-            # A citation has no meaning without the script it is part of.
-            reference(:script, on_delete: :delete)
-            unquote_splicing(references)
-          end
-
-          check_constraints do
-            check_constraint(unquote(columns),
-              check: unquote(at_most_one(columns)),
-              name: unquote("#{table(module, dsl_state)}_one_target"),
-              message: "a citation names at most one thing"
-            )
+            # The rule twice over: here as something the database itself
+            # refuses to break, and in `validations` for the data layers that
+            # have nothing of the kind to offer.
+            check_constraints do
+              check_constraint(unquote(columns),
+                check: unquote(at_most_one(columns)),
+                name: unquote("#{table(module, dsl_state)}_one_target"),
+                message: "a citation names at most one thing"
+              )
+            end
           end
         end
+
+      :sqlite ->
+        # **No `check_constraints`** — ash_sqlite's DSL has no such section, and
+        # SQLite cannot add a CHECK to a table after the fact anyway. Here the
+        # validation is the only thing holding the rule, which is why it is
+        # declared unconditionally rather than only where the database is silent.
+        quote do
+          sqlite do
+            unquote(storage(module, references, dsl_state))
+          end
+        end
+
+      nil ->
+        nil
+    end
+  end
+
+  # Table, repo and cascades — the same three statements under either section.
+  defp storage(module, references, dsl_state) do
+    quote do
+      table(unquote(table(module, dsl_state)))
+      # The script resource's own repo — read from its DSL rather than from
+      # a persisted key, which `repo` is not.
+      repo(unquote(Transformer.get_option(dsl_state, [section(dsl_state)], :repo)))
+
+      references do
+        # A citation has no meaning without the script it is part of.
+        reference(:script, on_delete: :delete)
+        unquote_splicing(references)
       end
+    end
+  end
+
+  # The DSL section a data layer keeps its table and repo under, and `nil` for
+  # one that keeps neither.
+  #
+  # **Matched as a bare module name on purpose.** Neither ash_postgres nor
+  # ash_sqlite is a dependency of this package and neither should become one —
+  # a consumer brings whichever it uses, and recognising the name costs nothing
+  # at build time.
+  defp section(dsl_state) do
+    case Transformer.get_persisted(dsl_state, :data_layer) do
+      AshPostgres.DataLayer -> :postgres
+      AshSqlite.DataLayer -> :sqlite
+      _ -> nil
     end
   end
 
@@ -255,12 +347,16 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
   # under whatever prefix that domain uses — `simulation_value` yields
   # `simulation_value_citation`, not `value_citation`.
   #
-  # The module name is the fallback and not the source: a domain that prefixes
-  # its tables would get a citation table outside its own namespace, which is a
-  # naming a migration then makes permanent.
+  # Read from the section that data layer actually uses, rather than from
+  # `[:postgres]` whatever the data layer is: under SQLite that path answers
+  # `nil`, and the fallback below then names the citation table after the module
+  # — putting it outside the domain's namespace, which a generated migration
+  # makes permanent. A silent rename is the worst shape this can fail in.
+  #
+  # The module name is the fallback and not the source, for that same reason.
   defp table(module, dsl_state) do
     base =
-      case Transformer.get_option(dsl_state, [:postgres], :table) do
+      case Transformer.get_option(dsl_state, [section(dsl_state)], :table) do
         table when is_binary(table) -> table
         _ -> module |> Module.split() |> List.last() |> Macro.underscore()
       end
@@ -268,6 +364,10 @@ defmodule AshHateoas.LuaScript.Transformers.DeriveCitations do
     base <> "_citation"
   end
 
+  # Postgres's own spelling. A comparison yields a boolean there and has to be
+  # cast before it can be summed; SQLite's already yields 0 or 1, so the same
+  # expression without the casts would be the SQLite form — which nothing needs,
+  # since there is no `check_constraints` section to put it in.
   defp at_most_one(columns) do
     columns
     |> Enum.map_join(" + ", &"(#{&1} IS NOT NULL)::int")

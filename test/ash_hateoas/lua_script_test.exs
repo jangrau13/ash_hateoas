@@ -18,6 +18,22 @@ defmodule AshHateoas.LuaScriptTest do
     ast
   end
 
+  # A citation changeset, unwritten. The rule these exercise is a validation, so
+  # it is decided while the changeset is built — which is the whole reason it can
+  # be checked here, on ETS, with no database in the picture.
+  defp citation_changeset(targets) do
+    Ash.Changeset.for_create(
+      Formula.Citation,
+      :create,
+      Enum.into(targets, %{
+        script_id: Ash.UUID.generate(),
+        name: "Ada Lovelace",
+        kind: :author,
+        position: 0
+      })
+    )
+  end
+
   describe "the declaration" do
     test "the script attribute is readable" do
       assert Info.script(Formula) == :body
@@ -259,6 +275,35 @@ defmodule AshHateoas.LuaScriptTest do
       # the foreign key nilified, and the script still says what it referred to
       # — a visible hole rather than a silently lost reference.
       assert %{allow_nil?: false} = Ash.Resource.Info.attribute(Citation, :name)
+    end
+
+    test "a citation naming two things is refused, whatever it is stored in" do
+      # This used to be a Postgres check constraint and nothing else, so a
+      # citation resource on any other data layer had the columns and none of
+      # the meaning — this fixture included, which is why nothing here caught
+      # it. SQLite makes that permanent rather than incidental: ash_sqlite has
+      # no `check_constraints` section to put the rule in at all.
+      changeset =
+        citation_changeset(
+          author_id: Ash.UUID.generate(),
+          publisher_id: Ash.UUID.generate()
+        )
+
+      refute changeset.valid?
+
+      assert Enum.any?(changeset.errors, &(Exception.message(&1) =~ "at most one thing")),
+             "the refusal must say what is wrong: #{inspect(changeset.errors)}"
+    end
+
+    test "a citation naming nothing is allowed" do
+      # `at_most`, not `exactly`. The cited record may have been deleted and the
+      # column nilified; the script still says the name, and that visible hole
+      # is the state this resource exists to keep rather than to refuse.
+      assert citation_changeset([]).valid?
+    end
+
+    test "a citation naming one thing is allowed" do
+      assert citation_changeset(author_id: Ash.UUID.generate()).valid?
     end
 
     test "a citation is not creatable over HTTP" do

@@ -394,6 +394,21 @@ served natively as a Hydra / JSON-LD API.
   attribute, and a bind keyed on a **non-unique** attribute — a reference names
   one record, so a key two records can share resolves to whichever comes back
   first.
+- **A citation resource is generated from the binds** — one nullable
+  `belongs_to` per bind, so what a script names is a row with a real foreign key
+  rather than a string the database cannot see. Its table is derived from the
+  script resource's own, so the two sit together under whatever prefix the domain
+  uses.
+
+  **Postgres and SQLite both**, and neither is a dependency: the data layer is
+  recognised by name and the matching `postgres` or `sqlite` block written. The
+  storage the two share is emitted once; only enforcement differs.
+- **"A citation names at most one thing" is a validation**, not only a check
+  constraint. It was Postgres's alone, which left the same generated resource on
+  any other data layer with the columns and none of the rule — and ash_sqlite has
+  no `check_constraints` section to state it in at all. Postgres still gets the
+  constraint as a database-level backstop, so the change there is which layer
+  reports a violation first.
 
 ### DSL
 

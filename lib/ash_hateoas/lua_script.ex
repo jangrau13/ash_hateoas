@@ -137,8 +137,9 @@ defmodule AshHateoas.LuaScript do
 
   A script's references are stored as rows with real foreign keys, in a
   resource this extension **generates** from the binds — `MyApp.Formula` gets
-  `MyApp.Formula.Citation`, with one nullable relationship per bind and a check
-  constraint that at most one is set.
+  `MyApp.Formula.Citation`, with one nullable relationship per bind and a
+  validation that at most one is set — plus, on Postgres, a check constraint
+  saying the same thing.
 
   Generated rather than hand-written because every column is a restatement of a
   bind, and the two drift: a bind with no column is a reference that cannot be
